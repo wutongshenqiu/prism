@@ -24,9 +24,9 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
    make test   # cargo test --workspace
    ```
 7. Move the spec from `active/` to `completed/` and update `_index.md`.
-8. Commit using Conventional Commits format:
+8. Submit using `/ship`:
    ```
-   feat: add support for new-provider streaming
+   /ship "feat: add support for new-provider streaming"
    ```
 
 ### Bug Fixes
@@ -41,9 +41,9 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
    make test
    ```
 6. Update documentation if the fix changes observable behavior.
-7. Commit:
+7. Submit using `/ship`:
    ```
-   fix: correct SSE parsing for multi-line data fields
+   /ship "fix: correct SSE parsing for multi-line data fields"
    ```
 
 ### Refactoring
@@ -56,18 +56,18 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
    make test
    ```
 4. Update affected reference docs in `docs/reference/`.
-5. Commit:
+5. Submit using `/ship`:
    ```
-   refactor: extract credential routing into CredentialRouter
+   /ship "refactor: extract credential routing into CredentialRouter"
    ```
 
 ### Documentation Changes
 
 1. Update the relevant files in `docs/`.
 2. Verify links and references are correct.
-3. Commit:
+3. Submit using `/ship`:
    ```
-   docs: update API endpoint reference
+   /ship "docs: update API endpoint reference"
    ```
 
 ### Adding Tests
@@ -75,10 +75,31 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
 1. Identify gaps in test coverage.
 2. Add tests in the appropriate crate's test module.
 3. Run `make test` to verify.
-4. Commit:
+4. Submit using `/ship`:
    ```
-   test: add integration tests for translator registry
+   /ship "test: add integration tests for translator registry"
    ```
+
+### Handling Dependabot PRs
+
+Use the `/deps` command to manage Dependabot pull requests:
+
+1. **Check status**: `/deps` -- Lists all open Dependabot PRs grouped by CI status.
+2. **Merge passing PRs**: `/deps merge` -- Squash-merges all PRs with green CI.
+3. **Fix failing PRs**: `/deps fix` -- Checks out failing PRs, fixes build issues, pushes, and merges on CI pass.
+4. **Manual update**: `/deps update` -- Runs `cargo update`, checks lint+test, commits if passing.
+
+## Commit & Push
+
+Use `/ship` for all commit and push operations. It handles:
+- Formatting and linting (`make fmt` + `make lint`)
+- Testing (`make test`)
+- Documentation sync checks
+- Spec association checks
+- Commit message generation (conventional commits)
+- Push and PR creation
+
+Use `/ship --no-pr` when you only need to commit and push without creating a PR.
 
 ## Commit Convention
 
@@ -111,6 +132,8 @@ Before every commit, ensure:
 2. **`make test` passes** -- Runs `cargo test --workspace`.
 3. **No secrets committed** -- Never commit `config.yaml`, `.env`, API keys, or credentials. Use `config.example.yaml` as a template.
 4. **`Cargo.lock` is committed** -- This is a binary project; the lock file must be tracked.
+
+Note: The pre-commit hook in `.claude/settings.json` enforces `make lint && make test` automatically on `git commit`.
 
 ## Key Paths
 

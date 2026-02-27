@@ -7,18 +7,22 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git branch:*)",
-      "Bash(gh:*)"
+      "Bash(gh:*)",
+      "Bash(docker:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)"
     ]
   },
   "hooks": {
-    "preToolUse": [
+    "PreToolUse": [
       {
         "matcher": "Bash(git commit:*)",
-        "hooks": ["command:make lint && make test"]
-      },
-      {
-        "matcher": "Bash(git push:*)",
-        "hooks": ["command:make lint && make test"]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "make lint && make test"
+          }
+        ]
       }
     ]
   }
