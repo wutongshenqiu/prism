@@ -4,6 +4,7 @@ target/
 .gitnexus/
 test-config.yaml
 config.yaml
+docker-compose.override.yml
 
 # Claude Code — track settings/commands, ignore transient data
 .claude/*

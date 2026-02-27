@@ -44,6 +44,23 @@ make clean   # cargo clean
 make check   # cargo check --workspace
 ```
 
+### Docker
+
+```sh
+make docker-build          # Build Docker image locally
+make docker-run            # Run container (mounts config.yaml)
+make docker-stop           # Stop and remove container
+make docker-logs           # Tail container logs
+make docker-compose-up     # Build & start via docker compose
+make docker-compose-down   # Stop docker compose services
+```
+
+### Security
+
+```sh
+make audit   # cargo audit — check for known vulnerabilities
+```
+
 ## Rules
 
 - **Lint before commit**: Run `make lint` and fix all warnings before committing.

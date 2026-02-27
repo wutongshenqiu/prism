@@ -1,0 +1,12 @@
+target/
+.git/
+.github/
+.claude/
+.env
+config.yaml
+test-config.yaml
+docs/
+.DS_Store
+.gitignore
+.dockerignore
+docker-compose.override.yml

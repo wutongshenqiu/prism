@@ -1,0 +1,15 @@
+services:
+  ai-proxy:
+    build: .
+    image: ai-proxy:local
+    ports:
+      - "8317:8317"
+    volumes:
+      - ./config.yaml:/etc/ai-proxy/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8317/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
