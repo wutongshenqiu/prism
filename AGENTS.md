@@ -37,6 +37,7 @@ Upstream API (Claude, OpenAI, Gemini, etc.)
 ### `crates/core/`
 Foundation types shared across all crates:
 - `Config` -- YAML configuration with hot-reload via `arc-swap` and `ConfigWatcher` (notify + SHA256 dedup)
+- `DaemonConfig` -- Daemon settings (PID file path, shutdown timeout)
 - `ProxyError` -- Unified error type using `thiserror`, with HTTP status code mapping
 - `AuthRecord` -- Provider credential record (API key, base URL, proxy, models, cooldown state, cloak config)
 - `Format` enum -- Identifies API format: `OpenAI`, `Claude`, `Gemini`, `OpenAICompat`
@@ -45,6 +46,13 @@ Foundation types shared across all crates:
 - `PayloadConfig` -- Request payload manipulation (default/override/filter rules with model glob matching)
 - `ProviderExecutor` trait -- Async trait for provider execution (execute, execute_stream, supported_models)
 - `types/` -- Provider-specific request/response types (`openai.rs`, `claude.rs`, `gemini.rs`)
+- `lifecycle/` -- Application lifecycle management:
+  - `Lifecycle` trait -- Readiness notification (ForegroundLifecycle, SystemdLifecycle)
+  - `signal` -- SignalHandler for SIGTERM/SIGINT shutdown and SIGHUP config reload
+  - `pid_file` -- RAII PidFile with flock advisory locking
+  - `daemon` -- Process daemonization via `fork::daemon()`
+  - `logging` -- Tracing initialization with optional daily file rotation
+  - `notify` -- sd-notify wrappers for systemd integration
 - `glob` -- Wildcard pattern matching for model names
 - `proxy` -- HTTP proxy client builder (http/https/socks5)
 - `context` -- `RequestContext` (request ID, start time, client IP)
@@ -103,6 +111,12 @@ HTTP server and request dispatch:
 
 Models are not hardcoded — any model name can be routed if configured in `config.yaml`.
 
+### `src/` (binary entry point)
+Subcommand architecture with daemon support:
+- `cli.rs` -- CLI parsing: subcommands `run`, `stop`, `status`, `reload` with `RunArgs` and `PidArgs`
+- `app.rs` -- `Application` struct: encapsulates config loading, provider/router/translator assembly, and HTTP/TLS serving
+- `main.rs` -- Entry point: subcommand dispatch, daemonization (before tokio), logging init, runtime creation
+
 ## Quick Start
 
 ```sh
@@ -113,8 +127,16 @@ cargo build
 cp config.example.yaml config.yaml
 # Edit config.yaml with your API keys and settings
 
-# Run
-cargo run -- --config config.yaml
+# Run (foreground)
+cargo run -- run --config config.yaml
+
+# Run (daemon mode)
+cargo run -- run --daemon --config config.yaml
+
+# Management commands
+cargo run -- status                    # Check if daemon is running
+cargo run -- reload                    # Send SIGHUP to reload config
+cargo run -- stop                      # Graceful shutdown
 
 # Or use Make
 make dev
@@ -129,3 +151,6 @@ make dev
 - `async-trait` -- Async trait support
 - `arc-swap` -- Hot-reloadable configuration
 - `reqwest` -- HTTP client for upstream calls
+- `fork` -- Process daemonization (unix)
+- `sd-notify` -- systemd readiness notification
+- `tracing-appender` -- File-based log rotation

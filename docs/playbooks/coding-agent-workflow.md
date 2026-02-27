@@ -13,21 +13,29 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
 
 ### New Features
 
-1. **Create a spec** following the [create-new-spec.md](create-new-spec.md) playbook.
+1. **Create a spec** following the [create-new-spec.md](create-new-spec.md) playbook:
+   ```
+   /spec create "Feature Name"
+   ```
 2. Fill in the PRD (problem, goals, non-goals, user stories).
-3. Fill in the Technical Design (implementation details, API design, task breakdown).
-4. Get the spec reviewed/approved (move status from Draft to Active).
-5. Implement following the technical design.
-6. Run quality checks:
-   ```sh
-   make lint   # cargo fmt --check + cargo clippy -- -D warnings
-   make test   # cargo test --workspace
+3. Create and fill in the Technical Design:
    ```
-7. Move the spec from `active/` to `completed/` and update `_index.md`.
-8. Submit using `/ship`:
+   /spec td SPEC-NNN
    ```
-   /ship "feat: add support for new-provider streaming"
+4. Advance the spec from Draft to Active:
    ```
+   /spec advance SPEC-NNN
+   ```
+5. **Implement** using the `/implement` command (reads TD, generates task list, executes):
+   ```
+   /implement SPEC-NNN
+   ```
+   Or implement manually following the technical design.
+6. **Submit** using `/ship` (auto-advances Active spec to Completed, creates branch, PR, waits CI):
+   ```
+   /ship --merge "feat: add support for new-provider streaming"
+   ```
+   The `--merge` flag auto-merges the PR after CI passes.
 
 ### Bug Fixes
 
@@ -95,11 +103,14 @@ Use `/ship` for all commit and push operations. It handles:
 - Formatting and linting (`make fmt` + `make lint`)
 - Testing (`make test`)
 - Documentation sync checks
-- Spec association checks
+- Spec association checks (auto-advances Active → Completed if applicable)
+- Branch creation (auto-creates from main based on commit message)
 - Commit message generation (conventional commits)
 - Push and PR creation
+- Optional auto-merge after CI (`--merge` flag)
 
 Use `/ship --no-pr` when you only need to commit and push without creating a PR.
+Use `/ship --merge` when you want the PR auto-merged after CI passes.
 
 ## Commit Convention
 

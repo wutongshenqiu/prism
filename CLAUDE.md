@@ -8,12 +8,12 @@ AI Proxy Gateway is a Rust/Axum multi-provider AI API gateway. It routes and tra
 
 | Path | Purpose |
 |------|---------|
-| `crates/core/` | Foundation types, config, errors, provider traits, metrics, glob, proxy, cloaking, payload rules |
+| `crates/core/` | Foundation types, config, errors, provider traits, metrics, glob, proxy, cloaking, payload rules, lifecycle |
 | `crates/core/src/types/` | Provider-specific request/response types (OpenAI, Claude, Gemini) |
 | `crates/provider/` | Provider executors (Claude, OpenAI, Gemini, OpenAICompat), credential routing, SSE parsing |
 | `crates/translator/` | Format translation between provider APIs |
 | `crates/server/` | Axum router, handlers, middleware (auth, logging, request_context), dispatch |
-| `src/` | Binary entry point |
+| `src/` | Binary entry point (subcommand CLI, Application struct, daemon support) |
 | `docs/specs/` | SDD spec registry |
 | `docs/reference/` | SSOT type definitions, API surface, architecture |
 | `docs/playbooks/` | How-to guides (add provider, add translator, etc.) |
@@ -30,14 +30,18 @@ cargo clippy --workspace -- -D warnings  # Lint
 cargo fmt                 # Format code
 cargo fmt --check         # Check formatting
 cargo check --workspace   # Type-check without building
-cargo run -- --config config.yaml  # Run locally
+cargo run -- run --config config.yaml         # Run locally (foreground)
+cargo run -- run --daemon --config config.yaml # Run as daemon
+cargo run -- status                           # Check daemon status
+cargo run -- reload                           # Reload config (SIGHUP)
+cargo run -- stop                             # Graceful shutdown
 ```
 
 ### Make Targets
 
 ```sh
 make build   # cargo build --release
-make dev     # cargo run with config.yaml
+make dev     # cargo run -- run --config config.yaml
 make test    # cargo test --workspace
 make lint    # fmt --check + clippy
 make fmt     # cargo fmt
@@ -161,7 +165,8 @@ Available commands (`.claude/commands/`):
 | Command | Purpose | Example |
 |---------|---------|---------|
 | `/spec` | Spec 生命周期管理（创建/列表/状态/推进/创建 TD） | `/spec create "WebSocket 支持"` |
-| `/ship` | 端到端提交: lint, test, commit, push, 创建 PR, 等 CI | `/ship "feat: add WebSocket support"` |
+| `/implement` | 从 TD 自动实现 Spec | `/implement SPEC-008` |
+| `/ship` | 端到端提交: lint, test, commit, push, 创建 PR, 等 CI | `/ship --merge "feat: add WebSocket support"` |
 | `/deps` | 依赖管理: 列出/合并/修复 Dependabot PRs, cargo update | `/deps merge` |
 | `/review` | Review Pull Request | `/review 42` |
 | `/doc-audit` | 文档与代码一致性审查 | `/doc-audit types` |
