@@ -36,7 +36,7 @@ libc = { workspace = true }
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
 reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "rustls", "socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -69,6 +69,8 @@ fork = "0.6"
 sd-notify = "0.4"
 tracing-appender = "0.2"
 libc = "0.2"
+jsonwebtoken = "9"
+bcrypt = "0.17"
 
 # workspace internal
 ai-proxy-core = { path = "crates/core" }

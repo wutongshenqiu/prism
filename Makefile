@@ -1,6 +1,7 @@
 .PHONY: build dev test lint fmt clean check \
        docker-build docker-run docker-stop docker-logs \
-       docker-compose-up docker-compose-down audit
+       docker-compose-up docker-compose-down audit \
+       web-dev web-build web-install
 
 build:
 	cargo build --release
@@ -43,6 +44,16 @@ docker-compose-up:
 
 docker-compose-down:
 	docker compose down
+
+# Web Dashboard
+web-install:
+	cd web && npm install
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
 
 # Security
 audit:

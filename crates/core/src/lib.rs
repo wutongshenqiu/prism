@@ -8,4 +8,5 @@ pub mod metrics;
 pub mod payload;
 pub mod provider;
 pub mod proxy;
+pub mod request_log;
 pub mod types;

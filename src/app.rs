@@ -6,8 +6,8 @@ use ai_proxy_core::lifecycle::signal::SignalHandler;
 use ai_proxy_core::lifecycle::{self, Lifecycle};
 use ai_proxy_provider::routing::CredentialRouter;
 use arc_swap::ArcSwap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub struct Application {
     config: Arc<ArcSwap<Config>>,
@@ -74,8 +74,12 @@ impl Application {
             config.openai_compatibility.len(),
         );
 
+        let request_log_capacity = config.dashboard.request_log_capacity;
         let config = Arc::new(ArcSwap::from_pointee(config));
         let metrics = Arc::new(ai_proxy_core::metrics::Metrics::new());
+        let request_logs = Arc::new(ai_proxy_core::request_log::RequestLogStore::new(
+            request_log_capacity,
+        ));
 
         // Build AppState and router
         let state = ai_proxy_server::AppState {
@@ -84,6 +88,10 @@ impl Application {
             executors,
             translators,
             metrics,
+            request_logs,
+            config_path: Arc::new(Mutex::new(args.config.clone())),
+            credential_router: credential_router.clone(),
+            start_time: Instant::now(),
         };
         let app_router = ai_proxy_server::build_router(state);
 

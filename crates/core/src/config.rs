@@ -65,6 +65,9 @@ pub struct Config {
     // When enabled, sends periodic whitespace to prevent intermediate proxy timeouts.
     pub non_stream_keepalive_secs: u64,
 
+    // Dashboard
+    pub dashboard: DashboardConfig,
+
     // Daemon
     pub daemon: DaemonConfig,
 
@@ -100,6 +103,7 @@ impl Default for Config {
             claude_header_defaults: HashMap::new(),
             force_model_prefix: false,
             non_stream_keepalive_secs: 0,
+            dashboard: DashboardConfig::default(),
             daemon: DaemonConfig::default(),
             claude_api_key: Vec::new(),
             openai_api_key: Vec::new(),
@@ -181,6 +185,47 @@ fn sanitize_entries(entries: &mut Vec<ProviderKeyEntry>) {
             .map(|(k, v)| (k.to_lowercase(), v))
             .collect();
         entry.headers = headers;
+    }
+}
+
+// ─── Dashboard config ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct DashboardConfig {
+    /// Enable the dashboard admin API.
+    pub enabled: bool,
+    /// Admin username.
+    pub username: String,
+    /// bcrypt-hashed password (e.g. "$2b$12$...").
+    pub password_hash: String,
+    /// JWT signing secret. Falls back to env `DASHBOARD_JWT_SECRET`.
+    pub jwt_secret: Option<String>,
+    /// JWT token TTL in seconds.
+    pub jwt_ttl_secs: u64,
+    /// Request log ring buffer capacity.
+    pub request_log_capacity: usize,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            username: "admin".to_string(),
+            password_hash: String::new(),
+            jwt_secret: None,
+            jwt_ttl_secs: 3600,
+            request_log_capacity: 10_000,
+        }
+    }
+}
+
+impl DashboardConfig {
+    /// Resolve the JWT secret from config or env.
+    pub fn resolve_jwt_secret(&self) -> Option<String> {
+        self.jwt_secret
+            .clone()
+            .or_else(|| std::env::var("DASHBOARD_JWT_SECRET").ok())
     }
 }
 

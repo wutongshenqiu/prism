@@ -6,12 +6,14 @@ pub mod streaming;
 
 use ai_proxy_core::config::Config;
 use ai_proxy_core::metrics::Metrics;
+use ai_proxy_core::request_log::RequestLogStore;
 use ai_proxy_provider::ExecutorRegistry;
 use ai_proxy_provider::routing::CredentialRouter;
 use ai_proxy_translator::TranslatorRegistry;
 use arc_swap::ArcSwap;
 use axum::{Router, middleware as axum_mw};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
@@ -23,6 +25,10 @@ pub struct AppState {
     pub executors: Arc<ExecutorRegistry>,
     pub translators: Arc<TranslatorRegistry>,
     pub metrics: Arc<Metrics>,
+    pub request_logs: Arc<RequestLogStore>,
+    pub config_path: Arc<Mutex<String>>,
+    pub credential_router: Arc<CredentialRouter>,
+    pub start_time: Instant,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -72,12 +78,98 @@ pub fn build_router(state: AppState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Compose: public + admin + api, then global middleware layers (outer → inner)
+    // Dashboard auth routes — no auth required (login endpoint)
+    let dashboard_auth_routes = Router::new().route(
+        "/api/dashboard/auth/login",
+        axum::routing::post(handler::dashboard::auth::login),
+    );
+
+    // Dashboard protected routes — JWT auth required
+    let dashboard_protected_routes = Router::new()
+        .route(
+            "/api/dashboard/auth/refresh",
+            axum::routing::post(handler::dashboard::auth::refresh),
+        )
+        // Providers
+        .route(
+            "/api/dashboard/providers",
+            axum::routing::get(handler::dashboard::providers::list_providers)
+                .post(handler::dashboard::providers::create_provider),
+        )
+        .route(
+            "/api/dashboard/providers/{id}",
+            axum::routing::get(handler::dashboard::providers::get_provider)
+                .patch(handler::dashboard::providers::update_provider)
+                .delete(handler::dashboard::providers::delete_provider),
+        )
+        // Auth keys
+        .route(
+            "/api/dashboard/auth-keys",
+            axum::routing::get(handler::dashboard::auth_keys::list_auth_keys)
+                .post(handler::dashboard::auth_keys::create_auth_key),
+        )
+        .route(
+            "/api/dashboard/auth-keys/{id}",
+            axum::routing::delete(handler::dashboard::auth_keys::delete_auth_key),
+        )
+        // Routing
+        .route(
+            "/api/dashboard/routing",
+            axum::routing::get(handler::dashboard::routing::get_routing)
+                .patch(handler::dashboard::routing::update_routing),
+        )
+        // Config operations
+        .route(
+            "/api/dashboard/config/validate",
+            axum::routing::post(handler::dashboard::config_ops::validate_config),
+        )
+        .route(
+            "/api/dashboard/config/reload",
+            axum::routing::post(handler::dashboard::config_ops::reload_config),
+        )
+        .route(
+            "/api/dashboard/config/current",
+            axum::routing::get(handler::dashboard::config_ops::get_config),
+        )
+        // Request logs
+        .route(
+            "/api/dashboard/logs",
+            axum::routing::get(handler::dashboard::logs::query_logs),
+        )
+        .route(
+            "/api/dashboard/logs/stats",
+            axum::routing::get(handler::dashboard::logs::log_stats),
+        )
+        // System
+        .route(
+            "/api/dashboard/system/health",
+            axum::routing::get(handler::dashboard::system::system_health),
+        )
+        .route(
+            "/api/dashboard/system/logs",
+            axum::routing::get(handler::dashboard::system::system_logs),
+        )
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::dashboard_auth::dashboard_auth_middleware,
+        ));
+
+    // WebSocket routes (auth via query param)
+    let ws_routes = Router::new().route(
+        "/ws/dashboard",
+        axum::routing::get(handler::dashboard::websocket::ws_handler),
+    );
+
+    // Compose: public + admin + api + dashboard, then global middleware layers (outer → inner)
     Router::new()
         .merge(public_routes)
         .merge(admin_routes)
         .merge(api_routes)
-        .layer(axum_mw::from_fn(
+        .merge(dashboard_auth_routes)
+        .merge(dashboard_protected_routes)
+        .merge(ws_routes)
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
             middleware::request_logging::request_logging_middleware,
         ))
         .layer(axum_mw::from_fn(

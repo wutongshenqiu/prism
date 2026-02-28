@@ -1,8 +1,16 @@
+use crate::AppState;
 use ai_proxy_core::context::RequestContext;
+use ai_proxy_core::request_log::RequestLogEntry;
+use axum::extract::State;
 use axum::{extract::Request, middleware::Next, response::Response};
 
 /// Middleware that logs request/response with request context info.
-pub async fn request_logging_middleware(request: Request, next: Next) -> Response {
+/// Also captures proxy requests (/v1/*) into the request log ring buffer.
+pub async fn request_logging_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
     let method = request.method().clone();
     let uri = request.uri().path().to_string();
 
@@ -26,7 +34,7 @@ pub async fn request_logging_middleware(request: Request, next: Next) -> Respons
 
     let response = next.run(request).await;
 
-    let elapsed = ctx.map(|c| c.elapsed_ms()).unwrap_or(0);
+    let elapsed = ctx.as_ref().map(|c| c.elapsed_ms()).unwrap_or(0);
     let status = response.status().as_u16();
 
     tracing::info!(
@@ -35,6 +43,28 @@ pub async fn request_logging_middleware(request: Request, next: Next) -> Respons
         elapsed_ms = elapsed,
         "Request completed"
     );
+
+    // Capture proxy requests into the ring buffer
+    if uri.starts_with("/v1/") {
+        let entry = RequestLogEntry {
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            request_id,
+            method: method.to_string(),
+            path: uri,
+            status,
+            latency_ms: elapsed as u64,
+            provider: None, // Provider info is set during dispatch
+            model: None,
+            input_tokens: None,
+            output_tokens: None,
+            error: if status >= 400 {
+                Some(format!("HTTP {status}"))
+            } else {
+                None
+            },
+        };
+        state.request_logs.push(entry);
+    }
 
     response
 }

@@ -6,6 +6,10 @@ test-config.yaml
 config.yaml
 docker-compose.override.yml
 
+# Frontend
+web/node_modules/
+web/dist/
+
 # Claude Code — track settings/commands, ignore transient data
 .claude/*
 !.claude/settings.json
