@@ -1,7 +1,6 @@
 target/
 .DS_Store
 .env
-.gitnexus/
 test-config.yaml
 config.yaml
 docker-compose.override.yml
