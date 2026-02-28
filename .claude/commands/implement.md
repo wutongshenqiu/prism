@@ -1,17 +1,19 @@
-实现 Spec 的 Technical Design。Argument $ARGUMENTS: `SPEC-NNN`
+实现 Spec。Argument $ARGUMENTS: `SPEC-NNN`
 
 用法:
-- `/implement SPEC-008` — 读取 SPEC-008 的 TD，生成实现计划并执行
+- `/implement SPEC-008` — 读取 SPEC-008 的 TD（或 PRD），生成实现计划并执行
 
 前置条件:
-- Spec 必须处于 **Active** 状态（已有 PRD + TD）
-- TD 中必须包含 Task Breakdown 或 Implementation Steps
+- Spec 必须处于 **Active** 或 **Draft** 状态
+- 优先使用 TD；如果没有 TD，从 PRD 的 Goals / User Stories / Requirements 推导实现计划
 
 Steps:
 
-1. **读取 Spec**: 读取 `docs/specs/active/$ARGUMENTS/technical-design.md` 和 `docs/specs/active/$ARGUMENTS/prd.md`
-   - 如果 Spec 不存在或不是 Active 状态，报错退出
-   - 提取 TD 中的 Task Breakdown / Implementation Steps / 关键文件列表
+1. **读取 Spec**: 读取 `docs/specs/active/$ARGUMENTS/` 下的文件
+   - 如果 Spec 目录不存在，报错退出
+   - 优先读取 `technical-design.md`，提取 Task Breakdown / Implementation Steps
+   - 如果 TD 不存在，读取 `prd.md`，从 Goals、User Stories、Requirements 推导实现步骤
+   - 提取关键文件列表和涉及的 crate
 
 2. **分析依赖**: 解析各任务之间的依赖关系
    - 哪些任务可以并行执行

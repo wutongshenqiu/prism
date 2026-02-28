@@ -88,6 +88,33 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
    /ship "test: add integration tests for translator registry"
    ```
 
+### Frontend Development (Dashboard)
+
+The project includes a React + TypeScript + Vite frontend in `web/`.
+
+1. **Setup**: Install dependencies:
+   ```sh
+   make web-install   # or: cd web && npm install
+   ```
+2. **Dev server**: Start with hot-reload (proxies API to `localhost:8317`):
+   ```sh
+   make web-dev       # or: cd web && npm run dev
+   ```
+3. **Type check**: Verify TypeScript compiles:
+   ```sh
+   cd web && npx tsc --noEmit
+   ```
+4. **Build**: Production build:
+   ```sh
+   make web-build     # or: cd web && npm run build
+   ```
+5. **Key patterns**:
+   - State management: Zustand stores (`web/src/stores/`)
+   - API client: Axios with JWT interceptor (`web/src/services/api.ts`)
+   - WebSocket: Auto-reconnecting manager (`web/src/services/websocket.ts`)
+   - Routing: React Router with protected routes (`web/src/components/ProtectedRoute.tsx`)
+6. **Submit** using `/ship` as usual.
+
 ### Handling Dependabot PRs
 
 Use the `/deps` command to manage Dependabot pull requests:
@@ -155,6 +182,7 @@ Note: The pre-commit hook in `.claude/settings.json` enforces `make lint && make
 | `crates/translator/`     | Format translation between provider APIs        |
 | `crates/server/`         | Axum router, handlers, middleware, dispatch     |
 | `src/`                   | Binary entry point                              |
+| `web/`                   | React + TypeScript dashboard frontend            |
 | `docs/specs/`            | SDD spec registry                               |
 | `docs/reference/`        | API and architecture reference docs             |
 | `docs/playbooks/`        | How-to guides (this directory)                  |

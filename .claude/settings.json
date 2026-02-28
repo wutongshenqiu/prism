@@ -10,7 +10,11 @@
       "Bash(gh:*)",
       "Bash(docker:*)",
       "Bash(curl:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(cd:*)"
     ]
   },
   "hooks": {
@@ -20,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "make lint && make test"
+            "command": "make lint && make test && (git diff --cached --name-only | grep -q '^web/' && cd web && npx tsc --noEmit || true)"
           }
         ]
       }

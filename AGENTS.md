@@ -79,9 +79,25 @@ HTTP server and request dispatch:
 - Axum router setup with middleware stack
 - Handlers: `chat_completions`, `messages`, `responses`, `models`, `admin`, `health`
 - Auth: `auth.rs` -- Bearer token / x-api-key validation (top-level module)
-- Middleware: `request_logging` and `request_context` (in `middleware/` directory)
+- Middleware: `request_logging`, `request_context`, `dashboard_auth` (JWT) (in `middleware/` directory)
 - `dispatch` -- Core routing logic with retry, credential rotation, translation, cloaking, and payload rules
 - `streaming` -- SSE response builder with keepalive
+- `handler/dashboard/` -- Dashboard API handlers:
+  - `auth` -- Login (bcrypt verify + JWT), token refresh
+  - `providers` -- Provider CRUD with API key masking and atomic config write-back
+  - `auth_keys` -- Auth key management (create `sk-proxy-` prefix, list masked, delete)
+  - `routing` -- Routing strategy get/update
+  - `logs` -- Request log query and stats
+  - `config_ops` -- Config validation (dry-run), hot-reload, get current sanitized config
+  - `system` -- System health (uptime, version), application log viewer
+  - `websocket` -- WebSocket at `/ws/dashboard` with metrics and request_log subscription channels
+
+### `web/` (Dashboard Frontend)
+React 19 + TypeScript + Vite SPA:
+- `services/api.ts` -- Axios client with JWT interceptor and auto-refresh
+- `services/websocket.ts` -- Auto-reconnecting WebSocket manager
+- `stores/` -- Zustand stores (auth, metrics, logs)
+- `pages/` -- Overview, Metrics, RequestLogs, Providers, AuthKeys, Routing, System, Logs
 
 ## API Endpoints
 
@@ -99,6 +115,27 @@ HTTP server and request dispatch:
 - `POST /v1/chat/completions` -- OpenAI Chat Completions format
 - `POST /v1/messages` -- Anthropic Messages format
 - `POST /v1/responses` -- OpenAI Responses API format
+
+### Dashboard (no auth)
+- `POST /api/dashboard/auth/login` -- Dashboard login (bcrypt + JWT)
+
+### Dashboard (JWT auth required)
+- `POST /api/dashboard/auth/refresh` -- Refresh JWT token
+- `GET/POST /api/dashboard/providers` -- List / create providers
+- `GET/PATCH/DELETE /api/dashboard/providers/{id}` -- Get / update / delete provider
+- `GET/POST /api/dashboard/auth-keys` -- List / create auth keys
+- `DELETE /api/dashboard/auth-keys/{id}` -- Delete auth key
+- `GET/PATCH /api/dashboard/routing` -- Get / update routing config
+- `GET /api/dashboard/logs` -- Query request logs
+- `GET /api/dashboard/logs/stats` -- Request log statistics
+- `POST /api/dashboard/config/validate` -- Validate config (dry-run)
+- `POST /api/dashboard/config/reload` -- Hot-reload config
+- `GET /api/dashboard/config/current` -- Get current sanitized config
+- `GET /api/dashboard/system/health` -- System health details
+- `GET /api/dashboard/system/logs` -- Application log viewer
+
+### WebSocket
+- `GET /ws/dashboard` -- Real-time metrics and request log push (JWT via query param)
 
 ## Provider Matrix
 
@@ -144,13 +181,15 @@ make dev
 
 ## Key Dependencies
 
-- `axum` -- HTTP framework
+- `axum` -- HTTP framework (with `ws` feature for WebSocket)
 - `tokio` -- Async runtime
 - `serde` / `serde_json` / `serde_yml` -- Serialization
 - `thiserror` / `anyhow` -- Error handling
 - `async-trait` -- Async trait support
 - `arc-swap` -- Hot-reloadable configuration
 - `reqwest` -- HTTP client for upstream calls
+- `jsonwebtoken` -- Dashboard JWT authentication
+- `bcrypt` -- Dashboard password hashing
 - `fork` -- Process daemonization (unix)
 - `sd-notify` -- systemd readiness notification
 - `tracing-appender` -- File-based log rotation

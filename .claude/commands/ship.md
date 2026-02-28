@@ -49,6 +49,9 @@ Steps:
       ```
    c. `gh pr create --title "..." --body "..."`
    d. `gh pr checks --watch` — 等待 CI 完成
-   e. 如果 `--merge` 且 CI 全部通过: `gh pr merge --merge --delete-branch`
+   e. 如果 `--merge` 且 CI 全部通过:
+      - **Stacked PR 安全检查**: 合并前用 `gh pr list --base <branch> --state open --json number` 检查是否有其他 PR 以当前分支为 base
+      - 如果有依赖 PR: 先 `gh pr merge --merge`（不加 `--delete-branch`），然后逐个 `gh pr edit <dep-pr> --base main` 更新依赖 PR 的 base，最后再删除远程分支
+      - 如果没有依赖 PR: `gh pr merge --merge --delete-branch`
    f. 报告 PR URL 和 CI 结果（及 merge 状态）
 11. **结果报告**: 报告 commit SHA、push 结果、PR URL（如适用）、merge 状态（如适用）

@@ -12,8 +12,10 @@ AI Proxy Gateway is a Rust/Axum multi-provider AI API gateway. It routes and tra
 | `crates/core/src/types/` | Provider-specific request/response types (OpenAI, Claude, Gemini) |
 | `crates/provider/` | Provider executors (Claude, OpenAI, Gemini, OpenAICompat), credential routing, SSE parsing |
 | `crates/translator/` | Format translation between provider APIs |
-| `crates/server/` | Axum router, handlers, middleware (auth, logging, request_context), dispatch |
+| `crates/server/` | Axum router, handlers, middleware (auth, logging, request_context, dashboard_auth), dispatch |
+| `crates/server/src/handler/dashboard/` | Dashboard API handlers (auth, providers, auth_keys, routing, logs, config_ops, system, websocket) |
 | `src/` | Binary entry point (subcommand CLI, Application struct, daemon support) |
+| `web/` | React + TypeScript + Vite dashboard frontend (SPA) |
 | `docs/specs/` | SDD spec registry |
 | `docs/reference/` | SSOT type definitions, API surface, architecture |
 | `docs/playbooks/` | How-to guides (add provider, add translator, etc.) |
@@ -40,13 +42,16 @@ cargo run -- stop                             # Graceful shutdown
 ### Make Targets
 
 ```sh
-make build   # cargo build --release
-make dev     # cargo run -- run --config config.yaml
-make test    # cargo test --workspace
-make lint    # fmt --check + clippy
-make fmt     # cargo fmt
-make clean   # cargo clean
-make check   # cargo check --workspace
+make build         # cargo build --release
+make dev           # cargo run -- run --config config.yaml
+make test          # cargo test --workspace
+make lint          # fmt --check + clippy
+make fmt           # cargo fmt
+make clean         # cargo clean
+make check         # cargo check --workspace
+make web-install   # npm install (web/)
+make web-dev       # npm run dev (web/)
+make web-build     # npm run build (web/)
 ```
 
 ### Docker
@@ -173,6 +178,7 @@ Available commands (`.claude/commands/`):
 | `/diagnose` | 问题诊断与修复 | `/diagnose "SSE streaming drops connection"` |
 | `/lint` | 代码检查/修复 | `/lint fix` |
 | `/test` | 运行测试 | `/test cloak` |
+| `/issues` | 从 Spec 自动生成 GitHub Issues（epic + sub-tasks） | `/issues SPEC-009 --milestone "Web Dashboard"` |
 | `/retro` | 复盘对话，沉淀改进到 commands/skills/workflow | `/retro 3` |
 
 ## Quality Gates
