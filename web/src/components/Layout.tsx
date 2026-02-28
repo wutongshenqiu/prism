@@ -5,7 +5,11 @@ import {
   LayoutDashboard,
   BarChart3,
   FileText,
+  Server,
+  Key,
+  GitBranch,
   Activity,
+  ScrollText,
   LogOut,
   Menu,
   X,
@@ -16,6 +20,11 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
   { to: '/metrics', icon: BarChart3, label: 'Metrics' },
   { to: '/request-logs', icon: FileText, label: 'Request Logs' },
+  { to: '/providers', icon: Server, label: 'Providers' },
+  { to: '/auth-keys', icon: Key, label: 'Auth Keys' },
+  { to: '/routing', icon: GitBranch, label: 'Routing' },
+  { to: '/system', icon: Activity, label: 'System' },
+  { to: '/logs', icon: ScrollText, label: 'App Logs' },
 ];
 
 export default function Layout() {
