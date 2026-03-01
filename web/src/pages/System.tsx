@@ -188,9 +188,9 @@ export default function System() {
                         <td>
                           <StatusBadge status={provider.status} />
                         </td>
-                        <td>{provider.latency_ms}ms</td>
+                        <td>{provider.latency_ms ? `${provider.latency_ms}ms` : '-'}</td>
                         <td>
-                          {new Date(provider.last_check).toLocaleString()}
+                          {provider.last_check ? new Date(provider.last_check).toLocaleString() : '-'}
                         </td>
                       </tr>
                     ))

@@ -139,10 +139,10 @@ export default function AuthKeys() {
               ) : (
                 keys.map((key) => (
                   <tr key={key.id}>
-                    <td className="text-bold">{key.name}</td>
-                    <td className="text-mono">{key.key_prefix}...</td>
+                    <td className="text-bold">{key.name || '-'}</td>
+                    <td className="text-mono">{key.key_prefix || '-'}</td>
                     <td className="text-nowrap">
-                      {new Date(key.created_at).toLocaleDateString()}
+                      {key.created_at ? new Date(key.created_at).toLocaleDateString() : '-'}
                     </td>
                     <td className="text-nowrap">
                       {key.last_used_at

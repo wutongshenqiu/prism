@@ -37,7 +37,18 @@ export function useWebSocket(): void {
           break;
         }
         case 'request_log': {
-          addLog(message.data as RequestLog);
+          const raw = message.data as Record<string, unknown>;
+          addLog({
+            ...raw,
+            id: (raw.request_id || raw.id || '') as string,
+            input_tokens: (raw.input_tokens ?? 0) as number,
+            output_tokens: (raw.output_tokens ?? 0) as number,
+            provider: (raw.provider || '-') as string,
+            model: (raw.model || '-') as string,
+            timestamp: typeof raw.timestamp === 'number'
+              ? new Date(raw.timestamp as number).toISOString()
+              : raw.timestamp as string,
+          } as RequestLog);
           break;
         }
       }

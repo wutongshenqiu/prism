@@ -13,9 +13,12 @@ interface AuthState {
   initialize: () => void;
 }
 
+// Read token synchronously so ProtectedRoute sees it on first render
+const savedToken = localStorage.getItem('auth_token');
+
 export const useAuthStore = create<AuthState>((set) => ({
-  token: null,
-  isAuthenticated: false,
+  token: savedToken,
+  isAuthenticated: !!savedToken,
   isLoading: false,
   error: null,
 

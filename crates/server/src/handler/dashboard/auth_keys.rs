@@ -3,6 +3,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use serde::Deserialize;
 use serde_json::json;
 
 fn mask_key(key: &str) -> String {
@@ -10,6 +11,14 @@ fn mask_key(key: &str) -> String {
         return "****".to_string();
     }
     format!("{}****{}", &key[..4], &key[key.len() - 4..])
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAuthKeyRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub expires_in_days: Option<u32>,
 }
 
 /// GET /api/dashboard/auth-keys
@@ -22,7 +31,11 @@ pub async fn list_auth_keys(State(state): State<AppState>) -> impl IntoResponse 
         .map(|(i, k)| {
             json!({
                 "id": i,
+                "name": format!("Key {}", i + 1),
                 "key_masked": mask_key(k),
+                "created_at": null,
+                "last_used_at": null,
+                "expires_at": null,
             })
         })
         .collect();
@@ -30,12 +43,27 @@ pub async fn list_auth_keys(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 /// POST /api/dashboard/auth-keys
-pub async fn create_auth_key(State(state): State<AppState>) -> impl IntoResponse {
-    // Generate a secure random key
+pub async fn create_auth_key(
+    State(state): State<AppState>,
+    Json(body): Json<CreateAuthKeyRequest>,
+) -> impl IntoResponse {
+    // Generate a secure random key with optional name prefix
+    let name = body.name.clone().unwrap_or_default();
     let key = format!(
         "sk-proxy-{}",
         uuid::Uuid::new_v4().to_string().replace('-', "")
     );
+
+    let expires_at = body.expires_in_days.map(|days| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expires = now + (days as u64) * 86400;
+        // Format as ISO 8601
+        let dt = chrono::DateTime::from_timestamp(expires as i64, 0);
+        dt.map(|d| d.to_rfc3339()).unwrap_or_default()
+    });
 
     let full_key = key.clone();
     match super::providers::update_config_file_public(&state, move |config| {
@@ -48,6 +76,8 @@ pub async fn create_auth_key(State(state): State<AppState>) -> impl IntoResponse
             StatusCode::CREATED,
             Json(json!({
                 "key": full_key,
+                "name": name,
+                "expires_at": expires_at,
                 "message": "API key created. Save this key - it will not be shown again.",
             })),
         ),

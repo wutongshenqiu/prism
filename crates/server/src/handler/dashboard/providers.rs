@@ -353,6 +353,9 @@ async fn update_config_file(
 
     mutate(&mut config);
 
+    // Rebuild derived fields
+    config.api_keys_set = config.api_keys.iter().cloned().collect();
+
     let yaml =
         serde_yml::to_string(&config).map_err(|e| format!("Failed to serialize config: {e}"))?;
 
@@ -364,6 +367,9 @@ async fn update_config_file(
     std::fs::write(&tmp_path, &yaml).map_err(|e| format!("Failed to write temp file: {e}"))?;
     std::fs::rename(&tmp_path, &config_path)
         .map_err(|e| format!("Failed to rename config file: {e}"))?;
+
+    // Reload in-memory config so changes take effect immediately
+    state.config.store(std::sync::Arc::new(config));
 
     Ok(())
 }

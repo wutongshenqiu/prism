@@ -59,7 +59,7 @@ export default function Overview() {
           color="blue"
           trend="up"
           trendValue={
-            snapshot ? `${snapshot.requests_per_minute}/min` : undefined
+            snapshot ? `${snapshot.requests_per_minute.toFixed(1)}/min` : undefined
           }
         />
         <MetricCard
@@ -135,6 +135,7 @@ export default function Overview() {
                     fontSize: '13px',
                   }}
                   labelFormatter={(v: string) => new Date(v).toLocaleTimeString()}
+                  formatter={(value: number) => [Number(value.toFixed(1)), undefined]}
                 />
                 <Line
                   type="monotone"

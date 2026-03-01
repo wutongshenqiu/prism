@@ -215,23 +215,26 @@ export default function Providers() {
                     </td>
                     <td>
                       <div className="tag-list">
-                        {provider.models.slice(0, 3).map((m) => (
+                        {(provider.models || []).slice(0, 3).map((m) => (
                           <span key={m} className="tag">{m}</span>
                         ))}
-                        {provider.models.length > 3 && (
+                        {(provider.models || []).length > 3 && (
                           <span className="tag tag-more">
                             +{provider.models.length - 3}
                           </span>
+                        )}
+                        {!provider.models && provider.models_count != null && (
+                          <span className="tag">{provider.models_count} models</span>
                         )}
                       </div>
                     </td>
                     <td>
                       <StatusBadge
-                        status={provider.enabled ? 'active' : 'inactive'}
+                        status={(provider.enabled ?? !provider.disabled) ? 'active' : 'inactive'}
                       />
                     </td>
                     <td className="text-nowrap">
-                      {new Date(provider.updated_at).toLocaleDateString()}
+                      {provider.updated_at ? new Date(provider.updated_at).toLocaleDateString() : '-'}
                     </td>
                     <td>
                       <div className="action-btns">
