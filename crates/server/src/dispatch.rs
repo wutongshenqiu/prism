@@ -69,9 +69,7 @@ fn extract_usage(payload: &str) -> (Option<u64>, Option<u64>) {
     // Gemini format: usageMetadata
     if let Some(usage) = val.get("usageMetadata") {
         let input = usage.get("promptTokenCount").and_then(|v| v.as_u64());
-        let output = usage
-            .get("candidatesTokenCount")
-            .and_then(|v| v.as_u64());
+        let output = usage.get("candidatesTokenCount").and_then(|v| v.as_u64());
         return (input, output);
     }
     (None, None)

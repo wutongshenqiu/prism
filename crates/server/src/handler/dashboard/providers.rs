@@ -188,6 +188,7 @@ pub async fn create_provider(
         name: body.name,
         cloak: Default::default(),
         wire_api: Default::default(),
+        weight: 1,
     };
 
     match update_config_file(&state, |config| match body.provider_type.as_str() {
