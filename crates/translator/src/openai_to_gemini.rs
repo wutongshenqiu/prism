@@ -304,3 +304,275 @@ fn build_generation_config(req: &Value) -> Option<Value> {
 
     if has_any { Some(config) } else { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_json_diff::assert_json_eq;
+
+    fn translate(req: Value) -> Value {
+        let raw = serde_json::to_vec(&req).unwrap();
+        let result = translate_request("gemini-1.5-pro", &raw, false).unwrap();
+        serde_json::from_slice(&result).unwrap()
+    }
+
+    #[test]
+    fn test_basic_text_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let result = translate(req);
+        assert_eq!(result["contents"][0]["role"], "user");
+        assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn test_system_instruction_extraction() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let result = translate(req);
+        assert_eq!(
+            result["systemInstruction"]["parts"][0]["text"],
+            "You are helpful."
+        );
+        // System should be filtered from contents
+        assert_eq!(result["contents"].as_array().unwrap().len(), 1);
+        assert_eq!(result["contents"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_system_instruction_array_content() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": [
+                    {"type": "text", "text": "Rule 1"},
+                    {"type": "text", "text": "Rule 2"}
+                ]},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let result = translate(req);
+        let parts = result["systemInstruction"]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "Rule 1");
+        assert_eq!(parts[1]["text"], "Rule 2");
+    }
+
+    #[test]
+    fn test_no_system_instruction() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let result = translate(req);
+        assert!(result.get("systemInstruction").is_none());
+    }
+
+    #[test]
+    fn test_assistant_role_mapped_to_model() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello!"},
+                {"role": "user", "content": "Bye"}
+            ]
+        });
+        let result = translate(req);
+        assert_eq!(result["contents"][1]["role"], "model");
+        assert_eq!(result["contents"][1]["parts"][0]["text"], "Hello!");
+    }
+
+    #[test]
+    fn test_consecutive_same_role_merged() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Part 1"},
+                {"role": "user", "content": "Part 2"}
+            ]
+        });
+        let result = translate(req);
+        // Gemini requires consecutive same-role messages to be merged
+        let contents = result["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["parts"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_tool_calls_to_function_call() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"city\":\"SF\"}"
+                    }
+                }]
+            }]
+        });
+        let result = translate(req);
+        let parts = &result["contents"][0]["parts"];
+        let fc = &parts[0]["functionCall"];
+        assert_eq!(fc["name"], "get_weather");
+        assert_json_eq!(fc["args"], json!({"city": "SF"}));
+    }
+
+    #[test]
+    fn test_tool_result_to_function_response() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_1", "type": "function",
+                    "function": {"name": "weather", "arguments": "{}"}
+                }]},
+                {"role": "tool", "name": "weather", "content": "{\"temp\": 72}"}
+            ]
+        });
+        let result = translate(req);
+        let tool_msg = result["contents"].as_array().unwrap().last().unwrap();
+        assert_eq!(tool_msg["role"], "user");
+        let fr = &tool_msg["parts"][0]["functionResponse"];
+        assert_eq!(fr["name"], "weather");
+        assert_json_eq!(fr["response"], json!({"temp": 72}));
+    }
+
+    #[test]
+    fn test_tool_result_non_json_content() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "tool", "name": "search", "content": "plain text result"}
+            ]
+        });
+        let result = translate(req);
+        let fr = &result["contents"][0]["parts"][0]["functionResponse"];
+        assert_eq!(fr["name"], "search");
+        assert_json_eq!(fr["response"], json!({"result": "plain text result"}));
+    }
+
+    #[test]
+    fn test_base64_image_to_inline_data() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ..."}}
+                ]
+            }]
+        });
+        let result = translate(req);
+        let part = &result["contents"][0]["parts"][0];
+        assert_eq!(part["inlineData"]["mimeType"], "image/jpeg");
+        assert_eq!(part["inlineData"]["data"], "/9j/4AAQ...");
+    }
+
+    #[test]
+    fn test_regular_image_url_to_text_reference() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+                ]
+            }]
+        });
+        let result = translate(req);
+        let part = &result["contents"][0]["parts"][0];
+        assert_eq!(part["text"], "[image: https://example.com/image.png]");
+    }
+
+    #[test]
+    fn test_tools_to_function_declarations() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+                }
+            }]
+        });
+        let result = translate(req);
+        let decls = &result["tools"][0]["functionDeclarations"];
+        assert_eq!(decls[0]["name"], "search");
+        assert_eq!(decls[0]["description"], "Search the web");
+        assert!(decls[0]["parameters"]["properties"]["q"].is_object());
+    }
+
+    #[test]
+    fn test_generation_config() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.5,
+            "top_p": 0.8,
+            "max_tokens": 2048,
+            "stop": ["END", "STOP"]
+        });
+        let result = translate(req);
+        let gc = &result["generationConfig"];
+        assert_eq!(gc["temperature"], 0.5);
+        assert_eq!(gc["topP"], 0.8);
+        assert_eq!(gc["maxOutputTokens"], 2048);
+        assert_json_eq!(gc["stopSequences"], json!(["END", "STOP"]));
+    }
+
+    #[test]
+    fn test_generation_config_stop_string() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stop": "END"
+        });
+        let result = translate(req);
+        assert_json_eq!(result["generationConfig"]["stopSequences"], json!(["END"]));
+    }
+
+    #[test]
+    fn test_no_generation_config_when_empty() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let result = translate(req);
+        assert!(result.get("generationConfig").is_none());
+    }
+
+    #[test]
+    fn test_missing_messages_error() {
+        let req = json!({"model": "gpt-4"});
+        let raw = serde_json::to_vec(&req).unwrap();
+        let result = translate_request("gemini-1.5-pro", &raw, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_content_gets_placeholder() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": null}]
+        });
+        let result = translate(req);
+        assert_eq!(result["contents"][0]["parts"][0]["text"], "");
+    }
+}

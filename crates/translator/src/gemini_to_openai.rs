@@ -277,3 +277,281 @@ pub fn translate_stream(
 
     Ok(chunks)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_json_diff::assert_json_eq;
+
+    // ==================
+    // Non-stream tests
+    // ==================
+
+    #[test]
+    fn test_non_stream_basic_text() {
+        let gemini_resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello there!"}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "modelVersion": "gemini-1.5-pro",
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5,
+                "totalTokenCount": 15
+            }
+        });
+        let data = serde_json::to_vec(&gemini_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+
+        assert_eq!(result["object"], "chat.completion");
+        assert_eq!(result["model"], "gemini-1.5-pro");
+        assert_eq!(result["choices"][0]["message"]["role"], "assistant");
+        assert_eq!(result["choices"][0]["message"]["content"], "Hello there!");
+        assert_eq!(result["choices"][0]["finish_reason"], "stop");
+        assert_eq!(result["usage"]["prompt_tokens"], 10);
+        assert_eq!(result["usage"]["completion_tokens"], 5);
+        assert_eq!(result["usage"]["total_tokens"], 15);
+    }
+
+    #[test]
+    fn test_non_stream_function_call() {
+        let gemini_resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "get_weather",
+                            "args": {"city": "SF"}
+                        }
+                    }],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }],
+            "modelVersion": "gemini-1.5-pro"
+        });
+        let data = serde_json::to_vec(&gemini_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+
+        // content should be null when only tool calls
+        assert_eq!(result["choices"][0]["message"]["content"], Value::Null);
+        let tool_calls = result["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["type"], "function");
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+        let args: Value =
+            serde_json::from_str(tool_calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_json_eq!(args, json!({"city": "SF"}));
+    }
+
+    #[test]
+    fn test_non_stream_finish_reason_mapping() {
+        let test_cases = vec![
+            ("STOP", "stop"),
+            ("MAX_TOKENS", "length"),
+            ("SAFETY", "content_filter"),
+            ("RECITATION", "content_filter"),
+        ];
+        for (gemini_reason, expected) in test_cases {
+            let gemini_resp = json!({
+                "candidates": [{
+                    "content": {"parts": [{"text": "Hi"}], "role": "model"},
+                    "finishReason": gemini_reason
+                }],
+                "modelVersion": "gemini"
+            });
+            let data = serde_json::to_vec(&gemini_resp).unwrap();
+            let result: Value =
+                serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap())
+                    .unwrap();
+            assert_eq!(
+                result["choices"][0]["finish_reason"], expected,
+                "Gemini '{gemini_reason}' should map to '{expected}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_stream_no_candidates() {
+        let gemini_resp = json!({
+            "modelVersion": "gemini"
+        });
+        let data = serde_json::to_vec(&gemini_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+        assert_eq!(result["choices"][0]["message"]["content"], "");
+        assert_eq!(result["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn test_non_stream_no_usage() {
+        let gemini_resp = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hi"}], "role": "model"},
+                "finishReason": "STOP"
+            }],
+            "modelVersion": "gemini"
+        });
+        let data = serde_json::to_vec(&gemini_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+        assert!(result.get("usage").is_none());
+    }
+
+    // ==================
+    // Stream tests
+    // ==================
+
+    fn new_state() -> TranslateState {
+        TranslateState::default()
+    }
+
+    fn parse_chunk(s: &str) -> Value {
+        serde_json::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn test_stream_first_chunk_initializes_state() {
+        let mut state = new_state();
+        let resp = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hi"}], "role": "model"}
+            }],
+            "modelVersion": "gemini-1.5-pro"
+        });
+        let data = serde_json::to_vec(&resp).unwrap();
+        let chunks = translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+
+        // First chunk should be role initialization
+        assert!(chunks.len() >= 2); // role chunk + content chunk
+        let role_chunk = parse_chunk(&chunks[0]);
+        assert_eq!(role_chunk["choices"][0]["delta"]["role"], "assistant");
+        assert!(!state.response_id.is_empty());
+
+        // Second chunk should be content
+        let content_chunk = parse_chunk(&chunks[1]);
+        assert_eq!(content_chunk["choices"][0]["delta"]["content"], "Hi");
+    }
+
+    #[test]
+    fn test_stream_text_content() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "gemini".to_string();
+
+        let resp = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "World"}], "role": "model"}
+            }]
+        });
+        let data = serde_json::to_vec(&resp).unwrap();
+        let chunks = translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        let chunk = parse_chunk(&chunks[0]);
+        assert_eq!(chunk["choices"][0]["delta"]["content"], "World");
+    }
+
+    #[test]
+    fn test_stream_function_call() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "gemini".to_string();
+        state.current_tool_call_index = -1;
+
+        let resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "weather",
+                            "args": {"city": "NYC"}
+                        }
+                    }],
+                    "role": "model"
+                }
+            }]
+        });
+        let data = serde_json::to_vec(&resp).unwrap();
+        let chunks = translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        let chunk = parse_chunk(&chunks[0]);
+        let tc = &chunk["choices"][0]["delta"]["tool_calls"][0];
+        assert_eq!(tc["function"]["name"], "weather");
+        assert_eq!(state.current_tool_call_index, 0);
+    }
+
+    #[test]
+    fn test_stream_finish_with_done() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "gemini".to_string();
+
+        let resp = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Done"}], "role": "model"},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5
+            }
+        });
+        let data = serde_json::to_vec(&resp).unwrap();
+        let chunks = translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+
+        // Should have content chunk, finish chunk, and [DONE]
+        assert!(chunks.len() >= 3);
+        let last_json = chunks.iter().rev().nth(1).unwrap();
+        let finish_chunk = parse_chunk(last_json);
+        assert_eq!(finish_chunk["choices"][0]["finish_reason"], "stop");
+        assert_eq!(finish_chunk["usage"]["prompt_tokens"], 10);
+        assert_eq!(finish_chunk["usage"]["completion_tokens"], 5);
+
+        assert_eq!(chunks.last().unwrap(), "[DONE]");
+    }
+
+    #[test]
+    fn test_stream_model_version_update() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "unknown".to_string();
+
+        let resp = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hi"}], "role": "model"}
+            }],
+            "modelVersion": "gemini-1.5-flash"
+        });
+        let data = serde_json::to_vec(&resp).unwrap();
+        translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+
+        assert_eq!(state.model, "gemini-1.5-flash");
+    }
+
+    #[test]
+    fn test_stream_no_candidates() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "gemini".to_string();
+
+        let resp = json!({});
+        let data = serde_json::to_vec(&resp).unwrap();
+        let chunks = translate_stream("model", b"{}", None, &data, &mut state).unwrap();
+        assert!(chunks.is_empty());
+    }
+}

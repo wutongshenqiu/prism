@@ -25,6 +25,8 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-009 | Dashboard Admin API & WebSocket                | Draft     | [active/SPEC-009/](active/SPEC-009/) |
 | SPEC-010 | Web Dashboard - Monitoring                     | Draft     | [active/SPEC-010/](active/SPEC-010/) |
 | SPEC-011 | Web Dashboard - Configuration & Operations     | Draft     | [active/SPEC-011/](active/SPEC-011/) |
+| SPEC-029 | Translator Unit Tests                          | Active    | [active/SPEC-029/](active/SPEC-029/) |
+| SPEC-030 | Provider & Dispatch Unit Tests                 | Active    | [active/SPEC-030/](active/SPEC-030/) |
 
 ## How to Create a New Spec
 

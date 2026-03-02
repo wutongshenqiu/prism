@@ -1,4 +1,5 @@
-.PHONY: build dev test lint fmt clean check \
+.PHONY: build dev test test-unit test-integration test-e2e test-all \
+       lint fmt clean check \
        docker-build docker-run docker-stop docker-logs \
        docker-compose-up docker-compose-down audit \
        web-dev web-build web-install
@@ -11,6 +12,17 @@ dev:
 
 test:
 	cargo test --workspace
+
+test-unit:
+	cargo test --workspace --lib
+
+test-integration:
+	cargo test --workspace --test '*'
+
+test-e2e:
+	cargo test --test e2e -- --ignored
+
+test-all: test
 
 lint:
 	cargo fmt --check

@@ -191,3 +191,231 @@ pub fn build_registry() -> TranslatorRegistry {
 
     reg
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // === replace_model_in_payload ===
+
+    #[test]
+    fn test_replace_model_in_payload() {
+        let payload = json!({"model": "gpt-4", "messages": []});
+        let raw = serde_json::to_vec(&payload).unwrap();
+        let result = replace_model_in_payload(&raw, "actual-model-id").unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "actual-model-id");
+        // Other fields preserved
+        assert!(val["messages"].is_array());
+    }
+
+    #[test]
+    fn test_replace_model_no_model_field() {
+        let payload = json!({"messages": []});
+        let raw = serde_json::to_vec(&payload).unwrap();
+        let result = replace_model_in_payload(&raw, "new-model").unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Should not add model field if not present
+        assert!(val.get("model").is_none());
+    }
+
+    // === TranslatorRegistry ===
+
+    #[test]
+    fn test_registry_same_format_passthrough() {
+        let reg = build_registry();
+        let payload = json!({"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]});
+        let raw = serde_json::to_vec(&payload).unwrap();
+
+        let result = reg
+            .translate_request(Format::OpenAI, Format::OpenAI, "gpt-4o", &raw, false)
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Model should be replaced even on passthrough
+        assert_eq!(val["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn test_registry_openai_to_claude_translation() {
+        let reg = build_registry();
+        let payload = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let raw = serde_json::to_vec(&payload).unwrap();
+
+        let result = reg
+            .translate_request(
+                Format::OpenAI,
+                Format::Claude,
+                "claude-3-5-sonnet-20241022",
+                &raw,
+                false,
+            )
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(val["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_registry_openai_to_gemini_translation() {
+        let reg = build_registry();
+        let payload = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let raw = serde_json::to_vec(&payload).unwrap();
+
+        let result = reg
+            .translate_request(
+                Format::OpenAI,
+                Format::Gemini,
+                "gemini-1.5-pro",
+                &raw,
+                false,
+            )
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["contents"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_registry_openai_compat_passthrough() {
+        let reg = build_registry();
+        let payload = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.7
+        });
+        let raw = serde_json::to_vec(&payload).unwrap();
+
+        let result = reg
+            .translate_request(
+                Format::OpenAI,
+                Format::OpenAICompat,
+                "deepseek-chat",
+                &raw,
+                false,
+            )
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Model replaced, everything else preserved
+        assert_eq!(val["model"], "deepseek-chat");
+        assert_eq!(val["temperature"], 0.7);
+        assert_eq!(val["messages"][0]["content"], "Hello");
+    }
+
+    // === translate_stream ===
+
+    #[test]
+    fn test_stream_same_format_passthrough() {
+        let reg = build_registry();
+        let mut state = TranslateState::default();
+        let data = b"{\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}";
+
+        let result = reg
+            .translate_stream(
+                Format::OpenAI,
+                Format::OpenAI,
+                "gpt-4",
+                b"{}",
+                None,
+                data,
+                &mut state,
+            )
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], String::from_utf8_lossy(data));
+    }
+
+    #[test]
+    fn test_stream_done_sentinel_passthrough() {
+        let reg = build_registry();
+        let mut state = TranslateState::default();
+
+        let result = reg
+            .translate_stream(
+                Format::OpenAI,
+                Format::Claude,
+                "claude-3",
+                b"{}",
+                None,
+                b"[DONE]",
+                &mut state,
+            )
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "[DONE]");
+    }
+
+    #[test]
+    fn test_stream_no_translator_fallback() {
+        let reg = TranslatorRegistry::new(); // empty registry
+        let mut state = TranslateState::default();
+        let data = b"some raw data";
+
+        let result = reg
+            .translate_stream(
+                Format::Claude,
+                Format::Gemini,
+                "model",
+                b"{}",
+                None,
+                data,
+                &mut state,
+            )
+            .unwrap();
+        assert_eq!(result[0], "some raw data");
+    }
+
+    // === translate_non_stream ===
+
+    #[test]
+    fn test_non_stream_same_format_passthrough() {
+        let reg = build_registry();
+        let data = b"{\"choices\":[{\"message\":{\"content\":\"Hello\"}}]}";
+
+        let result = reg
+            .translate_non_stream(Format::OpenAI, Format::OpenAI, "gpt-4", b"{}", data)
+            .unwrap();
+        assert_eq!(result, String::from_utf8_lossy(data));
+    }
+
+    #[test]
+    fn test_non_stream_no_translator_fallback() {
+        let reg = TranslatorRegistry::new();
+        let data = b"raw response";
+
+        let result = reg
+            .translate_non_stream(Format::Claude, Format::Gemini, "model", b"{}", data)
+            .unwrap();
+        assert_eq!(result, "raw response");
+    }
+
+    // === has_response_translator ===
+
+    #[test]
+    fn test_has_response_translator() {
+        let reg = build_registry();
+        assert!(reg.has_response_translator(Format::OpenAI, Format::Claude));
+        assert!(reg.has_response_translator(Format::OpenAI, Format::Gemini));
+        assert!(reg.has_response_translator(Format::OpenAI, Format::OpenAICompat));
+        // Same format should return false
+        assert!(!reg.has_response_translator(Format::OpenAI, Format::OpenAI));
+        // Unregistered pair should return false
+        assert!(!reg.has_response_translator(Format::Claude, Format::Gemini));
+    }
+
+    // === build_registry ===
+
+    #[test]
+    fn test_build_registry_has_all_paths() {
+        let reg = build_registry();
+        // Should have 3 request translators
+        assert_eq!(reg.requests.len(), 3);
+        // Should have 3 response translators
+        assert_eq!(reg.responses.len(), 3);
+    }
+}
