@@ -10,6 +10,7 @@ use ai_proxy_core::error::ProxyError;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 
+#[derive(Debug)]
 pub(crate) struct ParsedRequest {
     pub model: String,
     /// Fallback model chain: try models in order until one succeeds.
@@ -65,4 +66,130 @@ pub(crate) fn parse_request(
         user_agent,
         debug,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+
+    fn make_body(json: serde_json::Value) -> Bytes {
+        Bytes::from(serde_json::to_vec(&json).unwrap())
+    }
+
+    #[test]
+    fn test_parse_request_basic() {
+        let body = make_body(serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "hi"}]
+        }));
+        let headers = HeaderMap::new();
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert_eq!(parsed.model, "gpt-4");
+        assert!(!parsed.stream);
+        assert!(!parsed.debug);
+        assert!(parsed.models.is_none());
+        assert!(parsed.user_agent.is_none());
+    }
+
+    #[test]
+    fn test_parse_request_with_stream() {
+        let body = make_body(serde_json::json!({
+            "model": "gpt-4",
+            "stream": true
+        }));
+        let headers = HeaderMap::new();
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(parsed.stream);
+    }
+
+    #[test]
+    fn test_parse_request_with_models_fallback() {
+        let body = make_body(serde_json::json!({
+            "model": "gpt-4",
+            "models": ["gpt-4", "gpt-3.5-turbo", "claude-3-sonnet"]
+        }));
+        let headers = HeaderMap::new();
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert_eq!(
+            parsed.models,
+            Some(vec![
+                "gpt-4".to_string(),
+                "gpt-3.5-turbo".to_string(),
+                "claude-3-sonnet".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_request_user_agent() {
+        let body = make_body(serde_json::json!({"model": "gpt-4"}));
+        let mut headers = HeaderMap::new();
+        headers.insert("user-agent", "opencode/1.0".parse().unwrap());
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert_eq!(parsed.user_agent, Some("opencode/1.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_request_debug_true() {
+        let body = make_body(serde_json::json!({"model": "gpt-4"}));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-debug", "true".parse().unwrap());
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(parsed.debug);
+    }
+
+    #[test]
+    fn test_parse_request_debug_one() {
+        let body = make_body(serde_json::json!({"model": "gpt-4"}));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-debug", "1".parse().unwrap());
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(parsed.debug);
+    }
+
+    #[test]
+    fn test_parse_request_debug_false_value() {
+        let body = make_body(serde_json::json!({"model": "gpt-4"}));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-debug", "false".parse().unwrap());
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(!parsed.debug);
+    }
+
+    #[test]
+    fn test_parse_request_missing_model() {
+        let body = make_body(serde_json::json!({"messages": []}));
+        let headers = HeaderMap::new();
+        let err = parse_request(&headers, &body).unwrap_err();
+        assert!(err.to_string().contains("missing model"));
+    }
+
+    #[test]
+    fn test_parse_request_invalid_json() {
+        let body = Bytes::from_static(b"not json");
+        let headers = HeaderMap::new();
+        let err = parse_request(&headers, &body).unwrap_err();
+        assert!(matches!(err, ProxyError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_parse_request_stream_default_false() {
+        let body = make_body(serde_json::json!({"model": "m"}));
+        let headers = HeaderMap::new();
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(!parsed.stream);
+    }
+
+    #[test]
+    fn test_parse_request_models_non_array_ignored() {
+        let body = make_body(serde_json::json!({
+            "model": "gpt-4",
+            "models": "not-an-array"
+        }));
+        let headers = HeaderMap::new();
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert!(parsed.models.is_none());
+    }
 }

@@ -962,6 +962,43 @@ mod tests {
         assert_eq!(chain, vec!["gpt-4", "gpt-3.5-turbo"]);
     }
 
+    // === rewrite_model_in_body ===
+
+    #[test]
+    fn test_rewrite_model_in_body() {
+        let body = Bytes::from(r#"{"model":"gpt-4","messages":[]}"#);
+        let result = rewrite_model_in_body(&body, "claude-3-sonnet");
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "claude-3-sonnet");
+        assert!(val["messages"].is_array());
+    }
+
+    #[test]
+    fn test_rewrite_model_in_body_no_model() {
+        let body = Bytes::from(r#"{"messages":[]}"#);
+        let result = rewrite_model_in_body(&body, "new-model");
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "new-model");
+    }
+
+    #[test]
+    fn test_rewrite_model_in_body_invalid_json() {
+        let body = Bytes::from("not json");
+        let result = rewrite_model_in_body(&body, "new-model");
+        // Returns original body on parse failure
+        assert_eq!(result, body);
+    }
+
+    // === keepalive_error_json ===
+
+    #[test]
+    fn test_keepalive_error_json() {
+        let result = keepalive_error_json("something went wrong");
+        let val: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(val["error"]["message"], "something went wrong");
+        assert_eq!(val["error"]["type"], "server_error");
+    }
+
     #[test]
     fn test_model_chain_single() {
         let model_chain: Vec<String> = {
