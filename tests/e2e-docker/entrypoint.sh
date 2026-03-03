@@ -18,9 +18,12 @@ wait_for_health "$GATEWAY_URL/health" 30
 
 # 4. Discover & run test cases
 FILTER="${TEST_FILTER:-}"
+LEVEL="${TEST_LEVEL:-quick}"
 PASSED=0
 FAILED=0
 SKIPPED=0
+
+log_info "Test level: $LEVEL"
 
 timer_start
 SUITE_START=$_TIMER_START
@@ -38,6 +41,17 @@ for test_dir in /tests/cases/*/; do
     # Skip directories without test.sh
     if [[ ! -f "$test_dir/test.sh" ]]; then
         log_warn "Skipping: $name (no test.sh)"
+        ((SKIPPED++)) || true
+        continue
+    fi
+
+    # Read @level metadata from test.sh (default: quick)
+    case_level=$(grep -m1 '^# @level:' "$test_dir/test.sh" | sed 's/^# @level:[[:space:]]*//' || echo "quick")
+    case_level="${case_level:-quick}"
+
+    # Skip if test level exceeds requested level
+    if [[ "$LEVEL" == "quick" && "$case_level" == "full" ]]; then
+        log_info "Skipping: $name (level: full, running: quick)"
         ((SKIPPED++)) || true
         continue
     fi

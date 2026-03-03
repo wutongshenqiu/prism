@@ -23,6 +23,7 @@ services:
     environment:
       - GATEWAY_URL=http://gateway:8317
       - TEST_FILTER
+      - TEST_LEVEL
     entrypoint: ["bash", "/tests/entrypoint.sh"]
 
 volumes:
