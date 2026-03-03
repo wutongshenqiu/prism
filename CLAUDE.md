@@ -42,17 +42,42 @@ cargo run -- stop                             # Graceful shutdown
 ### Make Targets
 
 ```sh
-make build         # cargo build --release
-make dev           # cargo run -- run --config config.yaml
-make test          # cargo test --workspace
-make lint          # fmt --check + clippy
-make fmt           # cargo fmt
-make clean         # cargo clean
-make check         # cargo check --workspace
-make web-install   # npm install (web/)
-make web-dev       # npm run dev (web/)
-make web-build     # npm run build (web/)
+make build              # cargo build --release
+make dev                # cargo run -- run --config config.yaml
+make test               # cargo test --workspace
+make lint               # fmt --check + clippy
+make fmt                # cargo fmt
+make clean              # cargo clean
+make check              # cargo check --workspace
+make web-install        # npm install (web/)
+make web-dev            # npm run dev (web/)
+make web-build          # npm run build (web/)
+make test-e2e-docker    # Run Docker E2E CLI tool tests (requires E2E_BAILIAN_API_KEY)
 ```
+
+### E2E Docker Tests
+
+Docker-based end-to-end tests for coding agent CLI tools. Tests live in `tests/e2e-docker/cases/<name>/test.sh`.
+
+```sh
+make test-e2e-docker                              # Run quick tests (default)
+TEST_LEVEL=full make test-e2e-docker              # Run all tests (quick + full)
+TEST_FILTER=cline TEST_LEVEL=full make test-e2e-docker  # Run only cline test
+```
+
+Each `test.sh` declares a level via `# @level: quick|full` metadata on line 2:
+- `quick` -- runs on every push to main (smoke tests, minimal API cost)
+- `full` -- runs on manual dispatch and weekly schedule (all tools, all models)
+
+Current test cases:
+
+| Case | Level | Protocol | Tool |
+|------|-------|----------|------|
+| `opencode` | quick | OpenAI | opencode-ai (1 model) |
+| `opencode-full` | full | OpenAI | opencode-ai (7 models) |
+| `cline` | full | OpenAI | Cline CLI |
+| `aider` | full | OpenAI | Aider |
+| `claude-code` | full | Anthropic | Claude Code CLI |
 
 ### Docker
 
@@ -177,7 +202,7 @@ Available commands (`.claude/commands/`):
 | `/doc-audit` | 文档与代码一致性审查 | `/doc-audit types` |
 | `/diagnose` | 问题诊断与修复 | `/diagnose "SSE streaming drops connection"` |
 | `/lint` | 代码检查/修复 | `/lint fix` |
-| `/test` | 运行测试 | `/test cloak` |
+| `/test` | 运行测试（cargo / e2e-docker / e2e-docker-full） | `/test e2e-docker` |
 | `/issues` | 从 Spec 自动生成 GitHub Issues（epic + sub-tasks） | `/issues SPEC-009 --milestone "Web Dashboard"` |
 | `/merge` | 批量合并多个 PR（CI 检查 + rebase + 合并） | `/merge 81 85 86` |
 | `/retro` | 复盘对话，沉淀改进到 commands/skills/workflow | `/retro 3` |
@@ -195,6 +220,7 @@ Pre-commit hook (`.claude/settings.json`) automatically runs `make fmt && make l
 | **CI** (`ci.yml`) | Push to `main`, PR to `main` | Format check, Clippy lint, Test |
 | **CD** (`cd.yml`) | Push to `main`, tags `v*` | CI (reusable) → Build & push Docker image to GHCR |
 | **Security** (`security.yml`) | Push to `main`, PR to `main`, weekly cron | `cargo audit`, Trivy image scan |
+| **E2E** (`e2e.yml`) | Push to `main`, manual dispatch, weekly cron | E2E cargo tests, Docker CLI tool tests (quick on push, full on dispatch/schedule) |
 | **Claude Code** (`claude.yml`) | `@claude` mention in issues/PRs | Automated agent response |
 
 ### Dependabot
