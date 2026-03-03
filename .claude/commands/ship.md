@@ -22,10 +22,17 @@ Steps:
    - 检查改动是否完成了 Spec 的全部内容
    - 如果已完成：自动执行 `/spec advance SPEC-NNN`（Active → Completed），将目录从 `active/` 移动到 `completed/`，更新 `_index.md`
    - 将 Spec 变更一并加入本次提交
-6. **分支管理**: 如果当前在 `main` 分支:
-   - 从 commit message 推导分支名（如 `feat: add daemon support` → `feature/daemon-support`）
-   - 分支名规则: `feat:` → `feature/`, `fix:` → `fix/`, `docs:` → `docs/`, `refactor:` → `refactor/`, `test:` → `test/`, `chore:` → `chore/`
-   - 自动 `git checkout -b <branch-name>`
+6. **分支管理**:
+   - 如果当前在 `main` 分支且有**未暂存/未提交**的改动:
+     - 从 commit message 推导分支名（如 `feat: add daemon support` → `feature/daemon-support`）
+     - 分支名规则: `feat:` → `feature/`, `fix:` → `fix/`, `docs:` → `docs/`, `refactor:` → `refactor/`, `test:` → `test/`, `chore:` → `chore/`
+     - 自动 `git checkout -b <branch-name>`
+   - 如果当前在 `main` 分支且改动**已经提交**（即 main 领先 origin/main）:
+     - 从最新 commit message 推导分支名
+     - `git branch <branch-name>` — 在当前 commit 创建分支
+     - `git reset --hard origin/main` — 将 main 回退到 origin/main
+     - `git checkout <branch-name>` — 切换到新分支
+     - 这样 main 保持与 origin/main 同步，新提交在 feature 分支上
 7. **暂存**: `git add` 改动文件（排除 `config.yaml` / `.env` 等敏感文件）
 8. **提交**: 如果参数中指定了 commit message，使用该 message；否则从分支名 + 改动推导（conventional commit 格式: `feat:`/`fix:`/`docs:`/`refactor:`/`test:`/`chore:`）。执行 `git commit`
 9. **推送**: `git push -u origin HEAD`

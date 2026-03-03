@@ -40,7 +40,7 @@ Foundation types shared across all crates:
 - `DaemonConfig` -- Daemon settings (PID file path, shutdown timeout)
 - `RateLimitConfig` -- Per-key and global RPM limits
 - `ProxyError` -- Unified error type using `thiserror`, with HTTP status code mapping (includes `RateLimited` variant with `Retry-After`)
-- `AuthRecord` -- Provider credential record (API key, base URL, proxy, models, cooldown state, cloak config)
+- `AuthRecord` -- Provider credential record (API key, base URL, proxy, models, circuit breaker state, cloak config, weight, region)
 - `Format` enum -- Identifies API format: `OpenAI`, `Claude`, `Gemini`, `OpenAICompat`
 - `WireApi` enum -- OpenAI-compatible wire protocol: `Chat` (default) or `Responses`
 - `CloakConfig` -- Claude request cloaking (system prompt injection, user_id generation, sensitive word obfuscation)
@@ -56,7 +56,7 @@ Foundation types shared across all crates:
   - `notify` -- sd-notify wrappers for systemd integration
 - `glob` -- Wildcard pattern matching for model names
 - `proxy` -- HTTP proxy client builder (http/https/socks5)
-- `context` -- `RequestContext` (request ID, start time, client IP)
+- `context` -- `RequestContext` (request ID, start time, client IP, api_key_id, tenant_id, auth_key, client_region)
 - `metrics` -- Atomic counters for requests, errors, latency, token usage, cost (micro-USD)
 - `rate_limit` -- `RateLimiter` with sliding window algorithm, per-key and global RPM tracking
 - `cost` -- `CostCalculator` with built-in model price table (30+ models) and user overrides
@@ -67,7 +67,7 @@ Provider-specific execution logic:
 - `OpenAICompatExecutor` -- Generic executor for OpenAI-format APIs (also used for OpenAI itself via `openai::new_openai_executor()`)
 - `GeminiExecutor` -- Google Gemini API executor
 - `ExecutorRegistry` -- Registry of all executor instances
-- `CredentialRouter` -- Credential selection with round-robin/fill-first routing and cooldown tracking
+- `CredentialRouter` -- Credential selection with round-robin/fill-first/latency-aware/geo-aware routing, circuit breaker tracking, and latency EWMA
 - `sse` -- SSE (Server-Sent Events) stream parsing (`SseEvent`, `parse_sse_stream`)
 
 ### `crates/translator/`
