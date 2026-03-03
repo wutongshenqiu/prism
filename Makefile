@@ -30,7 +30,7 @@ test-e2e-docker:
 	else \
 		$(DOCKER_COMPOSE) -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from test-runner; \
 		status=$$?; \
-		$(DOCKER_COMPOSE) -f docker-compose.e2e.yml down -v; \
+		$(DOCKER_COMPOSE) -f docker-compose.e2e.yml down; \
 		exit $$status; \
 	fi
 
