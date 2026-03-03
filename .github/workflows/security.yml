@@ -44,12 +44,12 @@ jobs:
         with:
           context: .
           load: true
-          tags: ai-proxy:scan
+          tags: prism:scan
           cache-from: type=gha
 
       - uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ai-proxy:scan
+          image-ref: prism:scan
           format: table
           exit-code: "1"
           ignore-unfixed: true

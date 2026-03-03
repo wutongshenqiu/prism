@@ -1,9 +1,9 @@
 use crate::AppState;
-use ai_proxy_core::request_log::LogQuery;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use prism_core::request_log::LogQuery;
 use serde_json::json;
 
 /// GET /api/dashboard/logs — query request logs with filters.

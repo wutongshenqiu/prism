@@ -22,24 +22,21 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
     // Daemonize before creating tokio runtime (unix only)
     #[cfg(unix)]
     if args.daemon {
-        ai_proxy_core::lifecycle::daemon::daemonize()?;
+        prism_core::lifecycle::daemon::daemonize()?;
     }
 
     // Init logging — force file logging when running as daemon
     let to_file = args.daemon || {
         // Peek at config to check logging_to_file
-        ai_proxy_core::config::Config::load(&args.config)
+        prism_core::config::Config::load(&args.config)
             .map(|c| c.logging_to_file)
             .unwrap_or(false)
     };
-    let log_dir = ai_proxy_core::config::Config::load(&args.config)
+    let log_dir = prism_core::config::Config::load(&args.config)
         .ok()
         .and_then(|c| c.log_dir.clone());
-    let _guard = ai_proxy_core::lifecycle::logging::init_logging(
-        &args.log_level,
-        to_file,
-        log_dir.as_deref(),
-    );
+    let _guard =
+        prism_core::lifecycle::logging::init_logging(&args.log_level, to_file, log_dir.as_deref());
 
     // Build and run on a multi-thread runtime
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -54,7 +51,7 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
 
 #[cfg(unix)]
 fn cmd_stop(args: cli::PidArgs) -> anyhow::Result<()> {
-    use ai_proxy_core::lifecycle::pid_file::PidFile;
+    use prism_core::lifecycle::pid_file::PidFile;
 
     let pid = PidFile::read_pid(&args.pid_file)?;
     if !PidFile::is_alive(pid) {
@@ -75,18 +72,18 @@ fn cmd_stop(_args: cli::PidArgs) -> anyhow::Result<()> {
 
 #[cfg(unix)]
 fn cmd_status(args: cli::PidArgs) -> anyhow::Result<()> {
-    use ai_proxy_core::lifecycle::pid_file::PidFile;
+    use prism_core::lifecycle::pid_file::PidFile;
 
     match PidFile::read_pid(&args.pid_file) {
         Ok(pid) => {
             if PidFile::is_alive(pid) {
-                println!("ai-proxy is running (PID {pid})");
+                println!("prism is running (PID {pid})");
             } else {
-                println!("ai-proxy is NOT running (stale PID file, PID {pid})");
+                println!("prism is NOT running (stale PID file, PID {pid})");
             }
         }
         Err(_) => {
-            println!("ai-proxy is NOT running (no PID file at {})", args.pid_file);
+            println!("prism is NOT running (no PID file at {})", args.pid_file);
         }
     }
     Ok(())
@@ -99,7 +96,7 @@ fn cmd_status(_args: cli::PidArgs) -> anyhow::Result<()> {
 
 #[cfg(unix)]
 fn cmd_reload(args: cli::PidArgs) -> anyhow::Result<()> {
-    use ai_proxy_core::lifecycle::pid_file::PidFile;
+    use prism_core::lifecycle::pid_file::PidFile;
 
     let pid = PidFile::read_pid(&args.pid_file)?;
     if !PidFile::is_alive(pid) {

@@ -5,7 +5,7 @@
 | Spec ID   | SPEC-008       |
 | Title     | 支持 Daemon    |
 | Author    |                |
-| Status    | Active         |
+| Status    | Completed      |
 | Created   | 2026-02-27     |
 | Updated   | 2026-02-27     |
 
@@ -24,7 +24,7 @@
 ## CLI Design
 
 ```
-ai-proxy <COMMAND>
+prism <COMMAND>
 
 Commands:
   run       Start the proxy server (default)
@@ -38,14 +38,14 @@ Run Options:
       --port <PORT>             Bind port override
       --log-level <LEVEL>       Log level [default: info]
       --daemon                  Fork to background
-      --pid-file <PATH>         PID file path [default: ./ai-proxy.pid]
+      --pid-file <PATH>         PID file path [default: ./prism.pid]
       --shutdown-timeout <SECS> Graceful shutdown timeout [default: 30]
 
 Stop/Status/Reload Options:
-      --pid-file <PATH>         PID file path [default: ./ai-proxy.pid]
+      --pid-file <PATH>         PID file path [default: ./prism.pid]
 ```
 
-`ai-proxy` 不带子命令时等价于 `ai-proxy run`（通过 `#[command(default_subcommand)]` 实现，保持 `cargo run -- --config config.yaml` 可用）。
+`prism` 不带子命令时等价于 `prism run`（通过 `#[command(default_subcommand)]` 实现，保持 `cargo run -- --config config.yaml` 可用）。
 
 ## Backend Implementation
 
@@ -68,7 +68,7 @@ crates/core/src/
 └── config.rs                         # 新增 DaemonConfig
 
 dist/
-└── ai-proxy.service                  # systemd unit file
+└── prism.service                  # systemd unit file
 ```
 
 ### Key Types
@@ -221,7 +221,7 @@ impl Application {
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ai-proxy", version, about = "AI API Proxy Gateway")]
+#[command(name = "prism", version, about = "Prism — AI API Proxy Gateway")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -296,9 +296,9 @@ fn cmd_stop(args: PidArgs) -> anyhow::Result<()> {
 fn cmd_status(args: PidArgs) -> anyhow::Result<()> {
     let pid = PidFile::read_pid(&args.pid_file)?;
     if PidFile::is_alive(pid) {
-        println!("ai-proxy is running (pid: {pid})");
+        println!("prism is running (pid: {pid})");
     } else {
-        println!("ai-proxy is not running (stale pid file)");
+        println!("prism is not running (stale pid file)");
     }
     Ok(())
 }
@@ -330,7 +330,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            pid_file: "./ai-proxy.pid".to_string(),
+            pid_file: "./prism.pid".to_string(),
             shutdown_timeout: 30,
         }
     }
@@ -344,22 +344,22 @@ Config 结构体新增 `pub daemon: DaemonConfig`。
 ```yaml
 # Daemon 配置（可选，CLI 参数可覆盖）
 daemon:
-  pid-file: "./ai-proxy.pid"
+  pid-file: "./prism.pid"
   shutdown-timeout: 30
 ```
 
 ### systemd Unit File
 
 ```ini
-# dist/ai-proxy.service
+# dist/prism.service
 [Unit]
-Description=AI Proxy Gateway
+Description=Prism
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/ai-proxy run --config /etc/ai-proxy/config.yaml
+ExecStart=/usr/local/bin/prism run --config /etc/prism/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -405,7 +405,7 @@ WantedBy=multi-user.target
 - [ ] T8: 新增 `app.rs` — Application struct（build + serve）
 - [ ] T9: 重写 `src/main.rs` — 子命令 dispatch + cmd_run/stop/status/reload
 - [ ] T10: 新增依赖：`fork`, `sd-notify`, `tracing-appender`, `libc`
-- [ ] T11: 新增 `dist/ai-proxy.service`
+- [ ] T11: 新增 `dist/prism.service`
 - [ ] T12: 单元测试（PidFile、DaemonConfig 序列化、Lifecycle 实现）
 - [ ] T13: 集成测试（daemon 启停、SIGHUP reload、重复启动检测）
 - [ ] T14: 更新 config.example.yaml、AGENTS.md
@@ -419,16 +419,16 @@ WantedBy=multi-user.target
   - SignalHandler: 构造 + shutdown_receiver 通道
 
 - **Integration tests:**
-  - `ai-proxy run --daemon` → 后台运行 + PID 文件
-  - `ai-proxy status` → 正确报告
-  - `ai-proxy reload` → SIGHUP 重载日志
-  - `ai-proxy stop` → 优雅关停 + PID 文件清理
-  - 重复 `ai-proxy run --daemon` → flock 冲突错误
+  - `prism run --daemon` → 后台运行 + PID 文件
+  - `prism status` → 正确报告
+  - `prism reload` → SIGHUP 重载日志
+  - `prism stop` → 优雅关停 + PID 文件清理
+  - 重复 `prism run --daemon` → flock 冲突错误
   - shutdown-timeout 超时强制退出
 
 - **Manual verification:**
-  - systemd: `systemctl start/stop/reload/status ai-proxy`
-  - Docker: `ai-proxy run`（前台模式无回归）
+  - systemd: `systemctl start/stop/reload/status prism`
+  - Docker: `prism run`（前台模式无回归）
 
 ## Rollout Plan
 

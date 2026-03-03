@@ -1,11 +1,11 @@
 use crate::AppState;
 use crate::streaming::build_sse_response;
-use ai_proxy_core::config::RetryConfig;
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::{Format, ProviderRequest, ProviderResponse, StreamChunk};
-use ai_proxy_translator::TranslateState;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use prism_core::config::RetryConfig;
+use prism_core::error::ProxyError;
+use prism_core::provider::{Format, ProviderRequest, ProviderResponse, StreamChunk};
+use prism_translator::TranslateState;
 use std::time::{Duration, Instant};
 
 /// A dispatch request encapsulating all information needed to route and execute an API call.
@@ -84,8 +84,8 @@ fn inject_dispatch_meta(
     response: &mut Response,
     debug: &DispatchDebug,
     translated_payload: &str,
-    cost_calculator: &ai_proxy_core::cost::CostCalculator,
-    metrics: &ai_proxy_core::metrics::Metrics,
+    cost_calculator: &prism_core::cost::CostCalculator,
+    metrics: &prism_core::metrics::Metrics,
 ) {
     let (input_tokens, output_tokens) = extract_usage(translated_payload);
     let model = debug.model.as_deref();
@@ -164,7 +164,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
         .api_key
         .as_ref()
         .and_then(|k| config.auth_key_store.lookup(k))
-        && !ai_proxy_core::auth_key::AuthKeyStore::check_model_access(ctx, &req.model)
+        && !prism_core::auth_key::AuthKeyStore::check_model_access(ctx, &req.model)
     {
         return Err(ProxyError::ModelNotAllowed(format!(
             "model '{}' not allowed for this API key",
@@ -176,7 +176,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     if !req.stream
         && let Some(ref cache) = state.response_cache
         && let Ok(body_val) = serde_json::from_slice::<serde_json::Value>(&req.body)
-        && let Some(cache_key) = ai_proxy_core::cache::CacheKey::build(&req.model, &body_val)
+        && let Some(cache_key) = prism_core::cache::CacheKey::build(&req.model, &body_val)
     {
         if let Some(cached) = cache.get(&cache_key).await {
             state.metrics.record_cache_hit();
@@ -293,7 +293,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                         serde_json::from_slice(&translated_payload)
                             .unwrap_or(serde_json::Value::Null);
                     if payload_value.is_object() {
-                        ai_proxy_core::payload::apply_payload_rules(
+                        prism_core::payload::apply_payload_rules(
                             &mut payload_value,
                             &config.payload,
                             &actual_model,
@@ -308,17 +308,12 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                 // Apply cloaking for Claude targets
                 let translated_payload = if target_format == Format::Claude {
                     if let Some(ref cloak_cfg) = auth.cloak {
-                        if ai_proxy_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref())
-                        {
+                        if prism_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref()) {
                             let mut val: serde_json::Value =
                                 serde_json::from_slice(&translated_payload)
                                     .unwrap_or(serde_json::Value::Null);
                             if val.is_object() {
-                                ai_proxy_core::cloak::apply_cloak(
-                                    &mut val,
-                                    cloak_cfg,
-                                    &auth.api_key,
-                                );
+                                prism_core::cloak::apply_cloak(&mut val, cloak_cfg, &auth.api_key);
                                 serde_json::to_vec(&val).unwrap_or(translated_payload)
                             } else {
                                 translated_payload
@@ -338,7 +333,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                     Default::default();
                 if target_format == Format::Claude
                     && let Some(ref cloak_cfg) = auth.cloak
-                    && ai_proxy_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref())
+                    && prism_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref())
                 {
                     for (k, v) in &config.claude_header_defaults {
                         request_headers.insert(k.clone(), v.clone());
@@ -576,9 +571,9 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 && let Ok(body_val) =
                                     serde_json::from_slice::<serde_json::Value>(&req.body)
                                 && let Some(cache_key) =
-                                    ai_proxy_core::cache::CacheKey::build(&req.model, &body_val)
+                                    prism_core::cache::CacheKey::build(&req.model, &body_val)
                             {
-                                let cached = ai_proxy_core::cache::CachedResponse {
+                                let cached = prism_core::cache::CachedResponse {
                                     payload: Bytes::from(translated.clone()),
                                     provider: target_format.as_str().to_string(),
                                     model: actual_model.clone(),
@@ -662,7 +657,7 @@ type ProviderResult = Result<ProviderResponse, ProxyError>;
 fn build_keepalive_body(
     result_rx: std::pin::Pin<Box<tokio::sync::oneshot::Receiver<ProviderResult>>>,
     interval_secs: u64,
-    translators: std::sync::Arc<ai_proxy_translator::TranslatorRegistry>,
+    translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
     source_format: Format,
     target_format: Format,
     model: String,
@@ -671,7 +666,7 @@ fn build_keepalive_body(
     struct KeepaliveState {
         rx: Option<std::pin::Pin<Box<tokio::sync::oneshot::Receiver<ProviderResult>>>>,
         interval_secs: u64,
-        translators: std::sync::Arc<ai_proxy_translator::TranslatorRegistry>,
+        translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
         source_format: Format,
         target_format: Format,
         model: String,
@@ -736,7 +731,7 @@ fn translate_stream(
     upstream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
     >,
-    translators: std::sync::Arc<ai_proxy_translator::TranslatorRegistry>,
+    translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
     from: Format,
     to: Format,
     model: String,

@@ -4,7 +4,7 @@
 |-----------|------------------------------------|
 | Spec ID   | SPEC-004                           |
 | Title     | Configuration System & Hot-Reload  |
-| Author    | AI Proxy Team                      |
+| Author    | Prism Team                      |
 | Status    | Completed                          |
 | Created   | 2026-02-27                         |
 | Updated   | 2026-02-27                         |
@@ -18,7 +18,7 @@ The configuration system is built around a `Config` struct deserialized from YAM
 ### Module Structure
 
 ```
-ai-proxy/src/main.rs              -- CLI args (clap), config loading, ArcSwap setup, watcher start
+prism/src/main.rs              -- CLI args (clap), config loading, ArcSwap setup, watcher start
 crates/core/src/config.rs         -- Config struct, sub-configs, ConfigWatcher, load/validate/sanitize
 ```
 
@@ -120,15 +120,15 @@ pub struct ProviderKeyEntry {
 
 ```rust
 #[derive(Parser)]
-#[command(name = "ai-proxy", version, about = "AI API Proxy Gateway")]
+#[command(name = "prism", version, about = "Prism — AI API Proxy Gateway")]
 struct Cli {
-    #[arg(short, long, default_value = "config.yaml", env = "AI_PROXY_CONFIG")]
+    #[arg(short, long, default_value = "config.yaml", env = "PRISM_CONFIG")]
     config: String,
-    #[arg(long, env = "AI_PROXY_HOST")]
+    #[arg(long, env = "PRISM_HOST")]
     host: Option<String>,
-    #[arg(long, env = "AI_PROXY_PORT")]
+    #[arg(long, env = "PRISM_PORT")]
     port: Option<u16>,
-    #[arg(long, default_value = "info", env = "AI_PROXY_LOG_LEVEL")]
+    #[arg(long, default_value = "info", env = "PRISM_LOG_LEVEL")]
     log_level: String,
 }
 ```

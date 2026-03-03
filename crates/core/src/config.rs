@@ -313,7 +313,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            pid_file: "./ai-proxy.pid".to_string(),
+            pid_file: "./prism.pid".to_string(),
             shutdown_timeout: 30,
         }
     }
@@ -641,7 +641,7 @@ claude-api-key:
     #[test]
     fn test_daemon_config_defaults() {
         let dc = DaemonConfig::default();
-        assert_eq!(dc.pid_file, "./ai-proxy.pid");
+        assert_eq!(dc.pid_file, "./prism.pid");
         assert_eq!(dc.shutdown_timeout, 30);
     }
 
@@ -649,17 +649,17 @@ claude-api-key:
     fn test_daemon_config_yaml_round_trip() {
         let yaml = r#"
 daemon:
-  pid-file: "/run/ai-proxy.pid"
+  pid-file: "/run/prism.pid"
   shutdown-timeout: 60
 "#;
         let config: Config = serde_yml::from_str(yaml).unwrap();
-        assert_eq!(config.daemon.pid_file, "/run/ai-proxy.pid");
+        assert_eq!(config.daemon.pid_file, "/run/prism.pid");
         assert_eq!(config.daemon.shutdown_timeout, 60);
 
         // Round-trip
         let serialized = serde_yml::to_string(&config).unwrap();
         let config2: Config = serde_yml::from_str(&serialized).unwrap();
-        assert_eq!(config2.daemon.pid_file, "/run/ai-proxy.pid");
+        assert_eq!(config2.daemon.pid_file, "/run/prism.pid");
         assert_eq!(config2.daemon.shutdown_timeout, 60);
     }
 

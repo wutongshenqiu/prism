@@ -32,7 +32,7 @@ AI Proxy Gateway requires a flexible configuration system that allows operators 
 ## User Stories
 
 - As an operator, I want to rotate API keys by editing `config.yaml` so that new credentials take effect without restarting the service.
-- As an operator, I want to override the listen port via `AI_PROXY_PORT` environment variable so that I can configure it per-environment.
+- As an operator, I want to override the listen port via `PRISM_PORT` environment variable so that I can configure it per-environment.
 - As an operator, I want invalid config changes to be rejected so that a typo does not take down the proxy.
 - As a developer, I want CLI flags (`--host`, `--port`, `--log-level`) to override config file values so that I can quickly test different settings.
 
@@ -47,7 +47,7 @@ AI Proxy Gateway requires a flexible configuration system that allows operators 
 - Must use `serde_yml` for YAML deserialization with kebab-case renaming
 - Must use `arc-swap` crate for lock-free atomic config replacement
 - Must use `notify` crate for cross-platform file watching
-- Config file path defaults to `config.yaml`, overridable via `-c`/`--config` flag or `AI_PROXY_CONFIG` env var
+- Config file path defaults to `config.yaml`, overridable via `-c`/`--config` flag or `PRISM_CONFIG` env var
 
 ## Open Questions
 

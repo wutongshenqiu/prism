@@ -1,6 +1,6 @@
 use crate::AppState;
-use ai_proxy_core::error::ProxyError;
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use prism_core::error::ProxyError;
 
 pub async fn rate_limit_middleware(
     State(state): State<AppState>,

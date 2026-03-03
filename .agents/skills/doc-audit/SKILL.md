@@ -1,11 +1,13 @@
 ---
 name: doc-audit
-description: "Audit documentation vs code consistency. Supports: quick (default), full, types, api, agents, specs."
+description: "Audit documentation vs code consistency. Supports: quick (default), full, types, api, agents, specs. Use --fix to auto-fix."
 ---
 
 # Documentation Auditor
 
 Audit documentation against code for consistency. The user specifies a scope (default: quick).
+
+Supports `--fix` suffix to auto-fix discovered discrepancies (e.g., `doc-audit full --fix`).
 
 Scopes:
 - "quick": Check reference/types/ type definitions vs Rust source types only
@@ -37,3 +39,18 @@ Steps:
 
 5. Check documentation internal link validity (full mode only)
 6. Summarize: total discrepancies, by severity (error/missing/outdated)
+
+### --fix mode (when arguments include `--fix`)
+
+After completing the audit and outputting the discrepancy table, auto-fix all discovered discrepancies:
+
+7. For each discrepancy, read the target doc file and apply the fix:
+   - **Field/enum mismatch**: Update doc with actual definition from code
+   - **Missing entry**: Extract definition from code and add to doc
+   - **Outdated description**: Rewrite based on current code behavior
+   - **Broken link**: Update to correct file path
+   - **Spec status mismatch**: Update metadata Status field
+8. After fixing, re-run the audit (same scope, without --fix) to verify zero discrepancies
+9. Output fix summary:
+   | # | File | Fix Content | Status |
+   |---|------|-------------|--------|

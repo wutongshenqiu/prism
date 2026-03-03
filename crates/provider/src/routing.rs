@@ -1,9 +1,9 @@
-use ai_proxy_core::circuit_breaker::{
+use prism_core::circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerPolicy, CircuitState, NoopCircuitBreaker,
     ThreeStateCircuitBreaker,
 };
-use ai_proxy_core::config::{Config, RoutingStrategy};
-use ai_proxy_core::provider::{AuthRecord, Format, ModelEntry, ModelInfo};
+use prism_core::config::{Config, RoutingStrategy};
+use prism_core::provider::{AuthRecord, Format, ModelEntry, ModelInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -323,7 +323,7 @@ impl CredentialRouter {
 }
 
 fn build_auth_record(
-    entry: &ai_proxy_core::config::ProviderKeyEntry,
+    entry: &prism_core::config::ProviderKeyEntry,
     format: Format,
     cb_config: &CircuitBreakerConfig,
 ) -> AuthRecord {
@@ -369,7 +369,7 @@ fn build_auth_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai_proxy_core::config::RoutingStrategy;
+    use prism_core::config::RoutingStrategy;
 
     /// Build a test AuthRecord with sensible defaults.
     fn make_auth(id: &str, format: Format, models: Vec<&str>) -> AuthRecord {

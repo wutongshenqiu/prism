@@ -7,27 +7,27 @@ System architecture, crate dependencies, request lifecycle, and key design patte
 ## Crate Dependency Diagram
 
 ```
-ai-proxy (binary, src/main.rs)
-├── ai-proxy-server (crates/server)
-│   ├── ai-proxy-core (crates/core)
-│   ├── ai-proxy-provider (crates/provider)
-│   │   └── ai-proxy-core
-│   └── ai-proxy-translator (crates/translator)
-│       └── ai-proxy-core
-├── ai-proxy-core
-├── ai-proxy-provider
-└── ai-proxy-translator
+prism (binary, src/main.rs)
+├── prism-server (crates/server)
+│   ├── prism-core (crates/core)
+│   ├── prism-provider (crates/provider)
+│   │   └── prism-core
+│   └── prism-translator (crates/translator)
+│       └── prism-core
+├── prism-core
+├── prism-provider
+└── prism-translator
 ```
 
 ### Crate responsibilities
 
 | Crate | Path | Purpose |
 |-------|------|---------|
-| `ai-proxy` | `src/` | Binary entry point. CLI arg parsing (clap), config loading, executor/translator/router initialization, server startup, TLS setup, config watcher. |
-| `ai-proxy-core` | `crates/core/` | Foundation types shared by all crates: `Config`, `ProxyError`, `Format`, `AuthRecord`, `ProviderExecutor` trait, `Metrics`, `RequestContext`, `PayloadConfig`, `CloakConfig`, glob matching, proxy URL handling. |
-| `ai-proxy-provider` | `crates/provider/` | Provider executor implementations (OpenAI, Claude, Gemini, OpenAI-compat), `CredentialRouter`, `ExecutorRegistry`, SSE stream parsing, HTTP client construction. |
-| `ai-proxy-translator` | `crates/translator/` | Format translation between provider APIs: `TranslatorRegistry`, `TranslateState`, OpenAI<->Claude and OpenAI<->Gemini request/response translators. |
-| `ai-proxy-server` | `crates/server/` | Axum router, HTTP handlers, authentication middleware, request context/logging middleware, dispatch engine, SSE streaming response builder. |
+| `prism` | `src/` | Binary entry point. CLI arg parsing (clap), config loading, executor/translator/router initialization, server startup, TLS setup, config watcher. |
+| `prism-core` | `crates/core/` | Foundation types shared by all crates: `Config`, `ProxyError`, `Format`, `AuthRecord`, `ProviderExecutor` trait, `Metrics`, `RequestContext`, `PayloadConfig`, `CloakConfig`, glob matching, proxy URL handling. |
+| `prism-provider` | `crates/provider/` | Provider executor implementations (OpenAI, Claude, Gemini, OpenAI-compat), `CredentialRouter`, `ExecutorRegistry`, SSE stream parsing, HTTP client construction. |
+| `prism-translator` | `crates/translator/` | Format translation between provider APIs: `TranslatorRegistry`, `TranslateState`, OpenAI<->Claude and OpenAI<->Gemini request/response translators. |
+| `prism-server` | `crates/server/` | Axum router, HTTP handlers, authentication middleware, request context/logging middleware, dispatch engine, SSE streaming response builder. |
 
 ---
 
@@ -56,47 +56,53 @@ Client
   v
 [6] Dispatch Engine
   |
-  +--[6a] Resolve Providers (router.resolve_providers(model))
+  +--[6a] Model ACL check (auth key allowed_models vs requested model)
+  |
+  +--[6b] Cache lookup (non-stream requests with temperature=0)
+  |       On HIT: return cached response immediately
+  |       On MISS: continue to provider dispatch
+  |
+  +--[6c] Resolve Providers (router.resolve_providers(model))
   |       Find all provider formats with available credentials for this model
   |
-  +--[6b] Enforce model prefix (if force_model_prefix is enabled)
+  +--[6d] Enforce model prefix (if force_model_prefix is enabled)
   |
-  +--[6c] Retry Loop (up to max_retries attempts)
+  +--[6e] Retry Loop (up to max_retries attempts)
   |   |
   |   +-- For each provider format:
   |       |
-  |       +--[6d] Pick Credential (router.pick with round-robin or fill-first)
+  |       +--[6f] Pick Credential (router.pick with round-robin or fill-first)
   |       |       Skip already-tried credential IDs
+  |       |       Skip credentials with open circuit breaker
   |       |
-  |       +--[6e] Resolve Model ID (strip prefix, resolve alias -> actual ID)
+  |       +--[6g] Resolve Model ID (strip prefix, resolve alias -> actual ID)
   |       |
-  |       +--[6f] Translate Request (TranslatorRegistry: source -> target format)
+  |       +--[6h] Translate Request (TranslatorRegistry: source -> target format)
   |       |       Same format: only replace model field
   |       |       Different format: full translation (e.g., OpenAI -> Claude)
   |       |
-  |       +--[6g] Apply Payload Rules (default / override / filter)
+  |       +--[6i] Apply Payload Rules (default / override / filter)
   |       |
-  |       +--[6h] Apply Cloaking (Claude targets only, if configured)
+  |       +--[6j] Apply Cloaking (Claude targets only, if configured)
   |       |       Inject system prompt, user_id, obfuscate sensitive words
   |       |
-  |       +--[6i] Execute (ProviderExecutor.execute or execute_stream)
+  |       +--[6k] Execute (ProviderExecutor.execute or execute_stream)
   |       |
-  |       +--[6j] On success:
+  |       +--[6l] On success:
   |       |       Streaming: translate stream chunks, build SSE response
   |       |       Non-stream: translate response body, build JSON response
   |       |       Forward passthrough_headers from upstream
+  |       |       Record circuit breaker success
   |       |
-  |       +--[6k] On error:
-  |               Mark credential unavailable (cooldown based on error type)
-  |               429 -> cooldown_429_secs (or Retry-After header)
-  |               5xx -> cooldown_5xx_secs (or Retry-After header)
-  |               Network -> cooldown_network_secs
+  |       +--[6m] On error:
+  |               Record circuit breaker failure (429, 5xx, network errors)
   |               Add credential ID to tried list
   |               Continue to next provider/attempt
   |
-  +--[6l] Exponential backoff with full jitter between retry rounds
+  +--[6n] Exponential backoff with jitter between retry rounds
   |       cap = min(2^attempt, max_backoff_secs)
-  |       sleep = random(0, cap)
+  |       sleep = base + random(0, cap * jitter_factor)
+  |       default jitter_factor=1.0 (full jitter)
   |
   v
 [7] Response returned to client
@@ -122,29 +128,37 @@ Configuration is stored in `Arc<ArcSwap<Config>>`, allowing atomic, lock-free re
 
 ---
 
-### Credential Cooling with Instant-based Cooldown
+### Circuit Breaker per Credential
 
-When a provider returns an error, the failing credential is temporarily removed from the rotation pool.
+When a provider returns an error, the failing credential's circuit breaker records the failure. After enough consecutive failures, the circuit trips open and the credential is temporarily removed from the rotation pool.
 
 **Mechanism:**
-- `AuthRecord.cooldown_until: Option<Instant>` stores the cooldown expiry.
-- `CredentialRouter.mark_unavailable(auth_id, duration)` sets `cooldown_until = Instant::now() + duration`.
-- `AuthRecord.is_available()` returns `false` if `Instant::now() < cooldown_until`.
-- `CredentialRouter.pick()` skips unavailable credentials.
+- `AuthRecord.circuit_breaker: Arc<dyn CircuitBreakerPolicy>` -- pluggable policy per credential.
+- Default implementation: `ThreeStateCircuitBreaker` with states `Closed → Open → HalfOpen → Closed`.
+- `CredentialRouter.record_failure(auth_id)` calls `circuit_breaker.record_failure()`.
+- `CredentialRouter.pick()` skips credentials where `circuit_breaker.can_execute()` returns `false`.
 
-**Cooldown durations (configurable):**
+**Three-state transitions:**
 
-| Error type | Config field | Default |
-|------------|-------------|---------|
-| HTTP 429 | `cooldown_429_secs` | 60s |
-| HTTP 5xx | `cooldown_5xx_secs` | 15s |
-| Network error | `cooldown_network_secs` | 10s |
+| State | Behavior |
+|-------|----------|
+| `Closed` | Normal operation. Failures increment the counter. Transitions to `Open` after `failure_threshold` consecutive failures. |
+| `Open` | All requests blocked. After `cooldown_secs`, transitions to `HalfOpen`. |
+| `HalfOpen` | Up to `half_open_max_probes` requests allowed. Success → `Closed`, failure → `Open`. |
 
-The `Retry-After` header from upstream overrides the config default for 429 and 5xx errors when present.
+**Configuration** (via `CircuitBreakerConfig`):
 
-**Cooldown state is preserved across config reloads** -- `update_from_config()` matches existing credentials by `api_key` + format and copies `cooldown_until` to the new credential.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable/disable circuit breaker |
+| `failure_threshold` | `5` | Failures before tripping open |
+| `cooldown_secs` | `30` | Seconds before transitioning to half-open |
+| `half_open_max_probes` | `1` | Max probe requests in half-open state |
+| `rolling_window_secs` | `60` | Rolling window for failure counting |
 
-**Source:** `crates/provider/src/routing.rs`, `crates/server/src/dispatch.rs` (`handle_retry_error`)
+**Error handling in dispatch:** `handle_retry_error()` records circuit breaker failures for HTTP 429, 5xx, and network errors.
+
+**Source:** `crates/core/src/circuit_breaker.rs`, `crates/provider/src/routing.rs`, `crates/server/src/dispatch.rs`
 
 ---
 
@@ -192,7 +206,7 @@ The dispatch engine implements a two-level retry loop that provides both intra-p
 for attempt in 0..max_retries {
     for target_format in providers {
         pick credential -> translate -> execute
-        on error: cool down credential, try next
+        on error: record circuit breaker failure, try next
     }
     exponential backoff with jitter
 }
@@ -202,7 +216,7 @@ for attempt in 0..max_retries {
 - **Cross-provider failover:** If all OpenAI credentials are rate-limited, the next iteration tries Claude or Gemini credentials that also support the model.
 - **Credential exclusion:** The `tried` list prevents re-picking the same credential within a single dispatch.
 - **Streaming bootstrap limit:** For streaming requests, a separate `bootstrap_retries` config limits retries before the first byte is sent to the client (since once SSE headers are sent, retrying is not possible).
-- **Exponential backoff with full jitter:** Between retry rounds, sleep duration is `random(0, min(2^attempt, max_backoff_secs))`.
+- **Exponential backoff with jitter:** Between retry rounds, `cap = min(2^attempt, max_backoff_secs)`, then `sleep = base + random(0, cap * jitter_factor)` where `base = cap * (1 - jitter_factor)`. Default `jitter_factor` is 1.0 (full jitter: `sleep = random(0, cap)`).
 
 **Non-stream keepalive mode:** When `non_stream_keepalive_secs > 0`, the dispatch races the upstream execute against a timer. If the timer fires first, it switches to a chunked response body that sends periodic whitespace (` `) to prevent intermediate proxy timeouts. The final response payload is appended when it arrives. Leading whitespace is valid JSON and is ignored by parsers.
 

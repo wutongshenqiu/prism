@@ -39,7 +39,7 @@ Create `crates/translator/src/openai_to_newformat.rs`.
 The request translator function signature must match `RequestTransformFn`:
 
 ```rust
-use ai_proxy_core::error::ProxyError;
+use prism_core::error::ProxyError;
 use serde_json::{json, Value};
 
 pub fn translate_request(
@@ -85,7 +85,7 @@ Must match `StreamTransformFn`:
 
 ```rust
 use crate::TranslateState;
-use ai_proxy_core::error::ProxyError;
+use prism_core::error::ProxyError;
 use serde_json::{json, Value};
 
 pub fn translate_stream(

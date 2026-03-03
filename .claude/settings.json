@@ -24,7 +24,16 @@
       "Bash(git merge:*)",
       "Bash(git pull:*)",
       "Bash(GIT_EDITOR=true git:*)",
-      "Bash(sleep:*)"
+      "Bash(sleep:*)",
+      "Bash(sed:*)",
+      "Bash(find:*)",
+      "Bash(mv:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(python3:*)"
     ]
   },
   "hooks": {

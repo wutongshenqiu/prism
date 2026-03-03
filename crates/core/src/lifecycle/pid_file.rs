@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_read_pid_missing_file() {
-        let result = PidFile::read_pid("/tmp/nonexistent_ai_proxy_test.pid");
+        let result = PidFile::read_pid("/tmp/nonexistent_prism_test.pid");
         assert!(result.is_err());
     }
 }

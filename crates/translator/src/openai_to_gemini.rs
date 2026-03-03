@@ -1,4 +1,4 @@
-use ai_proxy_core::error::ProxyError;
+use prism_core::error::ProxyError;
 use serde_json::{Value, json};
 
 pub fn translate_request(
