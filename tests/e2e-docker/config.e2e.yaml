@@ -17,3 +17,9 @@ openai-compatibility:
       - id: "glm-4.7"
       - id: "kimi-k2.5"
       - id: "MiniMax-M2.5"
+claude-api-key:
+  - api-key: "env://E2E_BAILIAN_API_KEY"
+    base-url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+    name: "bailian-anthropic-e2e"
+    models:
+      - id: "qwen3-coder-plus"
