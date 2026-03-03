@@ -37,19 +37,17 @@ jobs:
     name: E2E Docker (CLI tools)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Run E2E Docker tests
         if: env.E2E_BAILIAN_API_KEY != ''
-        env:
-          E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
         run: make test-e2e-docker
 
       - name: Extract test report
         if: always() && env.E2E_BAILIAN_API_KEY != ''
-        env:
-          E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
         run: |
           # Copy report from Docker volume to host
           VOLUME_NAME=$(docker volume ls -q | grep e2e-report || true)
