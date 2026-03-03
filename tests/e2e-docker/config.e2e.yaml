@@ -1,0 +1,19 @@
+host: "0.0.0.0"
+port: 8317
+auth-keys: []
+routing:
+  strategy: round-robin
+connect-timeout: 30
+request-timeout: 120
+openai-compatibility:
+  - api-key: "env://E2E_BAILIAN_API_KEY"
+    base-url: "https://coding.dashscope.aliyuncs.com"
+    name: "bailian-e2e"
+    models:
+      - id: "qwen3.5-plus"
+      - id: "qwen3-coder-next"
+      - id: "qwen3-coder-plus"
+      - id: "glm-5"
+      - id: "glm-4.7"
+      - id: "kimi-k2.5"
+      - id: "MiniMax-M2.5"

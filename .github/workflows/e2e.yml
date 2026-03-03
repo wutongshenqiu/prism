@@ -23,11 +23,60 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run E2E tests
         env:
+          E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
           E2E_OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
           E2E_CLAUDE_API_KEY: ${{ secrets.E2E_CLAUDE_API_KEY }}
           E2E_GEMINI_API_KEY: ${{ secrets.E2E_GEMINI_API_KEY }}
         run: cargo test --test e2e -- --ignored
-        if: env.E2E_OPENAI_API_KEY != '' || env.E2E_CLAUDE_API_KEY != '' || env.E2E_GEMINI_API_KEY != ''
+        if: env.E2E_BAILIAN_API_KEY != '' || env.E2E_OPENAI_API_KEY != '' || env.E2E_CLAUDE_API_KEY != '' || env.E2E_GEMINI_API_KEY != ''
       - name: Skip E2E (no secrets)
-        if: env.E2E_OPENAI_API_KEY == '' && env.E2E_CLAUDE_API_KEY == '' && env.E2E_GEMINI_API_KEY == ''
+        if: env.E2E_BAILIAN_API_KEY == '' && env.E2E_OPENAI_API_KEY == '' && env.E2E_CLAUDE_API_KEY == '' && env.E2E_GEMINI_API_KEY == ''
         run: echo "E2E tests skipped — no API key secrets configured"
+
+  e2e-docker:
+    name: E2E Docker (CLI tools)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run E2E Docker tests
+        if: env.E2E_BAILIAN_API_KEY != ''
+        env:
+          E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
+        run: make test-e2e-docker
+
+      - name: Extract test report
+        if: always() && env.E2E_BAILIAN_API_KEY != ''
+        env:
+          E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
+        run: |
+          # Copy report from Docker volume to host
+          VOLUME_NAME=$(docker volume ls -q | grep e2e-report || true)
+          if [ -n "$VOLUME_NAME" ]; then
+            docker run --rm -v "${VOLUME_NAME}:/data:ro" alpine cat /data/report.md > e2e-report.md 2>/dev/null || true
+          fi
+          # Write to GitHub Job Summary
+          if [ -f e2e-report.md ]; then
+            cat e2e-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ No test report generated" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload test report
+        if: always() && env.E2E_BAILIAN_API_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-docker-report
+          path: e2e-report.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Cleanup Docker resources
+        if: always()
+        run: |
+          docker compose -f docker-compose.e2e.yml down -v 2>/dev/null || true
+
+      - name: Skip (no secrets)
+        if: env.E2E_BAILIAN_API_KEY == ''
+        run: echo "Skipped — E2E_BAILIAN_API_KEY not configured"
