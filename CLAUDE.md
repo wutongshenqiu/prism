@@ -179,6 +179,7 @@ Available commands (`.claude/commands/`):
 | `/lint` | 代码检查/修复 | `/lint fix` |
 | `/test` | 运行测试 | `/test cloak` |
 | `/issues` | 从 Spec 自动生成 GitHub Issues（epic + sub-tasks） | `/issues SPEC-009 --milestone "Web Dashboard"` |
+| `/merge` | 批量合并多个 PR（CI 检查 + rebase + 合并） | `/merge 81 85 86` |
 | `/retro` | 复盘对话，沉淀改进到 commands/skills/workflow | `/retro 3` |
 
 ## Quality Gates
