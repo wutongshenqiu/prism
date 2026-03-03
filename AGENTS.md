@@ -151,6 +151,22 @@ React 19 + TypeScript + Vite SPA:
 
 Models are not hardcoded — any model name can be routed if configured in `config.yaml`.
 
+## E2E Docker Test Framework
+
+Docker-based end-to-end tests for coding agent CLI tools (`tests/e2e-docker/`).
+
+Convention-based discovery: `cases/<name>/test.sh` = auto-discovered test case. Each test declares `# @level: quick|full` metadata.
+
+| Case | Level | Protocol | Tool |
+|------|-------|----------|------|
+| `opencode` | quick | OpenAI `/v1/chat/completions` | opencode-ai |
+| `opencode-full` | full | OpenAI `/v1/chat/completions` | opencode-ai (7 models) |
+| `cline` | full | OpenAI `/v1/chat/completions` | Cline CLI |
+| `aider` | full | OpenAI `/v1/chat/completions` | Aider |
+| `claude-code` | full | Anthropic `/v1/messages` | Claude Code CLI |
+
+See `docs/playbooks/add-e2e-test.md` for adding new test cases.
+
 ### `src/` (binary entry point)
 Subcommand architecture with daemon support:
 - `cli.rs` -- CLI parsing: subcommands `run`, `stop`, `status`, `reload` with `RunArgs` and `PidArgs`
