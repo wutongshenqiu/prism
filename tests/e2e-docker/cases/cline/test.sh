@@ -17,10 +17,10 @@ log_info "Installing Cline CLI..."
 npm install -g cline 2>&1 | tail -1
 log_info "Cline installed"
 
-# 3. Authenticate with OpenAI-compatible provider (non-interactive)
+# 3. Authenticate with openai provider pointing to our gateway
 log_info "Configuring Cline auth..."
 cline auth \
-    -p openai-compatible \
+    -p openai \
     -k "sk-proxy-e2e-dummy" \
     -b "http://gateway:8317/v1" \
     -m "$MODEL" 2>&1 || {
