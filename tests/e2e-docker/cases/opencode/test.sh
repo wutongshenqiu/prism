@@ -79,8 +79,8 @@ for model in "${MODELS[@]}"; do
     fi
 
     # Extract text content from JSON events for quick summary
-    # JSON events use .part.text for text content
-    TEXT_CONTENT=$(echo "$RAW_OUTPUT" | jq -r 'select(.type == "text") | .part.text // empty' 2>/dev/null | tr -d '\n' || echo "")
+    # Filter to JSON lines only (skip non-JSON like sqlite-migration logs on first run)
+    TEXT_CONTENT=$(echo "$RAW_OUTPUT" | grep '^{' | jq -r 'select(.type == "text") | .part.text // empty' 2>/dev/null | tr -d '\n' || echo "")
     if [[ -z "$TEXT_CONTENT" ]]; then
         TEXT_CONTENT="(no text extracted from JSON events)"
     fi
