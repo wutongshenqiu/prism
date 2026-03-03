@@ -1,12 +1,14 @@
 批量合并多个 PR。Argument $ARGUMENTS: `[PR numbers...]`
 
 用法:
+- `/merge` — 合并当前分支对应的 PR
 - `/merge 81 85` — 按顺序合并 PR #81 和 #85
 - `/merge 81 85 86` — 按顺序合并 3 个 PR
 
 Steps:
 
 1. **解析参数**: 从 `$ARGUMENTS` 中提取 PR 编号列表
+   - 如果 `$ARGUMENTS` 为空: 自动检测当前分支的 PR（`gh pr view --json number -q .number`），将其作为唯一待合并 PR
 2. **预检查**: 对每个 PR 并行执行:
    - `gh pr view <N> --json state,mergeable,headRefName,baseRefName` — 确认 PR 状态
    - 标记冲突的 PR

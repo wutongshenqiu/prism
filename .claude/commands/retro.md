@@ -9,7 +9,7 @@ Steps:
 1. **收集上下文**: 并行读取以下内容
    - 所有 `.claude/commands/*.md` — 现有命令定义
    - `.claude/settings.json` — 权限和 hooks 配置
-   - `.claude/skills/` — 现有 skills（如有）
+   - `.agents/skills/` — 现有 portable skills
    - `docs/playbooks/coding-agent-workflow.md` — 当前开发流程
    - `CLAUDE.md` 和 `AGENTS.md` — 项目约定
 
