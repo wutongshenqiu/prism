@@ -78,3 +78,18 @@ ai-proxy-core = { path = "crates/core" }
 ai-proxy-provider = { path = "crates/provider" }
 ai-proxy-translator = { path = "crates/translator" }
 ai-proxy-server = { path = "crates/server" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+ai-proxy-core = { workspace = true }
+ai-proxy-provider = { workspace = true }
+ai-proxy-translator = { workspace = true }
+ai-proxy-server = { workspace = true }
+arc-swap = { workspace = true }
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"

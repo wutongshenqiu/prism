@@ -1,4 +1,4 @@
-.PHONY: build dev test test-unit test-integration test-e2e test-all \
+.PHONY: build dev test test-unit test-integration test-e2e test-e2e-docker test-all \
        lint fmt clean check \
        docker-build docker-run docker-stop docker-logs \
        docker-compose-up docker-compose-down audit \
@@ -21,6 +21,18 @@ test-integration:
 
 test-e2e:
 	cargo test --test e2e -- --ignored
+
+DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+
+test-e2e-docker:
+	@if [ -z "$(E2E_BAILIAN_API_KEY)" ]; then \
+		echo "E2E_BAILIAN_API_KEY not set, skipping docker E2E test"; \
+	else \
+		$(DOCKER_COMPOSE) -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from test-runner; \
+		status=$$?; \
+		$(DOCKER_COMPOSE) -f docker-compose.e2e.yml down; \
+		exit $$status; \
+	fi
 
 test-all: test
 
