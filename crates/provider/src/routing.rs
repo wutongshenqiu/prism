@@ -365,3 +365,333 @@ fn build_auth_record(
         region: entry.region.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_proxy_core::config::RoutingStrategy;
+
+    /// Build a test AuthRecord with sensible defaults.
+    fn make_auth(id: &str, format: Format, models: Vec<&str>) -> AuthRecord {
+        AuthRecord {
+            id: id.to_string(),
+            provider: format,
+            api_key: format!("key-{id}"),
+            base_url: None,
+            proxy_url: None,
+            headers: Default::default(),
+            models: models
+                .into_iter()
+                .map(|m| ModelEntry {
+                    id: m.to_string(),
+                    alias: None,
+                })
+                .collect(),
+            excluded_models: Vec::new(),
+            prefix: None,
+            disabled: false,
+            circuit_breaker: Arc::new(NoopCircuitBreaker),
+            cloak: None,
+            wire_api: Default::default(),
+            credential_name: Some(id.to_string()),
+            weight: 1,
+            region: None,
+        }
+    }
+
+    fn setup_router(strategy: RoutingStrategy, creds: Vec<AuthRecord>) -> CredentialRouter {
+        let router = CredentialRouter::new(strategy);
+        let mut map: HashMap<Format, Vec<AuthRecord>> = HashMap::new();
+        for auth in creds {
+            map.entry(auth.provider).or_default().push(auth);
+        }
+        *router.credentials.write().unwrap() = map;
+        router
+    }
+
+    // === FillFirst Strategy ===
+
+    #[test]
+    fn test_fill_first_picks_first() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        assert_eq!(picked.id, "a");
+    }
+
+    #[test]
+    fn test_fill_first_skips_tried() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+        let picked = router
+            .pick(Format::OpenAI, "gpt-4", &["a".to_string()], None)
+            .unwrap();
+        assert_eq!(picked.id, "b");
+    }
+
+    #[test]
+    fn test_fill_first_no_available() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![make_auth("a", Format::OpenAI, vec!["gpt-4"])],
+        );
+        let picked = router.pick(Format::OpenAI, "gpt-4", &["a".to_string()], None);
+        assert!(picked.is_none());
+    }
+
+    #[test]
+    fn test_fill_first_wrong_model() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![make_auth("a", Format::OpenAI, vec!["gpt-4"])],
+        );
+        let picked = router.pick(Format::OpenAI, "gpt-3.5", &[], None);
+        assert!(picked.is_none());
+    }
+
+    #[test]
+    fn test_fill_first_wrong_provider() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![make_auth("a", Format::OpenAI, vec!["gpt-4"])],
+        );
+        let picked = router.pick(Format::Claude, "gpt-4", &[], None);
+        assert!(picked.is_none());
+    }
+
+    // === RoundRobin Strategy ===
+
+    #[test]
+    fn test_round_robin_cycles() {
+        let router = setup_router(
+            RoutingStrategy::RoundRobin,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("c", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        let first = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        let second = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        let third = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        let fourth = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+
+        assert_eq!(first.id, "a");
+        assert_eq!(second.id, "b");
+        assert_eq!(third.id, "c");
+        assert_eq!(fourth.id, "a"); // Wraps around
+    }
+
+    #[test]
+    fn test_round_robin_weighted() {
+        let mut auth_a = make_auth("a", Format::OpenAI, vec!["gpt-4"]);
+        auth_a.weight = 2;
+        let auth_b = make_auth("b", Format::OpenAI, vec!["gpt-4"]);
+
+        let router = setup_router(RoutingStrategy::RoundRobin, vec![auth_a, auth_b]);
+
+        // With weights 2:1, total weight = 3
+        // slots: a(0), a(1), b(2)
+        let picks: Vec<String> = (0..6)
+            .map(|_| router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap().id)
+            .collect();
+        assert_eq!(picks, vec!["a", "a", "b", "a", "a", "b"]);
+    }
+
+    // === LatencyAware Strategy ===
+
+    #[test]
+    fn test_latency_aware_picks_lowest() {
+        let router = setup_router(
+            RoutingStrategy::LatencyAware,
+            vec![
+                make_auth("slow", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("fast", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        router.record_latency("slow", 500.0);
+        router.record_latency("fast", 100.0);
+
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        assert_eq!(picked.id, "fast");
+    }
+
+    #[test]
+    fn test_latency_aware_unrecorded_defaults_to_zero() {
+        let router = setup_router(
+            RoutingStrategy::LatencyAware,
+            vec![
+                make_auth("recorded", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("unrecorded", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        router.record_latency("recorded", 200.0);
+        // unrecorded defaults to 0.0, so should be picked
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        assert_eq!(picked.id, "unrecorded");
+    }
+
+    // === GeoAware Strategy ===
+
+    #[test]
+    fn test_geo_aware_prefers_same_region() {
+        let mut auth_us = make_auth("us", Format::OpenAI, vec!["gpt-4"]);
+        auth_us.region = Some("US".to_string());
+        let mut auth_eu = make_auth("eu", Format::OpenAI, vec!["gpt-4"]);
+        auth_eu.region = Some("EU".to_string());
+
+        let router = setup_router(RoutingStrategy::GeoAware, vec![auth_us, auth_eu]);
+
+        let picked = router
+            .pick(Format::OpenAI, "gpt-4", &[], Some("EU"))
+            .unwrap();
+        assert_eq!(picked.id, "eu");
+    }
+
+    #[test]
+    fn test_geo_aware_fallback_no_matching_region() {
+        let mut auth_us = make_auth("us", Format::OpenAI, vec!["gpt-4"]);
+        auth_us.region = Some("US".to_string());
+
+        let router = setup_router(RoutingStrategy::GeoAware, vec![auth_us]);
+
+        let picked = router
+            .pick(Format::OpenAI, "gpt-4", &[], Some("JP"))
+            .unwrap();
+        assert_eq!(picked.id, "us"); // Falls back to first available
+    }
+
+    #[test]
+    fn test_geo_aware_no_client_region() {
+        let mut auth = make_auth("a", Format::OpenAI, vec!["gpt-4"]);
+        auth.region = Some("US".to_string());
+
+        let router = setup_router(RoutingStrategy::GeoAware, vec![auth]);
+
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        assert_eq!(picked.id, "a");
+    }
+
+    // === Disabled credentials ===
+
+    #[test]
+    fn test_disabled_credential_skipped() {
+        let mut disabled = make_auth("disabled", Format::OpenAI, vec!["gpt-4"]);
+        disabled.disabled = true;
+        let enabled = make_auth("enabled", Format::OpenAI, vec!["gpt-4"]);
+
+        let router = setup_router(RoutingStrategy::FillFirst, vec![disabled, enabled]);
+
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None).unwrap();
+        assert_eq!(picked.id, "enabled");
+    }
+
+    // === record_latency / EWMA ===
+
+    #[test]
+    fn test_record_latency_ewma() {
+        let router = CredentialRouter::new(RoutingStrategy::LatencyAware);
+        // alpha = 0.3 by default
+
+        router.record_latency("cred1", 100.0);
+        let ewma = router.latency_ewma.read().unwrap();
+        assert!((ewma["cred1"] - 100.0).abs() < 0.01);
+        drop(ewma);
+
+        // Second recording: 0.3 * 200 + 0.7 * 100 = 60 + 70 = 130
+        router.record_latency("cred1", 200.0);
+        let ewma = router.latency_ewma.read().unwrap();
+        assert!((ewma["cred1"] - 130.0).abs() < 0.01);
+    }
+
+    // === resolve_providers ===
+
+    #[test]
+    fn test_resolve_providers() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![
+                make_auth("oai", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("ds", Format::OpenAICompat, vec!["gpt-4"]),
+                make_auth("claude", Format::Claude, vec!["claude-3"]),
+            ],
+        );
+
+        let providers = router.resolve_providers("gpt-4");
+        assert!(providers.contains(&Format::OpenAI));
+        assert!(providers.contains(&Format::OpenAICompat));
+        assert!(!providers.contains(&Format::Claude));
+    }
+
+    #[test]
+    fn test_resolve_providers_no_match() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![make_auth("a", Format::OpenAI, vec!["gpt-4"])],
+        );
+        let providers = router.resolve_providers("nonexistent-model");
+        assert!(providers.is_empty());
+    }
+
+    // === all_models ===
+
+    #[test]
+    fn test_all_models() {
+        let mut auth_with_alias = make_auth("a", Format::OpenAI, vec!["gpt-4"]);
+        auth_with_alias.models[0].alias = Some("my-gpt4".to_string());
+
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![
+                auth_with_alias,
+                make_auth("b", Format::Claude, vec!["claude-3"]),
+            ],
+        );
+
+        let models = router.all_models();
+        assert_eq!(models.len(), 2);
+        // Alias should be used as the id
+        assert!(models.iter().any(|m| m.id == "my-gpt4"));
+        assert!(models.iter().any(|m| m.id == "claude-3"));
+    }
+
+    #[test]
+    fn test_all_models_dedup() {
+        let router = setup_router(
+            RoutingStrategy::FillFirst,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        let models = router.all_models();
+        assert_eq!(models.len(), 1);
+    }
+
+    // === model_has_prefix ===
+
+    #[test]
+    fn test_model_has_prefix() {
+        let mut auth = make_auth("a", Format::OpenAI, vec!["gpt-4"]);
+        auth.prefix = Some("myprefix".to_string());
+
+        let router = setup_router(RoutingStrategy::FillFirst, vec![auth]);
+
+        assert!(router.model_has_prefix("gpt-4"));
+        assert!(!router.model_has_prefix("nonexistent"));
+    }
+}

@@ -11,3 +11,6 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+
+[dev-dependencies]
+assert-json-diff = "2"

@@ -317,3 +317,444 @@ fn convert_tool_choice(tc: &Value) -> Value {
         _ => json!({"type": "auto"}),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_json_diff::assert_json_eq;
+
+    fn translate(req: Value, stream: bool) -> Value {
+        let raw = serde_json::to_vec(&req).unwrap();
+        let result = translate_request("claude-3-5-sonnet-20241022", &raw, stream).unwrap();
+        serde_json::from_slice(&result).unwrap()
+    }
+
+    // === Basic request translation ===
+
+    #[test]
+    fn test_basic_text_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = translate(req, false);
+        assert_eq!(result["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(result["messages"][0]["content"], "Hello");
+        assert_eq!(result["max_tokens"], 8192);
+        assert!(result.get("stream").is_none());
+    }
+
+    #[test]
+    fn test_stream_flag_set() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let result = translate(req, true);
+        assert_eq!(result["stream"], true);
+    }
+
+    // === System message extraction ===
+
+    #[test]
+    fn test_single_system_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let result = translate(req, false);
+        assert_eq!(result["system"], "You are helpful.");
+        // System message should not appear in messages
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(result["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_multiple_system_messages() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "Rule 1"},
+                {"role": "system", "content": "Rule 2"},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let result = translate(req, false);
+        assert_eq!(result["system"], "Rule 1\n\nRule 2");
+    }
+
+    #[test]
+    fn test_system_message_with_array_content() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": [
+                    {"type": "text", "text": "Part A"},
+                    {"type": "text", "text": "Part B"}
+                ]},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let result = translate(req, false);
+        assert_eq!(result["system"], "Part A\n\nPart B");
+    }
+
+    #[test]
+    fn test_no_system_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let result = translate(req, false);
+        assert!(result.get("system").is_none());
+    }
+
+    // === User content conversion ===
+
+    #[test]
+    fn test_user_multipart_content() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this:"},
+                    {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}}
+                ]
+            }]
+        });
+        let result = translate(req, false);
+        let content = result["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "url");
+    }
+
+    #[test]
+    fn test_user_base64_image() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}}
+                ]
+            }]
+        });
+        let result = translate(req, false);
+        let img = &result["messages"][0]["content"][0];
+        assert_eq!(img["type"], "image");
+        assert_eq!(img["source"]["type"], "base64");
+        assert_eq!(img["source"]["media_type"], "image/png");
+        assert_eq!(img["source"]["data"], "iVBOR...");
+    }
+
+    #[test]
+    fn test_user_empty_content() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user"}]
+        });
+        let result = translate(req, false);
+        assert_eq!(result["messages"][0]["content"], "");
+    }
+
+    // === Assistant message conversion ===
+
+    #[test]
+    fn test_assistant_text_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello!"},
+                {"role": "user", "content": "Bye"}
+            ]
+        });
+        let result = translate(req, false);
+        let assistant = &result["messages"][1];
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["content"][0]["type"], "text");
+        assert_eq!(assistant["content"][0]["text"], "Hello!");
+    }
+
+    #[test]
+    fn test_assistant_with_tool_calls() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{\"city\":\"SF\"}"}
+                }]}
+            ]
+        });
+        let result = translate(req, false);
+        let assistant = &result["messages"][1];
+        let content = assistant["content"].as_array().unwrap();
+        // Should have tool_use block (no text since content is null)
+        let tool_use = content.iter().find(|b| b["type"] == "tool_use").unwrap();
+        assert_eq!(tool_use["id"], "call_123");
+        assert_eq!(tool_use["name"], "get_weather");
+        assert_json_eq!(tool_use["input"], json!({"city": "SF"}));
+    }
+
+    #[test]
+    fn test_assistant_empty_content_gets_placeholder() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": ""},
+                {"role": "user", "content": "Bye"}
+            ]
+        });
+        let result = translate(req, false);
+        let blocks = result["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "");
+    }
+
+    // === Tool result messages ===
+
+    #[test]
+    fn test_tool_result_message() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{}"}
+                }]},
+                {"role": "tool", "tool_call_id": "call_123", "content": "72°F sunny"}
+            ]
+        });
+        let result = translate(req, false);
+        // Tool result should be a user message with tool_result content block
+        let tool_msg = &result["messages"][2];
+        assert_eq!(tool_msg["role"], "user");
+        let content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_123");
+        assert_eq!(content[0]["content"], "72°F sunny");
+    }
+
+    #[test]
+    fn test_multiple_tool_results_merge() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {"name": "weather", "arguments": "{}"}},
+                    {"id": "call_2", "type": "function", "function": {"name": "time", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "call_1", "content": "72°F"},
+                {"role": "tool", "tool_call_id": "call_2", "content": "3:00 PM"}
+            ]
+        });
+        let result = translate(req, false);
+        // Both tool results should be merged into a single user message
+        let msgs = result["messages"].as_array().unwrap();
+        // user, assistant, user(tool_results merged)
+        assert_eq!(msgs.len(), 3);
+        let tool_msg = &msgs[2];
+        assert_eq!(tool_msg["role"], "user");
+        let content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["tool_use_id"], "call_1");
+        assert_eq!(content[1]["tool_use_id"], "call_2");
+    }
+
+    // === Tools conversion ===
+
+    #[test]
+    fn test_tools_conversion() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"]
+                    }
+                }
+            }]
+        });
+        let result = translate(req, false);
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "get_weather");
+        assert_eq!(tools[0]["description"], "Get weather for a city");
+        assert!(tools[0]["input_schema"]["properties"]["city"].is_object());
+    }
+
+    #[test]
+    fn test_no_tools() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}]
+        });
+        let result = translate(req, false);
+        assert!(result.get("tools").is_none());
+    }
+
+    // === Tool choice conversion ===
+
+    #[test]
+    fn test_tool_choice_none() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": "none"
+        });
+        let result = translate(req, false);
+        assert_json_eq!(result["tool_choice"], json!({"type": "none"}));
+    }
+
+    #[test]
+    fn test_tool_choice_auto() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": "auto"
+        });
+        let result = translate(req, false);
+        assert_json_eq!(result["tool_choice"], json!({"type": "auto"}));
+    }
+
+    #[test]
+    fn test_tool_choice_required() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": "required"
+        });
+        let result = translate(req, false);
+        assert_json_eq!(result["tool_choice"], json!({"type": "any"}));
+    }
+
+    #[test]
+    fn test_tool_choice_specific_function() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tool_choice": {"type": "function", "function": {"name": "get_weather"}}
+        });
+        let result = translate(req, false);
+        assert_json_eq!(
+            result["tool_choice"],
+            json!({"type": "tool", "name": "get_weather"})
+        );
+    }
+
+    // === Stop sequences ===
+
+    #[test]
+    fn test_stop_string() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stop": "END"
+        });
+        let result = translate(req, false);
+        assert_json_eq!(result["stop_sequences"], json!(["END"]));
+    }
+
+    #[test]
+    fn test_stop_array() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stop": ["END", "STOP"]
+        });
+        let result = translate(req, false);
+        assert_json_eq!(result["stop_sequences"], json!(["END", "STOP"]));
+    }
+
+    // === Parameter passthrough ===
+
+    #[test]
+    fn test_temperature_passthrough() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.7,
+            "top_p": 0.9
+        });
+        let result = translate(req, false);
+        assert_eq!(result["temperature"], 0.7);
+        assert_eq!(result["top_p"], 0.9);
+    }
+
+    #[test]
+    fn test_max_completion_tokens_fallback() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_completion_tokens": 4096
+        });
+        let result = translate(req, false);
+        assert_eq!(result["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn test_max_tokens_takes_precedence() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1024,
+            "max_completion_tokens": 4096
+        });
+        let result = translate(req, false);
+        assert_eq!(result["max_tokens"], 1024);
+    }
+
+    #[test]
+    fn test_extended_thinking_passthrough() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": 10000}
+        });
+        let result = translate(req, false);
+        assert_json_eq!(
+            result["thinking"],
+            json!({"type": "enabled", "budget_tokens": 10000})
+        );
+    }
+
+    // === Error handling ===
+
+    #[test]
+    fn test_missing_messages_field() {
+        let req = json!({"model": "gpt-4"});
+        let raw = serde_json::to_vec(&req).unwrap();
+        let result = translate_request("claude-3-5-sonnet-20241022", &raw, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_json() {
+        let raw = b"not valid json";
+        let result = translate_request("claude-3-5-sonnet-20241022", raw, false);
+        assert!(result.is_err());
+    }
+}

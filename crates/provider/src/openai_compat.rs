@@ -275,3 +275,195 @@ impl ProviderExecutor for OpenAICompatExecutor {
         common::supported_models_from_auth(auth, &self.name, &self.name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // === chat_to_responses ===
+
+    #[test]
+    fn test_chat_to_responses_basic() {
+        let chat_req = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+            "stream": true
+        });
+        let payload = serde_json::to_vec(&chat_req).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&chat_to_responses(&payload).unwrap()).unwrap();
+
+        // messages -> input
+        assert_eq!(result["input"][0]["role"], "user");
+        assert_eq!(result["input"][0]["content"], "Hello");
+        // stream should be removed
+        assert!(result.get("stream").is_none());
+        // model should be preserved
+        assert_eq!(result["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn test_chat_to_responses_system_to_instructions() {
+        let chat_req = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "Be concise."},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let payload = serde_json::to_vec(&chat_req).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&chat_to_responses(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["instructions"], "Be concise.");
+        // System message should be filtered from input
+        assert_eq!(result["input"].as_array().unwrap().len(), 1);
+        assert_eq!(result["input"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_chat_to_responses_multiple_system_messages() {
+        let chat_req = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "Rule 1"},
+                {"role": "system", "content": "Rule 2"},
+                {"role": "user", "content": "Hi"}
+            ]
+        });
+        let payload = serde_json::to_vec(&chat_req).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&chat_to_responses(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["instructions"], "Rule 1\nRule 2");
+    }
+
+    #[test]
+    fn test_chat_to_responses_max_tokens() {
+        let chat_req = json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1024
+        });
+        let payload = serde_json::to_vec(&chat_req).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&chat_to_responses(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["max_output_tokens"], 1024);
+        assert!(result.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn test_chat_to_responses_preserves_existing_instructions() {
+        let chat_req = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "system msg"},
+                {"role": "user", "content": "Hi"}
+            ],
+            "instructions": "existing instructions"
+        });
+        let payload = serde_json::to_vec(&chat_req).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&chat_to_responses(&payload).unwrap()).unwrap();
+
+        // Should NOT overwrite existing instructions
+        assert_eq!(result["instructions"], "existing instructions");
+    }
+
+    // === responses_to_chat ===
+
+    #[test]
+    fn test_responses_to_chat_basic() {
+        let responses_resp = json!({
+            "id": "resp_123",
+            "model": "gpt-4o-2024-08-06",
+            "created_at": 1700000000u64,
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{
+                    "type": "output_text",
+                    "text": "Hello!"
+                }]
+            }],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5
+            }
+        });
+        let payload = serde_json::to_vec(&responses_resp).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&responses_to_chat(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["id"], "chatcmpl-resp_123");
+        assert_eq!(result["object"], "chat.completion");
+        assert_eq!(result["model"], "gpt-4o-2024-08-06");
+        assert_eq!(result["choices"][0]["message"]["role"], "assistant");
+        assert_eq!(result["choices"][0]["message"]["content"], "Hello!");
+        assert_eq!(result["choices"][0]["finish_reason"], "stop");
+        assert_eq!(result["usage"]["prompt_tokens"], 10);
+        assert_eq!(result["usage"]["completion_tokens"], 5);
+        assert_eq!(result["usage"]["total_tokens"], 15);
+    }
+
+    #[test]
+    fn test_responses_to_chat_incomplete() {
+        let responses_resp = json!({
+            "id": "resp_456",
+            "model": "gpt-4o",
+            "status": "incomplete",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Partial"}]
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 100}
+        });
+        let payload = serde_json::to_vec(&responses_resp).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&responses_to_chat(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["choices"][0]["finish_reason"], "length");
+    }
+
+    #[test]
+    fn test_responses_to_chat_empty_output() {
+        let responses_resp = json!({
+            "id": "resp_789",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [],
+            "usage": {"input_tokens": 5, "output_tokens": 0}
+        });
+        let payload = serde_json::to_vec(&responses_resp).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&responses_to_chat(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["choices"][0]["message"]["content"], "");
+    }
+
+    #[test]
+    fn test_responses_to_chat_multiple_content_blocks() {
+        let responses_resp = json!({
+            "id": "resp_multi",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": "Part 1"},
+                    {"type": "output_text", "text": " Part 2"}
+                ]
+            }],
+            "usage": {"input_tokens": 5, "output_tokens": 10}
+        });
+        let payload = serde_json::to_vec(&responses_resp).unwrap();
+        let result: serde_json::Value =
+            serde_json::from_slice(&responses_to_chat(&payload).unwrap()).unwrap();
+
+        assert_eq!(result["choices"][0]["message"]["content"], "Part 1 Part 2");
+    }
+}

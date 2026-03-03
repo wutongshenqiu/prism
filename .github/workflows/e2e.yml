@@ -1,0 +1,33 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run weekly on Sundays at 2:00 UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run E2E tests
+        env:
+          E2E_OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
+          E2E_CLAUDE_API_KEY: ${{ secrets.E2E_CLAUDE_API_KEY }}
+          E2E_GEMINI_API_KEY: ${{ secrets.E2E_GEMINI_API_KEY }}
+        run: cargo test --test e2e -- --ignored
+        if: env.E2E_OPENAI_API_KEY != '' || env.E2E_CLAUDE_API_KEY != '' || env.E2E_GEMINI_API_KEY != ''
+      - name: Skip E2E (no secrets)
+        if: env.E2E_OPENAI_API_KEY == '' && env.E2E_CLAUDE_API_KEY == '' && env.E2E_GEMINI_API_KEY == ''
+        run: echo "E2E tests skipped — no API key secrets configured"

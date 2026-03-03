@@ -170,4 +170,107 @@ mod tests {
         let block = ": this is a comment";
         assert!(parse_event_block(block).is_none());
     }
+
+    #[test]
+    fn test_parse_event_block_mixed_comment_and_data() {
+        let block = ": comment\ndata: hello";
+        let event = parse_event_block(block).unwrap();
+        assert_eq!(event.data, "hello");
+    }
+
+    #[test]
+    fn test_parse_event_block_id_and_retry_ignored() {
+        let block = "id: 123\nretry: 5000\ndata: payload";
+        let event = parse_event_block(block).unwrap();
+        assert_eq!(event.data, "payload");
+    }
+
+    #[test]
+    fn test_parse_event_block_empty_data() {
+        let block = "event: ping";
+        assert!(parse_event_block(block).is_none());
+    }
+
+    #[test]
+    fn test_find_event_boundary_lf() {
+        assert_eq!(find_event_boundary("data: x\n\ndata: y"), Some(7));
+    }
+
+    #[test]
+    fn test_find_event_boundary_crlf() {
+        assert_eq!(find_event_boundary("data: x\r\n\r\ndata: y"), Some(7));
+    }
+
+    #[test]
+    fn test_find_event_boundary_none() {
+        assert_eq!(find_event_boundary("data: x\ndata: y"), None);
+    }
+
+    #[test]
+    fn test_parse_event_block_data_with_whitespace() {
+        // data: field value should trim leading space
+        let block = "data:  spaced";
+        let event = parse_event_block(block).unwrap();
+        assert_eq!(event.data, "spaced");
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_basic() {
+        let raw = "data: hello\n\ndata: world\n\n";
+        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let mut sse_stream = parse_sse_stream(stream);
+
+        let event1 = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event1.data, "hello");
+
+        let event2 = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event2.data, "world");
+
+        assert!(StreamExt::next(&mut sse_stream).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_chunked() {
+        // Data arrives in multiple chunks
+        let stream = futures::stream::iter(vec![
+            Ok(Bytes::from("data: hel")),
+            Ok(Bytes::from("lo\n\n")),
+        ]);
+        let mut sse_stream = parse_sse_stream(stream);
+
+        let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event.data, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_with_event_type() {
+        let raw = "event: message_start\ndata: {}\n\n";
+        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let mut sse_stream = parse_sse_stream(stream);
+
+        let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event.event.as_deref(), Some("message_start"));
+        assert_eq!(event.data, "{}");
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_done_sentinel() {
+        let raw = "data: [DONE]\n\n";
+        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let mut sse_stream = parse_sse_stream(stream);
+
+        let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event.data, "[DONE]");
+    }
+
+    #[tokio::test]
+    async fn test_parse_sse_stream_remaining_data_on_eof() {
+        // Data without trailing double newline (stream ends abruptly)
+        let raw = "data: final";
+        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let mut sse_stream = parse_sse_stream(stream);
+
+        let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
+        assert_eq!(event.data, "final");
+    }
 }

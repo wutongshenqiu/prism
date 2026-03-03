@@ -99,3 +99,88 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_token_valid() {
+        let token = generate_token("admin", "test-secret", 3600).unwrap();
+        assert!(!token.is_empty());
+
+        // Decode and verify claims
+        let key = DecodingKey::from_secret(b"test-secret");
+        let data = decode::<Claims>(&token, &key, &Validation::default()).unwrap();
+        assert_eq!(data.claims.sub, "admin");
+        assert!(data.claims.exp > data.claims.iat);
+        assert_eq!(data.claims.exp - data.claims.iat, 3600);
+    }
+
+    #[test]
+    fn test_generate_token_different_users() {
+        let t1 = generate_token("alice", "secret", 60).unwrap();
+        let t2 = generate_token("bob", "secret", 60).unwrap();
+        assert_ne!(t1, t2);
+
+        let key = DecodingKey::from_secret(b"secret");
+        let c1 = decode::<Claims>(&t1, &key, &Validation::default())
+            .unwrap()
+            .claims;
+        let c2 = decode::<Claims>(&t2, &key, &Validation::default())
+            .unwrap()
+            .claims;
+        assert_eq!(c1.sub, "alice");
+        assert_eq!(c2.sub, "bob");
+    }
+
+    #[test]
+    fn test_generate_token_wrong_secret_fails() {
+        let token = generate_token("admin", "real-secret", 3600).unwrap();
+        let key = DecodingKey::from_secret(b"wrong-secret");
+        let result = decode::<Claims>(&token, &key, &Validation::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generate_token_expired() {
+        // Generate token with 0 TTL (already expired)
+        let now = chrono::Utc::now().timestamp() as usize;
+        let claims = Claims {
+            sub: "admin".to_string(),
+            iat: now - 7200,
+            exp: now - 3600, // expired 1h ago
+        };
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"secret"),
+        )
+        .unwrap();
+
+        let key = DecodingKey::from_secret(b"secret");
+        let result = decode::<Claims>(&token, &key, &Validation::default());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature
+        ));
+    }
+
+    #[test]
+    fn test_claims_serialization() {
+        let claims = Claims {
+            sub: "test-user".to_string(),
+            iat: 1000,
+            exp: 2000,
+        };
+        let json = serde_json::to_value(&claims).unwrap();
+        assert_eq!(json["sub"], "test-user");
+        assert_eq!(json["iat"], 1000);
+        assert_eq!(json["exp"], 2000);
+
+        // Roundtrip
+        let deserialized: Claims = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.sub, "test-user");
+    }
+}

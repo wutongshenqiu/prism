@@ -40,7 +40,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo clippy --workspace --tests -- -D warnings
 
   test:
     name: Test
@@ -52,10 +52,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
+  frontend:
+    name: Frontend Check & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
   ci-summary:
     name: CI Summary
     if: always()
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -63,8 +81,9 @@ jobs:
         run: |
           if [ "${{ needs.fmt.result }}" != "success" ] || \
              [ "${{ needs.clippy.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ]; then
-            echo "::error::CI failed — fmt=${{ needs.fmt.result }}, clippy=${{ needs.clippy.result }}, test=${{ needs.test.result }}"
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.frontend.result }}" != "success" ]; then
+            echo "::error::CI failed — fmt=${{ needs.fmt.result }}, clippy=${{ needs.clippy.result }}, test=${{ needs.test.result }}, frontend=${{ needs.frontend.result }}"
             exit 1
           fi
           echo "All checks passed."

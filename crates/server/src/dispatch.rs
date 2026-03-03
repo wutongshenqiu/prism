@@ -810,3 +810,210 @@ fn handle_retry_error(
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === extract_usage ===
+
+    #[test]
+    fn test_extract_usage_openai_format() {
+        let payload = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20}}"#;
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, Some(10));
+        assert_eq!(output, Some(20));
+    }
+
+    #[test]
+    fn test_extract_usage_claude_format() {
+        let payload = r#"{"usage":{"input_tokens":15,"output_tokens":25}}"#;
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, Some(15));
+        assert_eq!(output, Some(25));
+    }
+
+    #[test]
+    fn test_extract_usage_gemini_format() {
+        let payload = r#"{"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":8}}"#;
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, Some(12));
+        assert_eq!(output, Some(8));
+    }
+
+    #[test]
+    fn test_extract_usage_no_usage() {
+        let payload = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, None);
+        assert_eq!(output, None);
+    }
+
+    #[test]
+    fn test_extract_usage_invalid_json() {
+        let payload = "not json";
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, None);
+        assert_eq!(output, None);
+    }
+
+    #[test]
+    fn test_extract_usage_empty_usage() {
+        let payload = r#"{"usage":{}}"#;
+        let (input, output) = extract_usage(payload);
+        assert_eq!(input, None);
+        assert_eq!(output, None);
+    }
+
+    // === inject_debug_headers ===
+
+    #[test]
+    fn test_inject_debug_headers_full() {
+        let mut response = axum::http::Response::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let debug = DispatchDebug {
+            provider: Some("openai".to_string()),
+            model: Some("gpt-4".to_string()),
+            credential_name: Some("my-key".to_string()),
+            attempts: vec!["attempt1".to_string(), "attempt2".to_string()],
+        };
+
+        inject_debug_headers(&mut response, &debug);
+
+        assert_eq!(
+            response.headers().get("x-debug-provider").unwrap(),
+            "openai"
+        );
+        assert_eq!(response.headers().get("x-debug-model").unwrap(), "gpt-4");
+        assert_eq!(
+            response.headers().get("x-debug-credential").unwrap(),
+            "my-key"
+        );
+        assert_eq!(
+            response.headers().get("x-debug-attempts").unwrap(),
+            "attempt1, attempt2"
+        );
+    }
+
+    #[test]
+    fn test_inject_debug_headers_empty() {
+        let mut response = axum::http::Response::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let debug = DispatchDebug::default();
+
+        inject_debug_headers(&mut response, &debug);
+
+        assert!(response.headers().get("x-debug-provider").is_none());
+        assert!(response.headers().get("x-debug-model").is_none());
+        assert!(response.headers().get("x-debug-credential").is_none());
+        assert!(response.headers().get("x-debug-attempts").is_none());
+    }
+
+    #[test]
+    fn test_inject_debug_headers_partial() {
+        let mut response = axum::http::Response::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let debug = DispatchDebug {
+            provider: Some("claude".to_string()),
+            model: None,
+            credential_name: None,
+            attempts: vec![],
+        };
+
+        inject_debug_headers(&mut response, &debug);
+
+        assert_eq!(
+            response.headers().get("x-debug-provider").unwrap(),
+            "claude"
+        );
+        assert!(response.headers().get("x-debug-model").is_none());
+    }
+
+    // === DispatchRequest model chain ===
+
+    #[test]
+    fn test_model_chain_from_models() {
+        let req = DispatchRequest {
+            source_format: Format::OpenAI,
+            model: "gpt-4".to_string(),
+            models: Some(vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()]),
+            stream: false,
+            body: Bytes::new(),
+            allowed_formats: None,
+            user_agent: None,
+            debug: false,
+            api_key: None,
+            client_region: None,
+        };
+
+        let chain: Vec<String> = if let Some(ref models) = req.models {
+            if models.is_empty() {
+                vec![req.model.clone()]
+            } else {
+                models.clone()
+            }
+        } else {
+            vec![req.model.clone()]
+        };
+
+        assert_eq!(chain, vec!["gpt-4", "gpt-3.5-turbo"]);
+    }
+
+    // === rewrite_model_in_body ===
+
+    #[test]
+    fn test_rewrite_model_in_body() {
+        let body = Bytes::from(r#"{"model":"gpt-4","messages":[]}"#);
+        let result = rewrite_model_in_body(&body, "claude-3-sonnet");
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "claude-3-sonnet");
+        assert!(val["messages"].is_array());
+    }
+
+    #[test]
+    fn test_rewrite_model_in_body_no_model() {
+        let body = Bytes::from(r#"{"messages":[]}"#);
+        let result = rewrite_model_in_body(&body, "new-model");
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "new-model");
+    }
+
+    #[test]
+    fn test_rewrite_model_in_body_invalid_json() {
+        let body = Bytes::from("not json");
+        let result = rewrite_model_in_body(&body, "new-model");
+        // Returns original body on parse failure
+        assert_eq!(result, body);
+    }
+
+    // === keepalive_error_json ===
+
+    #[test]
+    fn test_keepalive_error_json() {
+        let result = keepalive_error_json("something went wrong");
+        let val: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(val["error"]["message"], "something went wrong");
+        assert_eq!(val["error"]["type"], "server_error");
+    }
+
+    #[test]
+    fn test_model_chain_single() {
+        let model_chain: Vec<String> = {
+            let models: Option<Vec<String>> = None;
+            if let Some(ref models) = models {
+                if models.is_empty() {
+                    vec!["gpt-4".to_string()]
+                } else {
+                    models.clone()
+                }
+            } else {
+                vec!["gpt-4".to_string()]
+            }
+        };
+
+        assert_eq!(model_chain, vec!["gpt-4"]);
+    }
+}
