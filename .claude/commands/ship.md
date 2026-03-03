@@ -11,18 +11,22 @@
 Steps:
 
 1. **解析参数**: 从 `$ARGUMENTS` 中提取 `--no-pr`、`--merge` 标志和 commit message（如有）
-2. **格式化 + 检查**: Run `make fmt` + `make lint` — 发现 clippy 问题则修复代码并重新检查，直到通过
-3. **测试**: Run `make test` — 发现失败则修复并重新测试，直到通过
-4. **文档同步检查**: 检查改动是否涉及以下文件，如有则提醒同步文档:
+2. **已有 PR 检测**: 用 `gh pr list --head <current-branch> --state open --json number,url` 检查当前分支是否已有 open PR
+   - 如果有 open PR 且是 `--merge` 模式: 跳过步骤 3-10，直接跳到步骤 11d（等待 CI + merge）
+   - 如果有 open PR 且非 `--merge` 模式: 报告 PR URL，提示用 `--merge` 来合并
+   - 如果没有 open PR: 继续正常流程
+3. **格式化 + 检查**: Run `make fmt` + `make lint` — 发现 clippy 问题则修复代码并重新检查，直到通过
+4. **测试**: Run `make test` — 发现失败则修复并重新测试，直到通过
+5. **文档同步检查**: 检查改动是否涉及以下文件，如有则提醒同步文档:
    - `crates/core/src/provider.rs` 或 `config.rs` 变更 → 检查 `docs/reference/types/` 是否需要更新
    - `crates/server/src/handler/` 或 `lib.rs` 路由变更 → 检查 `docs/reference/api-surface.md`
    - `crates/provider/src/` 新增 executor → 检查 `docs/playbooks/add-provider.md`
    - `crates/translator/src/` 新增翻译器 → 检查 `docs/playbooks/add-translator.md`
-5. **Spec 关联检查**: 读取 `docs/specs/_index.md`，如果有关联的 Active Spec:
+6. **Spec 关联检查**: 读取 `docs/specs/_index.md`，如果有关联的 Active Spec:
    - 检查改动是否完成了 Spec 的全部内容
    - 如果已完成：自动执行 `/spec advance SPEC-NNN`（Active → Completed），将目录从 `active/` 移动到 `completed/`，更新 `_index.md`
    - 将 Spec 变更一并加入本次提交
-6. **分支管理**:
+7. **分支管理**:
    - 如果当前在 `main` 分支且有**未暂存/未提交**的改动:
      - 从 commit message 推导分支名（如 `feat: add daemon support` → `feature/daemon-support`）
      - 分支名规则: `feat:` → `feature/`, `fix:` → `fix/`, `docs:` → `docs/`, `refactor:` → `refactor/`, `test:` → `test/`, `chore:` → `chore/`
@@ -33,10 +37,10 @@ Steps:
      - `git reset --hard origin/main` — 将 main 回退到 origin/main
      - `git checkout <branch-name>` — 切换到新分支
      - 这样 main 保持与 origin/main 同步，新提交在 feature 分支上
-7. **暂存**: `git add` 改动文件（排除 `config.yaml` / `.env` 等敏感文件）
-8. **提交**: 如果参数中指定了 commit message，使用该 message；否则从分支名 + 改动推导（conventional commit 格式: `feat:`/`fix:`/`docs:`/`refactor:`/`test:`/`chore:`）。执行 `git commit`
-9. **推送**: `git push -u origin HEAD`
-10. **创建 PR**（除非 `--no-pr`）:
+8. **暂存**: `git add` 改动文件（排除 `config.yaml` / `.env` 等敏感文件）
+9. **提交**: 如果参数中指定了 commit message，使用该 message；否则从分支名 + 改动推导（conventional commit 格式: `feat:`/`fix:`/`docs:`/`refactor:`/`test:`/`chore:`）。执行 `git commit`
+10. **推送**: `git push -u origin HEAD`
+11. **创建 PR**（除非 `--no-pr`）:
    a. 从分支名和 commit 历史推导 PR 标题（conventional commit 格式，70 字符内）
    b. 生成 PR body:
       ```
@@ -63,7 +67,7 @@ Steps:
         2. 然后 `gh pr merge --merge --delete-branch`
       - 如果没有依赖 PR: `gh pr merge --merge --delete-branch`
    f. 报告 PR URL 和 CI 结果（及 merge 状态）
-11. **本地清理** (仅 `--merge` 且合并成功后):
+12. **本地清理** (仅 `--merge` 且合并成功后):
     - `git checkout main && git pull origin main`
     - `git branch -d <branch-name>` — 删除本地已合并的分支
-12. **结果报告**: 报告 commit SHA、push 结果、PR URL（如适用）、merge 状态（如适用）
+13. **结果报告**: 报告 commit SHA、push 结果、PR URL（如适用）、merge 状态（如适用）
