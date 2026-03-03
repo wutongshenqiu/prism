@@ -14,3 +14,11 @@ web/dist/
 .claude/*
 !.claude/settings.json
 !.claude/commands/
+
+# OpenCode — track commands
+.opencode/*
+!.opencode/commands/
+
+# Agent Skills — track for Codex/Copilot/OpenCode discovery
+# Skills live in .agents/skills/ (not .claude/skills/) to avoid Claude Code duplicate discovery
+!.agents/
