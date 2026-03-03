@@ -109,6 +109,27 @@ fn inject_dispatch_meta(
     });
 }
 
+/// Build a non-stream JSON response with passthrough headers.
+fn build_json_response(
+    translated: &str,
+    passthrough_headers: &[String],
+    upstream_headers: &std::collections::HashMap<String, String>,
+) -> Result<Response, ProxyError> {
+    let mut builder = axum::http::Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "application/json");
+
+    for header_name in passthrough_headers {
+        if let Some(val) = upstream_headers.get(header_name) {
+            builder = builder.header(header_name.as_str(), val.as_str());
+        }
+    }
+
+    builder
+        .body(axum::body::Body::from(translated.to_string()))
+        .map_err(|e| ProxyError::Internal(format!("failed to build response: {e}")))
+        .map(IntoResponse::into_response)
+}
+
 /// Inject debug headers into a response if debug mode is enabled.
 fn inject_debug_headers(response: &mut Response, debug: &DispatchDebug) {
     let headers = response.headers_mut();
@@ -476,19 +497,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         &response.payload,
                                     )?;
 
-                                    let mut builder = axum::http::Response::builder()
-                                        .header(axum::http::header::CONTENT_TYPE, "application/json");
-
-                                    for header_name in &config.passthrough_headers {
-                                        if let Some(val) = response.headers.get(header_name) {
-                                            builder = builder.header(header_name.as_str(), val.as_str());
-                                        }
-                                    }
-
-                                    let mut resp = builder
-                                        .body(axum::body::Body::from(translated.clone()))
-                                        .map_err(|e| ProxyError::Internal(format!("failed to build response: {e}")))?
-                                        .into_response();
+                                    let mut resp = build_json_response(
+                                        &translated,
+                                        &config.passthrough_headers,
+                                        &response.headers,
+                                    )?;
                                     inject_dispatch_meta(
                                         &mut resp,
                                         &debug_info,
@@ -575,21 +588,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 cache.insert(cache_key, cached).await;
                             }
 
-                            let mut builder = axum::http::Response::builder()
-                                .header(axum::http::header::CONTENT_TYPE, "application/json");
-
-                            for header_name in &config.passthrough_headers {
-                                if let Some(val) = response.headers.get(header_name) {
-                                    builder = builder.header(header_name.as_str(), val.as_str());
-                                }
-                            }
-
-                            let mut resp = builder
-                                .body(axum::body::Body::from(translated.clone()))
-                                .map_err(|e| {
-                                    ProxyError::Internal(format!("failed to build response: {e}"))
-                                })?
-                                .into_response();
+                            let mut resp = build_json_response(
+                                &translated,
+                                &config.passthrough_headers,
+                                &response.headers,
+                            )?;
                             inject_dispatch_meta(
                                 &mut resp,
                                 &debug_info,

@@ -129,7 +129,6 @@ impl Application {
             metrics,
             request_logs,
             config_path: Arc::new(Mutex::new(args.config.clone())),
-            credential_router: credential_router.clone(),
             rate_limiter: rate_limiter.clone(),
             cost_calculator: cost_calculator.clone(),
             response_cache,

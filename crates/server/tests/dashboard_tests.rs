@@ -62,7 +62,6 @@ fn create_test_harness() -> TestHarness {
         metrics,
         request_logs,
         config_path: Arc::new(Mutex::new(config_path.to_str().unwrap().to_string())),
-        credential_router,
         rate_limiter: Arc::new(CompositeRateLimiter::new(&config.rate_limit)),
         cost_calculator: Arc::new(CostCalculator::new(&config.model_prices)),
         response_cache: None,

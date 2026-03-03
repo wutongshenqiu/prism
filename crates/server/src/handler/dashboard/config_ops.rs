@@ -42,7 +42,7 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
 
     match ai_proxy_core::config::Config::load(&config_path) {
         Ok(new_cfg) => {
-            state.credential_router.update_from_config(&new_cfg);
+            state.router.update_from_config(&new_cfg);
             state.config.store(std::sync::Arc::new(new_cfg));
             (
                 StatusCode::OK,

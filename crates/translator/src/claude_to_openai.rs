@@ -1,4 +1,8 @@
 use crate::TranslateState;
+use crate::common::{
+    build_assistant_message, build_openai_chunk, build_openai_response, build_tool_call,
+    build_tool_call_delta, map_claude_finish_reason,
+};
 use ai_proxy_core::error::ProxyError;
 use serde_json::{Value, json};
 
@@ -35,28 +39,12 @@ pub fn translate_non_stream(
                     }
                 }
                 "tool_use" => {
-                    let tc_id = block
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = block
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let tc_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let input = block.get("input").cloned().unwrap_or(json!({}));
                     let arguments = serde_json::to_string(&input).unwrap_or_default();
 
-                    tool_calls.push(json!({
-                        "id": tc_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": arguments,
-                        },
-                        "index": tool_call_index,
-                    }));
+                    tool_calls.push(build_tool_call(tc_id, name, &arguments, tool_call_index));
                     tool_call_index += 1;
                 }
                 _ => {}
@@ -64,30 +52,20 @@ pub fn translate_non_stream(
         }
     }
 
-    // Map stop_reason to finish_reason
-    let finish_reason = match resp.get("stop_reason").and_then(|v| v.as_str()) {
-        Some("end_turn") => "stop",
-        Some("max_tokens") => "length",
-        Some("tool_use") => "tool_calls",
-        Some("stop_sequence") => "stop",
-        _ => "stop",
-    };
+    let finish_reason = map_claude_finish_reason(resp.get("stop_reason").and_then(|v| v.as_str()));
 
     let content_str = text_parts.join("");
-    let content_val = if content_str.is_empty() && !tool_calls.is_empty() {
-        Value::Null
+    let content = if content_str.is_empty() {
+        None
     } else {
-        Value::String(content_str)
+        Some(content_str.as_str())
     };
-
-    let mut message = json!({
-        "role": "assistant",
-        "content": content_val,
-    });
-
-    if !tool_calls.is_empty() {
-        message["tool_calls"] = Value::Array(tool_calls);
-    }
+    let tc = if tool_calls.is_empty() {
+        None
+    } else {
+        Some(tool_calls)
+    };
+    let message = build_assistant_message(content, tc);
 
     // Map usage
     let usage = if let Some(u) = resp.get("usage") {
@@ -102,22 +80,7 @@ pub fn translate_non_stream(
         None
     };
 
-    let mut openai_resp = json!({
-        "id": id,
-        "object": "chat.completion",
-        "created": created,
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": message,
-            "finish_reason": finish_reason,
-        }],
-    });
-
-    if let Some(usage) = usage {
-        openai_resp["usage"] = usage;
-    }
-
+    let openai_resp = build_openai_response(&id, created, &model, message, finish_reason, usage);
     serde_json::to_string(&openai_resp).map_err(|e| ProxyError::Translation(e.to_string()))
 }
 
@@ -155,17 +118,13 @@ pub fn translate_stream(
             }
 
             // Emit initial chunk with role
-            let chunk = json!({
-                "id": state.response_id,
-                "object": "chat.completion.chunk",
-                "created": state.created,
-                "model": state.model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": ""},
-                    "finish_reason": null,
-                }],
-            });
+            let chunk = build_openai_chunk(
+                &state.response_id,
+                state.created,
+                &state.model,
+                json!({"role": "assistant", "content": ""}),
+                None,
+            );
             state.sent_role = true;
             chunks.push(serde_json::to_string(&chunk)?);
         }
@@ -177,38 +136,24 @@ pub fn translate_stream(
                 let block_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 if block_type == "tool_use" {
                     state.current_tool_call_index += 1;
-                    let tc_id = cb
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = cb
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let tc_id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("");
 
-                    let chunk = json!({
-                        "id": state.response_id,
-                        "object": "chat.completion.chunk",
-                        "created": state.created,
-                        "model": state.model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {
-                                "tool_calls": [{
-                                    "index": state.current_tool_call_index,
-                                    "id": tc_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": "",
-                                    },
-                                }],
-                            },
-                            "finish_reason": null,
-                        }],
+                    let delta = json!({
+                        "tool_calls": [build_tool_call_delta(
+                            state.current_tool_call_index,
+                            tc_id,
+                            name,
+                            "",
+                        )],
                     });
+                    let chunk = build_openai_chunk(
+                        &state.response_id,
+                        state.created,
+                        &state.model,
+                        delta,
+                        None,
+                    );
                     chunks.push(serde_json::to_string(&chunk)?);
                 }
             }
@@ -220,17 +165,13 @@ pub fn translate_stream(
                 match delta_type {
                     "text_delta" => {
                         let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                        let chunk = json!({
-                            "id": state.response_id,
-                            "object": "chat.completion.chunk",
-                            "created": state.created,
-                            "model": state.model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": text},
-                                "finish_reason": null,
-                            }],
-                        });
+                        let chunk = build_openai_chunk(
+                            &state.response_id,
+                            state.created,
+                            &state.model,
+                            json!({"content": text}),
+                            None,
+                        );
                         chunks.push(serde_json::to_string(&chunk)?);
                     }
                     "input_json_delta" => {
@@ -238,24 +179,20 @@ pub fn translate_stream(
                             .get("partial_json")
                             .and_then(|t| t.as_str())
                             .unwrap_or("");
-                        let chunk = json!({
-                            "id": state.response_id,
-                            "object": "chat.completion.chunk",
-                            "created": state.created,
-                            "model": state.model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {
-                                    "tool_calls": [{
-                                        "index": state.current_tool_call_index,
-                                        "function": {
-                                            "arguments": partial,
-                                        },
-                                    }],
-                                },
-                                "finish_reason": null,
-                            }],
-                        });
+                        let chunk = build_openai_chunk(
+                            &state.response_id,
+                            state.created,
+                            &state.model,
+                            json!({
+                                "tool_calls": [{
+                                    "index": state.current_tool_call_index,
+                                    "function": {
+                                        "arguments": partial,
+                                    },
+                                }],
+                            }),
+                            None,
+                        );
                         chunks.push(serde_json::to_string(&chunk)?);
                     }
                     _ => {}
@@ -265,25 +202,16 @@ pub fn translate_stream(
 
         Some("message_delta") => {
             if let Some(delta) = event.get("delta") {
-                let finish_reason = match delta.get("stop_reason").and_then(|v| v.as_str()) {
-                    Some("end_turn") => "stop",
-                    Some("max_tokens") => "length",
-                    Some("tool_use") => "tool_calls",
-                    Some("stop_sequence") => "stop",
-                    _ => "stop",
-                };
+                let finish_reason =
+                    map_claude_finish_reason(delta.get("stop_reason").and_then(|v| v.as_str()));
 
-                let mut chunk = json!({
-                    "id": state.response_id,
-                    "object": "chat.completion.chunk",
-                    "created": state.created,
-                    "model": state.model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": finish_reason,
-                    }],
-                });
+                let mut chunk = build_openai_chunk(
+                    &state.response_id,
+                    state.created,
+                    &state.model,
+                    json!({}),
+                    Some(finish_reason),
+                );
 
                 // Include usage if available
                 if let Some(usage) = event.get("usage") {
@@ -318,7 +246,6 @@ pub fn translate_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_json_diff::assert_json_eq;
 
     // ==================
     // Non-stream tests
@@ -379,7 +306,7 @@ mod tests {
         // arguments should be a JSON string
         let args: Value =
             serde_json::from_str(tool_calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
-        assert_json_eq!(args, json!({"city": "SF"}));
+        assert_eq!(args, json!({"city": "SF"}));
     }
 
     #[test]

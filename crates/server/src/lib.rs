@@ -31,7 +31,6 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub request_logs: Arc<RequestLogStore>,
     pub config_path: Arc<Mutex<String>>,
-    pub credential_router: Arc<CredentialRouter>,
     pub rate_limiter: Arc<CompositeRateLimiter>,
     pub cost_calculator: Arc<CostCalculator>,
     pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,

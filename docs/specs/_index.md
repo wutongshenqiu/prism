@@ -28,6 +28,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-029 | Translator Unit Tests                          | Active    | [active/SPEC-029/](active/SPEC-029/) |
 | SPEC-030 | Provider & Dispatch Unit Tests                 | Active    | [active/SPEC-030/](active/SPEC-030/) |
 | SPEC-032 | Frontend Testing Infrastructure                | Active    | [active/SPEC-032/](active/SPEC-032/) |
+| SPEC-034 | Translator & Server Refactoring                | Active    | [active/SPEC-034/](active/SPEC-034/) |
 
 ## How to Create a New Spec
 
