@@ -1,11 +1,11 @@
-use ai_proxy_core::audit::NoopAuditBackend;
-use ai_proxy_core::config::{Config, ProviderKeyEntry};
-use ai_proxy_core::cost::CostCalculator;
-use ai_proxy_core::metrics::Metrics;
-use ai_proxy_core::rate_limit::CompositeRateLimiter;
-use ai_proxy_core::request_log::RequestLogStore;
-use ai_proxy_provider::routing::CredentialRouter;
 use arc_swap::ArcSwap;
+use prism_core::audit::NoopAuditBackend;
+use prism_core::config::{Config, ProviderKeyEntry};
+use prism_core::cost::CostCalculator;
+use prism_core::metrics::Metrics;
+use prism_core::rate_limit::CompositeRateLimiter;
+use prism_core::request_log::RequestLogStore;
+use prism_provider::routing::CredentialRouter;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -39,17 +39,17 @@ impl TestServer {
         let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy.clone()));
         credential_router.update_from_config(&config);
 
-        let executors = Arc::new(ai_proxy_provider::build_registry(config.proxy_url.clone()));
-        let translators = Arc::new(ai_proxy_translator::build_registry());
+        let executors = Arc::new(prism_provider::build_registry(config.proxy_url.clone()));
+        let translators = Arc::new(prism_translator::build_registry());
         let rate_limiter = Arc::new(CompositeRateLimiter::new(&config.rate_limit));
         let cost_calculator = Arc::new(CostCalculator::new(&config.model_prices));
         let metrics = Arc::new(Metrics::new());
         let request_logs = Arc::new(RequestLogStore::new(request_log_capacity));
-        let audit: Arc<dyn ai_proxy_core::audit::AuditBackend> = Arc::new(NoopAuditBackend);
+        let audit: Arc<dyn prism_core::audit::AuditBackend> = Arc::new(NoopAuditBackend);
 
         let config = Arc::new(ArcSwap::from_pointee(config));
 
-        let state = ai_proxy_server::AppState {
+        let state = prism_server::AppState {
             config,
             router: credential_router,
             executors,
@@ -64,7 +64,7 @@ impl TestServer {
             start_time: Instant::now(),
         };
 
-        let app_router = ai_proxy_server::build_router(state);
+        let app_router = prism_server::build_router(state);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();

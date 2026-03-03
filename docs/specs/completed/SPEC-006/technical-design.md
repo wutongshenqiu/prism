@@ -4,7 +4,7 @@
 |-----------|-----------------------------|
 | Spec ID   | SPEC-006                    |
 | Title     | Security & Authentication   |
-| Author    | AI Proxy Team               |
+| Author    | Prism Team               |
 | Status    | Completed                   |
 | Created   | 2026-02-27                  |
 | Updated   | 2026-02-27                  |
@@ -21,7 +21,7 @@ Security is implemented through layered middleware: authentication checks client
 crates/server/src/auth.rs      -- auth_middleware function
 crates/server/src/lib.rs       -- build_router(), middleware stack, AppState
 crates/core/src/config.rs      -- TlsConfig, api_keys, body_limit_mb, passthrough_headers
-ai-proxy/src/main.rs           -- TLS server setup with Rustls
+prism/src/main.rs           -- TLS server setup with Rustls
 ```
 
 ### auth_middleware

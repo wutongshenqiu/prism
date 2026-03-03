@@ -15,7 +15,7 @@ pub fn init_logging(level: &str, to_file: bool, log_dir: Option<&str>) -> Option
 
     if to_file {
         let dir = log_dir.unwrap_or("./logs");
-        let file_appender = tracing_appender::rolling::daily(dir, "ai-proxy.log");
+        let file_appender = tracing_appender::rolling::daily(dir, "prism.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
         tracing_subscriber::fmt()

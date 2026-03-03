@@ -6,7 +6,7 @@ pub mod openai_compat;
 pub mod routing;
 pub mod sse;
 
-use ai_proxy_core::provider::{Format, ProviderExecutor};
+use prism_core::provider::{Format, ProviderExecutor};
 use std::collections::HashMap;
 use std::sync::Arc;
 

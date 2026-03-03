@@ -3,7 +3,7 @@ use crate::common::{
     build_assistant_message, build_openai_chunk, build_openai_response, build_tool_call,
     build_tool_call_delta, map_claude_finish_reason,
 };
-use ai_proxy_core::error::ProxyError;
+use prism_core::error::ProxyError;
 use serde_json::{Value, json};
 
 pub fn translate_non_stream(

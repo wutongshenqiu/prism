@@ -10,7 +10,7 @@ use std::time::Duration;
 ///     headers:
 ///       user-agent: "claude-code/2.1.62"
 /// ```
-const DEFAULT_USER_AGENT: &str = "ai-proxy/0.1.0";
+const DEFAULT_USER_AGENT: &str = "prism/0.1.0";
 
 /// Build an HTTP client with optional proxy support.
 ///

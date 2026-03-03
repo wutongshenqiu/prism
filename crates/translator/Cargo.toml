@@ -1,10 +1,10 @@
 [package]
-name = "ai-proxy-translator"
+name = "prism-translator"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ai-proxy-core = { workspace = true }
+prism-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

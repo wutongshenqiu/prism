@@ -11,7 +11,7 @@ pub async fn validate_config(
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // Attempt to deserialize as Config
-    let result: Result<ai_proxy_core::config::Config, _> = serde_json::from_value(body);
+    let result: Result<prism_core::config::Config, _> = serde_json::from_value(body);
     match result {
         Ok(_) => (
             StatusCode::OK,
@@ -40,7 +40,7 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
         }
     };
 
-    match ai_proxy_core::config::Config::load(&config_path) {
+    match prism_core::config::Config::load(&config_path) {
         Ok(new_cfg) => {
             state.router.update_from_config(&new_cfg);
             state.config.store(std::sync::Arc::new(new_cfg));

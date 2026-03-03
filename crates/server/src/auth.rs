@@ -1,8 +1,8 @@
 use crate::AppState;
-use ai_proxy_core::auth_key::AuthKeyStore;
-use ai_proxy_core::context::RequestContext;
-use ai_proxy_core::error::ProxyError;
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use prism_core::auth_key::AuthKeyStore;
+use prism_core::context::RequestContext;
+use prism_core::error::ProxyError;
 
 pub async fn auth_middleware(
     State(state): State<AppState>,

@@ -1,7 +1,7 @@
 use crate::common;
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::*;
 use async_trait::async_trait;
+use prism_core::error::ProxyError;
+use prism_core::provider::*;
 
 pub struct OpenAICompatExecutor {
     pub name: String,
@@ -12,7 +12,7 @@ pub struct OpenAICompatExecutor {
 
 /// Check if the auth record uses the Responses API wire format.
 fn use_responses_api(auth: &AuthRecord) -> bool {
-    auth.wire_api == ai_proxy_core::provider::WireApi::Responses
+    auth.wire_api == prism_core::provider::WireApi::Responses
 }
 
 /// Convert a Chat Completions request body to Responses API format.

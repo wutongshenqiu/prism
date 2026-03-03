@@ -1,6 +1,6 @@
 use crate::AppState;
-use ai_proxy_core::error::ProxyError;
 use axum::{Json, extract::State, response::IntoResponse};
+use prism_core::error::ProxyError;
 
 pub async fn list_models(State(state): State<AppState>) -> Result<impl IntoResponse, ProxyError> {
     let models = state.router.all_models();

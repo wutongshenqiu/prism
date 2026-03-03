@@ -578,14 +578,14 @@ pub struct DaemonConfig {
 
 | Field | Type | Default | YAML key | Description |
 |-------|------|---------|----------|-------------|
-| `pid_file` | `String` | `"./ai-proxy.pid"` | `pid-file` | Path to the PID file. |
+| `pid_file` | `String` | `"./prism.pid"` | `pid-file` | Path to the PID file. |
 | `shutdown_timeout` | `u64` | `30` | `shutdown-timeout` | Graceful shutdown timeout in seconds. |
 
 ### YAML example
 
 ```yaml
 daemon:
-  pid-file: ./ai-proxy.pid
+  pid-file: ./prism.pid
   shutdown-timeout: 30
 ```
 

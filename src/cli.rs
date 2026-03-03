@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ai-proxy", version, about = "AI API Proxy Gateway")]
+#[command(name = "prism", version, about = "Prism — AI API Proxy Gateway")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -24,19 +24,19 @@ pub enum Command {
 #[derive(Parser, Debug)]
 pub struct RunArgs {
     /// Path to config file
-    #[arg(short, long, default_value = "config.yaml", env = "AI_PROXY_CONFIG")]
+    #[arg(short, long, default_value = "config.yaml", env = "PRISM_CONFIG")]
     pub config: String,
 
     /// Listen host
-    #[arg(long, env = "AI_PROXY_HOST")]
+    #[arg(long, env = "PRISM_HOST")]
     pub host: Option<String>,
 
     /// Listen port
-    #[arg(long, env = "AI_PROXY_PORT")]
+    #[arg(long, env = "PRISM_PORT")]
     pub port: Option<u16>,
 
     /// Log level
-    #[arg(long, default_value = "info", env = "AI_PROXY_LOG_LEVEL")]
+    #[arg(long, default_value = "info", env = "PRISM_LOG_LEVEL")]
     pub log_level: String,
 
     /// Run as a background daemon (unix only)
@@ -69,7 +69,7 @@ impl Default for RunArgs {
 #[derive(Parser, Debug)]
 pub struct PidArgs {
     /// Path to PID file
-    #[arg(long, default_value = "./ai-proxy.pid")]
+    #[arg(long, default_value = "./prism.pid")]
     pub pid_file: String,
 
     /// Timeout in seconds for stop operation

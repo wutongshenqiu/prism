@@ -28,7 +28,7 @@ pub struct CreateProviderRequest {
     #[serde(default)]
     pub prefix: Option<String>,
     #[serde(default)]
-    pub models: Vec<ai_proxy_core::config::ModelMapping>,
+    pub models: Vec<prism_core::config::ModelMapping>,
     #[serde(default)]
     pub excluded_models: Vec<String>,
     #[serde(default)]
@@ -48,7 +48,7 @@ pub struct UpdateProviderRequest {
     #[serde(default)]
     pub prefix: Option<Option<String>>,
     #[serde(default)]
-    pub models: Option<Vec<ai_proxy_core::config::ModelMapping>>,
+    pub models: Option<Vec<prism_core::config::ModelMapping>>,
     #[serde(default)]
     pub excluded_models: Option<Vec<String>>,
     #[serde(default)]
@@ -75,9 +75,9 @@ fn provider_type_to_field(pt: &str) -> Option<&'static str> {
 }
 
 fn get_entries_by_type(
-    config: &ai_proxy_core::config::Config,
+    config: &prism_core::config::Config,
     provider_type: &str,
-) -> Vec<ai_proxy_core::config::ProviderKeyEntry> {
+) -> Vec<prism_core::config::ProviderKeyEntry> {
     match provider_type {
         "claude" => config.claude_api_key.clone(),
         "openai" => config.openai_api_key.clone(),
@@ -176,7 +176,7 @@ pub async fn create_provider(
         );
     }
 
-    let new_entry = ai_proxy_core::config::ProviderKeyEntry {
+    let new_entry = prism_core::config::ProviderKeyEntry {
         api_key: body.api_key,
         base_url: body.base_url,
         proxy_url: None,
@@ -332,14 +332,14 @@ fn parse_provider_id(id: &str) -> Option<(&str, usize)> {
 /// Public wrapper for use by sibling modules.
 pub async fn update_config_file_public(
     state: &AppState,
-    mutate: impl FnOnce(&mut ai_proxy_core::config::Config),
+    mutate: impl FnOnce(&mut prism_core::config::Config),
 ) -> Result<(), String> {
     update_config_file(state, mutate).await
 }
 
 async fn update_config_file(
     state: &AppState,
-    mutate: impl FnOnce(&mut ai_proxy_core::config::Config),
+    mutate: impl FnOnce(&mut prism_core::config::Config),
 ) -> Result<(), String> {
     let config_path = state
         .config_path
@@ -349,13 +349,13 @@ async fn update_config_file(
 
     let contents =
         std::fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {e}"))?;
-    let mut config: ai_proxy_core::config::Config =
+    let mut config: prism_core::config::Config =
         serde_yml::from_str(&contents).map_err(|e| format!("Failed to parse config: {e}"))?;
 
     mutate(&mut config);
 
     // Rebuild derived fields
-    config.auth_key_store = ai_proxy_core::auth_key::AuthKeyStore::new(config.auth_keys.clone());
+    config.auth_key_store = prism_core::auth_key::AuthKeyStore::new(config.auth_keys.clone());
 
     let yaml =
         serde_yml::to_string(&config).map_err(|e| format!("Failed to serialize config: {e}"))?;

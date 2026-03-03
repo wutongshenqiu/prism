@@ -2,7 +2,7 @@ services:
   gateway:
     build: .
     volumes:
-      - ./tests/e2e-docker/config.e2e.yaml:/etc/ai-proxy/config.yaml:ro
+      - ./tests/e2e-docker/config.e2e.yaml:/etc/prism/config.yaml:ro
     environment:
       - E2E_BAILIAN_API_KEY
     healthcheck:

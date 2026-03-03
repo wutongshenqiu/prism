@@ -35,10 +35,8 @@ pub async fn update_routing(
 ) -> impl IntoResponse {
     let strategy = if let Some(ref s) = body.strategy {
         match s.as_str() {
-            "round-robin" | "RoundRobin" => {
-                Some(ai_proxy_core::config::RoutingStrategy::RoundRobin)
-            }
-            "fill-first" | "FillFirst" => Some(ai_proxy_core::config::RoutingStrategy::FillFirst),
+            "round-robin" | "RoundRobin" => Some(prism_core::config::RoutingStrategy::RoundRobin),
+            "fill-first" | "FillFirst" => Some(prism_core::config::RoutingStrategy::FillFirst),
             _ => {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,

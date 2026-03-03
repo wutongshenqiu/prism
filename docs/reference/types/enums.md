@@ -1,6 +1,6 @@
 # Enums Reference
 
-All public enums used throughout the ai-proxy codebase.
+All public enums used throughout the prism codebase.
 
 ---
 
@@ -132,6 +132,7 @@ Controls when cloaking is applied to Claude API requests (system prompt injectio
 pub enum CloakMode {
     Auto,
     Always,
+    #[default]
     Never,
 }
 ```

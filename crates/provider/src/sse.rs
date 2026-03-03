@@ -13,7 +13,7 @@ pub struct SseEvent {
 /// Handles `event:` and `data:` prefixes, multi-line data, and `[DONE]` sentinel.
 pub fn parse_sse_stream(
     byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ai_proxy_core::error::ProxyError>> + Send>> {
+) -> Pin<Box<dyn Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send>> {
     let stream = async_stream(byte_stream);
     Box::pin(stream)
 }
@@ -25,7 +25,7 @@ struct SseState {
 
 fn async_stream(
     byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> impl Stream<Item = Result<SseEvent, ai_proxy_core::error::ProxyError>> + Send {
+) -> impl Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send {
     futures::stream::unfold(
         SseState {
             stream: Box::pin(byte_stream),
@@ -57,7 +57,7 @@ fn async_stream(
                         Ok(text) => state.buffer.push_str(text),
                         Err(e) => {
                             return Some((
-                                Err(ai_proxy_core::error::ProxyError::Internal(format!(
+                                Err(prism_core::error::ProxyError::Internal(format!(
                                     "invalid UTF-8 in SSE stream: {e}"
                                 ))),
                                 state,
@@ -66,7 +66,7 @@ fn async_stream(
                     },
                     Some(Err(e)) => {
                         return Some((
-                            Err(ai_proxy_core::error::ProxyError::Network(e.to_string())),
+                            Err(prism_core::error::ProxyError::Network(e.to_string())),
                             state,
                         ));
                     }

@@ -1,14 +1,14 @@
 //! Application struct that encapsulates server assembly and serving logic.
 
 use crate::cli::RunArgs;
-use ai_proxy_core::audit::{AuditBackend, FileAuditBackend, NoopAuditBackend};
-use ai_proxy_core::cache::{MokaCache, ResponseCacheBackend};
-use ai_proxy_core::config::{Config, ConfigWatcher};
-use ai_proxy_core::lifecycle::signal::SignalHandler;
-use ai_proxy_core::lifecycle::{self, Lifecycle};
-use ai_proxy_core::rate_limit::CompositeRateLimiter;
-use ai_proxy_provider::routing::CredentialRouter;
 use arc_swap::ArcSwap;
+use prism_core::audit::{AuditBackend, FileAuditBackend, NoopAuditBackend};
+use prism_core::cache::{MokaCache, ResponseCacheBackend};
+use prism_core::config::{Config, ConfigWatcher};
+use prism_core::lifecycle::signal::SignalHandler;
+use prism_core::lifecycle::{self, Lifecycle};
+use prism_core::rate_limit::CompositeRateLimiter;
+use prism_provider::routing::CredentialRouter;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,11 +18,11 @@ pub struct Application {
     config_path: String,
     credential_router: Arc<CredentialRouter>,
     rate_limiter: Arc<CompositeRateLimiter>,
-    cost_calculator: Arc<ai_proxy_core::cost::CostCalculator>,
+    cost_calculator: Arc<prism_core::cost::CostCalculator>,
     lifecycle: Box<dyn Lifecycle>,
     shutdown_timeout: u64,
     #[cfg(unix)]
-    _pid_file: Option<ai_proxy_core::lifecycle::pid_file::PidFile>,
+    _pid_file: Option<prism_core::lifecycle::pid_file::PidFile>,
 }
 
 impl Application {
@@ -57,7 +57,7 @@ impl Application {
         // Acquire PID file (unix only)
         #[cfg(unix)]
         let _pid_file = if args.daemon {
-            Some(ai_proxy_core::lifecycle::pid_file::PidFile::acquire(
+            Some(prism_core::lifecycle::pid_file::PidFile::acquire(
                 &config.daemon.pid_file,
             )?)
         } else {
@@ -65,10 +65,10 @@ impl Application {
         };
 
         // Build provider components
-        let executors = ai_proxy_provider::build_registry(config.proxy_url.clone());
+        let executors = prism_provider::build_registry(config.proxy_url.clone());
         let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy.clone()));
         credential_router.update_from_config(&config);
-        let translators = Arc::new(ai_proxy_translator::build_registry());
+        let translators = Arc::new(prism_translator::build_registry());
         let executors = Arc::new(executors);
 
         tracing::info!(
@@ -81,9 +81,7 @@ impl Application {
 
         let request_log_capacity = config.dashboard.request_log_capacity;
         let rate_limiter = Arc::new(CompositeRateLimiter::new(&config.rate_limit));
-        let cost_calculator = Arc::new(ai_proxy_core::cost::CostCalculator::new(
-            &config.model_prices,
-        ));
+        let cost_calculator = Arc::new(prism_core::cost::CostCalculator::new(&config.model_prices));
 
         // Initialize response cache (if enabled)
         let response_cache: Option<Arc<dyn ResponseCacheBackend>> = if config.cache.enabled {
@@ -115,13 +113,13 @@ impl Application {
         };
 
         let config = Arc::new(ArcSwap::from_pointee(config));
-        let metrics = Arc::new(ai_proxy_core::metrics::Metrics::new());
-        let request_logs = Arc::new(ai_proxy_core::request_log::RequestLogStore::new(
+        let metrics = Arc::new(prism_core::metrics::Metrics::new());
+        let request_logs = Arc::new(prism_core::request_log::RequestLogStore::new(
             request_log_capacity,
         ));
 
         // Build AppState and router
-        let state = ai_proxy_server::AppState {
+        let state = prism_server::AppState {
             config: config.clone(),
             router: credential_router.clone(),
             executors,
@@ -135,7 +133,7 @@ impl Application {
             audit,
             start_time: Instant::now(),
         };
-        let app_router = ai_proxy_server::build_router(state);
+        let app_router = prism_server::build_router(state);
 
         // Detect lifecycle
         let lc = lifecycle::detect_lifecycle();

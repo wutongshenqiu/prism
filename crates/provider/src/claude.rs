@@ -1,7 +1,7 @@
 use crate::common;
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::*;
 use async_trait::async_trait;
+use prism_core::error::ProxyError;
+use prism_core::provider::*;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";

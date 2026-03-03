@@ -34,18 +34,15 @@ pub fn render_metrics(
     let mut out = String::with_capacity(4096);
     let snap = metrics.snapshot();
 
-    // ── ai_proxy_requests_total ──
-    let _ = writeln!(
-        out,
-        "# HELP ai_proxy_requests_total Total number of requests."
-    );
-    let _ = writeln!(out, "# TYPE ai_proxy_requests_total counter");
+    // ── prism_requests_total ──
+    let _ = writeln!(out, "# HELP prism_requests_total Total number of requests.");
+    let _ = writeln!(out, "# TYPE prism_requests_total counter");
     if let Some(by_model) = snap["by_model"].as_object() {
         for (model, count) in by_model {
             if let Some(c) = count.as_u64() {
                 write_counter(
                     &mut out,
-                    "ai_proxy_requests_total",
+                    "prism_requests_total",
                     &format!("model=\"{model}\""),
                     c,
                 );
@@ -57,7 +54,7 @@ pub fn render_metrics(
             if let Some(c) = count.as_u64() {
                 write_counter(
                     &mut out,
-                    "ai_proxy_requests_total",
+                    "prism_requests_total",
                     &format!("provider=\"{provider}\""),
                     c,
                 );
@@ -65,48 +62,48 @@ pub fn render_metrics(
         }
     }
 
-    // ── ai_proxy_errors_total ──
-    let _ = writeln!(out, "# HELP ai_proxy_errors_total Total number of errors.");
-    let _ = writeln!(out, "# TYPE ai_proxy_errors_total counter");
+    // ── prism_errors_total ──
+    let _ = writeln!(out, "# HELP prism_errors_total Total number of errors.");
+    let _ = writeln!(out, "# TYPE prism_errors_total counter");
     write_counter(
         &mut out,
-        "ai_proxy_errors_total",
+        "prism_errors_total",
         "",
         snap["total_errors"].as_u64().unwrap_or(0),
     );
 
-    // ── ai_proxy_tokens_total ──
-    let _ = writeln!(out, "# HELP ai_proxy_tokens_total Total tokens processed.");
-    let _ = writeln!(out, "# TYPE ai_proxy_tokens_total counter");
+    // ── prism_tokens_total ──
+    let _ = writeln!(out, "# HELP prism_tokens_total Total tokens processed.");
+    let _ = writeln!(out, "# TYPE prism_tokens_total counter");
     write_counter(
         &mut out,
-        "ai_proxy_tokens_total",
+        "prism_tokens_total",
         "direction=\"input\"",
         snap["total_input_tokens"].as_u64().unwrap_or(0),
     );
     write_counter(
         &mut out,
-        "ai_proxy_tokens_total",
+        "prism_tokens_total",
         "direction=\"output\"",
         snap["total_output_tokens"].as_u64().unwrap_or(0),
     );
 
-    // ── ai_proxy_cost_usd_total ──
-    let _ = writeln!(out, "# HELP ai_proxy_cost_usd_total Total cost in USD.");
-    let _ = writeln!(out, "# TYPE ai_proxy_cost_usd_total counter");
+    // ── prism_cost_usd_total ──
+    let _ = writeln!(out, "# HELP prism_cost_usd_total Total cost in USD.");
+    let _ = writeln!(out, "# TYPE prism_cost_usd_total counter");
     write_gauge(
         &mut out,
-        "ai_proxy_cost_usd_total",
+        "prism_cost_usd_total",
         "",
         snap["total_cost_usd"].as_f64().unwrap_or(0.0),
     );
 
-    // ── ai_proxy_request_duration_seconds ──
+    // ── prism_request_duration_seconds ──
     let _ = writeln!(
         out,
-        "# HELP ai_proxy_request_duration_seconds Request duration histogram."
+        "# HELP prism_request_duration_seconds Request duration histogram."
     );
-    let _ = writeln!(out, "# TYPE ai_proxy_request_duration_seconds histogram");
+    let _ = writeln!(out, "# TYPE prism_request_duration_seconds histogram");
     // Map existing ms-based buckets (<100, 100-499, 500-999, 1000-4999, 5000-29999, >=30000)
     // to Prometheus seconds buckets (le=0.1, 0.5, 1, 5, 30, +Inf)
     let bucket_values = metrics.latency_bucket_values();
@@ -116,54 +113,51 @@ pub fn render_metrics(
         cumulative += count;
         write_histogram_bucket(
             &mut out,
-            "ai_proxy_request_duration_seconds",
+            "prism_request_duration_seconds",
             le_values[i],
             cumulative,
         );
     }
     let total_reqs = snap["total_requests"].as_u64().unwrap_or(0);
-    let _ = writeln!(out, "ai_proxy_request_duration_seconds_count {total_reqs}");
+    let _ = writeln!(out, "prism_request_duration_seconds_count {total_reqs}");
 
     // ── TTFT ──
     let ttft_buckets = metrics.ttft_bucket_values();
     if ttft_buckets.iter().any(|&v| v > 0) {
         let _ = writeln!(
             out,
-            "# HELP ai_proxy_ttft_seconds Time to first token histogram."
+            "# HELP prism_ttft_seconds Time to first token histogram."
         );
-        let _ = writeln!(out, "# TYPE ai_proxy_ttft_seconds histogram");
+        let _ = writeln!(out, "# TYPE prism_ttft_seconds histogram");
         let ttft_le = ["0.05", "0.1", "0.5", "1", "5", "+Inf"];
         let mut cum = 0u64;
         for (i, &count) in ttft_buckets.iter().enumerate() {
             cum += count;
-            write_histogram_bucket(&mut out, "ai_proxy_ttft_seconds", ttft_le[i], cum);
+            write_histogram_bucket(&mut out, "prism_ttft_seconds", ttft_le[i], cum);
         }
     }
 
-    // ── ai_proxy_cache_hits_total / misses ──
+    // ── prism_cache_hits_total / misses ──
     if let Some(stats) = cache_stats {
-        let _ = writeln!(out, "# HELP ai_proxy_cache_hits_total Total cache hits.");
-        let _ = writeln!(out, "# TYPE ai_proxy_cache_hits_total counter");
-        write_counter(&mut out, "ai_proxy_cache_hits_total", "", stats.hits);
-        let _ = writeln!(
-            out,
-            "# HELP ai_proxy_cache_misses_total Total cache misses."
-        );
-        let _ = writeln!(out, "# TYPE ai_proxy_cache_misses_total counter");
-        write_counter(&mut out, "ai_proxy_cache_misses_total", "", stats.misses);
+        let _ = writeln!(out, "# HELP prism_cache_hits_total Total cache hits.");
+        let _ = writeln!(out, "# TYPE prism_cache_hits_total counter");
+        write_counter(&mut out, "prism_cache_hits_total", "", stats.hits);
+        let _ = writeln!(out, "# HELP prism_cache_misses_total Total cache misses.");
+        let _ = writeln!(out, "# TYPE prism_cache_misses_total counter");
+        write_counter(&mut out, "prism_cache_misses_total", "", stats.misses);
     }
 
-    // ── ai_proxy_circuit_breaker_open ──
+    // ── prism_circuit_breaker_open ──
     if !circuit_breaker_states.is_empty() {
         let _ = writeln!(
             out,
-            "# HELP ai_proxy_circuit_breaker_open Whether circuit breaker is open."
+            "# HELP prism_circuit_breaker_open Whether circuit breaker is open."
         );
-        let _ = writeln!(out, "# TYPE ai_proxy_circuit_breaker_open gauge");
+        let _ = writeln!(out, "# TYPE prism_circuit_breaker_open gauge");
         for (credential, is_open) in circuit_breaker_states {
             write_gauge(
                 &mut out,
-                "ai_proxy_circuit_breaker_open",
+                "prism_circuit_breaker_open",
                 &format!("credential=\"{credential}\""),
                 if *is_open { 1.0 } else { 0.0 },
             );
@@ -184,11 +178,11 @@ mod tests {
         metrics.record_error();
 
         let output = render_metrics(&metrics, None, &[]);
-        assert!(output.contains("ai_proxy_requests_total"));
-        assert!(output.contains("ai_proxy_errors_total"));
-        assert!(output.contains("ai_proxy_tokens_total"));
-        assert!(output.contains("ai_proxy_cost_usd_total"));
-        assert!(output.contains("ai_proxy_request_duration_seconds"));
+        assert!(output.contains("prism_requests_total"));
+        assert!(output.contains("prism_errors_total"));
+        assert!(output.contains("prism_tokens_total"));
+        assert!(output.contains("prism_cost_usd_total"));
+        assert!(output.contains("prism_request_duration_seconds"));
     }
 
     #[test]
@@ -201,8 +195,8 @@ mod tests {
             hit_rate: 0.84,
         };
         let output = render_metrics(&metrics, Some(&stats), &[]);
-        assert!(output.contains("ai_proxy_cache_hits_total 42"));
-        assert!(output.contains("ai_proxy_cache_misses_total 8"));
+        assert!(output.contains("prism_cache_hits_total 42"));
+        assert!(output.contains("prism_cache_misses_total 8"));
     }
 
     #[test]
@@ -210,7 +204,7 @@ mod tests {
         let metrics = Metrics::new();
         let cb_states = vec![("cred-1".to_string(), true), ("cred-2".to_string(), false)];
         let output = render_metrics(&metrics, None, &cb_states);
-        assert!(output.contains("ai_proxy_circuit_breaker_open{credential=\"cred-1\"} 1"));
-        assert!(output.contains("ai_proxy_circuit_breaker_open{credential=\"cred-2\"} 0"));
+        assert!(output.contains("prism_circuit_breaker_open{credential=\"cred-1\"} 1"));
+        assert!(output.contains("prism_circuit_breaker_open{credential=\"cred-2\"} 0"));
     }
 }

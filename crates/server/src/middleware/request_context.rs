@@ -1,5 +1,5 @@
-use ai_proxy_core::context::RequestContext;
 use axum::{extract::Request, middleware::Next, response::Response};
+use prism_core::context::RequestContext;
 
 /// Middleware that injects a `RequestContext` as an axum Extension.
 pub async fn request_context_middleware(mut request: Request, next: Next) -> Response {

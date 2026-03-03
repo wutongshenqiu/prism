@@ -1,6 +1,6 @@
 # Playbook: Add a New Provider
 
-Step-by-step guide for adding a new AI provider to the AI Proxy Gateway.
+Step-by-step guide for adding a new AI provider to the Prism.
 
 ## Overview
 
@@ -83,8 +83,8 @@ Create `crates/provider/src/new_provider.rs`. Use an existing executor as a refe
 The executor must implement the `ProviderExecutor` trait:
 
 ```rust
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::*;
+use prism_core::error::ProxyError;
+use prism_core::provider::*;
 use async_trait::async_trait;
 use crate::common;
 

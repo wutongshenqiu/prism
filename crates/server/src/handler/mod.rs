@@ -8,12 +8,12 @@ pub mod responses;
 
 use crate::AppState;
 use crate::dispatch::{DispatchRequest, dispatch};
-use ai_proxy_core::context::RequestContext;
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::Format;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use bytes::Bytes;
+use prism_core::context::RequestContext;
+use prism_core::error::ProxyError;
+use prism_core::provider::Format;
 
 #[derive(Debug)]
 pub(crate) struct ParsedRequest {

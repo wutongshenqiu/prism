@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y cmake && rm -rf /var/lib/apt/lists/*
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --bin ai-proxy
+RUN cargo build --release --bin prism
 
 # === Runtime ===
 FROM debian:bookworm-slim
@@ -22,14 +22,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g 1001 aiproxy && useradd -u 1001 -g aiproxy -s /bin/false aiproxy
-COPY --from=builder /app/target/release/ai-proxy /usr/local/bin/ai-proxy
+RUN groupadd -g 1001 prism && useradd -u 1001 -g prism -s /bin/false prism
+COPY --from=builder /app/target/release/prism /usr/local/bin/prism
 
-USER aiproxy
+USER prism
 EXPOSE 8317
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8317/health || exit 1
 
-ENTRYPOINT ["ai-proxy"]
-CMD ["run", "--config", "/etc/ai-proxy/config.yaml"]
+ENTRYPOINT ["prism"]
+CMD ["run", "--config", "/etc/prism/config.yaml"]

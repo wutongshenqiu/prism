@@ -1,9 +1,9 @@
 use crate::AppState;
-use ai_proxy_core::auth_key::{AuthKeyEntry, AuthKeyStore};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use prism_core::auth_key::{AuthKeyEntry, AuthKeyStore};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -16,9 +16,9 @@ pub struct CreateAuthKeyRequest {
     #[serde(default)]
     pub allowed_models: Vec<String>,
     #[serde(default)]
-    pub rate_limit: Option<ai_proxy_core::auth_key::KeyRateLimitConfig>,
+    pub rate_limit: Option<prism_core::auth_key::KeyRateLimitConfig>,
     #[serde(default)]
-    pub budget: Option<ai_proxy_core::auth_key::BudgetConfig>,
+    pub budget: Option<prism_core::auth_key::BudgetConfig>,
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
@@ -34,9 +34,9 @@ pub struct UpdateAuthKeyRequest {
     #[serde(default)]
     pub allowed_models: Option<Vec<String>>,
     #[serde(default)]
-    pub rate_limit: Option<Option<ai_proxy_core::auth_key::KeyRateLimitConfig>>,
+    pub rate_limit: Option<Option<prism_core::auth_key::KeyRateLimitConfig>>,
     #[serde(default)]
-    pub budget: Option<Option<ai_proxy_core::auth_key::BudgetConfig>>,
+    pub budget: Option<Option<prism_core::auth_key::BudgetConfig>>,
     #[serde(default)]
     pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
     #[serde(default)]
