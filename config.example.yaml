@@ -1,4 +1,4 @@
-# AI Proxy Gateway Configuration
+# Prism Configuration
 # Copy to config.yaml and modify as needed.
 
 # ─── Server ─────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ logging-to-file: false
 
 # ─── Daemon ────────────────────────────────────────────────────────────────
 # daemon:
-#   pid-file: "./ai-proxy.pid"
+#   pid-file: "./prism.pid"
 #   shutdown-timeout: 30
 
 # ─── Rate Limiting ─────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 use crate::openai_compat::OpenAICompatExecutor;
-use ai_proxy_core::provider::Format;
+use prism_core::provider::Format;
 
 pub fn new_openai_executor(global_proxy: Option<String>) -> OpenAICompatExecutor {
     OpenAICompatExecutor {

@@ -1,4 +1,4 @@
-# ai-proxy
+# Prism
 
 Multi-provider AI API gateway written in Rust. Routes requests across Claude, OpenAI, Gemini, and any OpenAI-compatible provider with automatic credential rotation, format translation, and streaming support.
 
@@ -33,15 +33,15 @@ cp config.example.yaml config.yaml
 # Edit config.yaml with your API keys
 
 # Run (foreground)
-./target/release/ai-proxy run --config config.yaml
+./target/release/prism run --config config.yaml
 
 # Run (daemon mode)
-./target/release/ai-proxy run --daemon --config config.yaml
+./target/release/prism run --daemon --config config.yaml
 
 # Management commands
-./target/release/ai-proxy status    # Check if daemon is running
-./target/release/ai-proxy reload    # Hot-reload config (SIGHUP)
-./target/release/ai-proxy stop      # Graceful shutdown
+./target/release/prism status    # Check if daemon is running
+./target/release/prism reload    # Hot-reload config (SIGHUP)
+./target/release/prism stop      # Graceful shutdown
 ```
 
 The server starts on `http://0.0.0.0:8317` by default.
@@ -53,13 +53,13 @@ The server starts on `http://0.0.0.0:8317` by default.
 docker compose up -d --build
 
 # Or manually
-docker build -t ai-proxy:local .
-docker run -d --name ai-proxy -p 8317:8317 \
-  -v ./config.yaml:/etc/ai-proxy/config.yaml:ro \
-  ai-proxy:local
+docker build -t prism:local .
+docker run -d --name prism -p 8317:8317 \
+  -v ./config.yaml:/etc/prism/config.yaml:ro \
+  prism:local
 
 # Logs
-docker logs -f ai-proxy
+docker logs -f prism
 ```
 
 ## Usage
@@ -252,11 +252,11 @@ openai-compatibility:
 ## Architecture
 
 ```
-ai-proxy (binary)
-├── ai-proxy-core       # Config, errors, provider traits, metrics, rate limiting, cost tracking
-├── ai-proxy-provider   # Claude/Gemini/OpenAI executors, credential routing
-├── ai-proxy-translator # Cross-format request/response translation
-└── ai-proxy-server     # Axum HTTP server, dispatch, middleware, dashboard API
+prism (binary)
+├── prism-core       # Config, errors, provider traits, metrics, rate limiting, cost tracking
+├── prism-provider   # Claude/Gemini/OpenAI executors, credential routing
+├── prism-translator # Cross-format request/response translation
+└── prism-server     # Axum HTTP server, dispatch, middleware, dashboard API
 ```
 
 ## Development

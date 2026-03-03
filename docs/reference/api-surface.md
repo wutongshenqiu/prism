@@ -30,7 +30,17 @@ Health check endpoint.
 
 #### GET /metrics
 
-Returns in-memory metrics snapshot with atomic counters.
+Returns in-memory metrics snapshot with atomic counters (JSON format).
+
+---
+
+#### GET /metrics/prometheus
+
+Returns metrics in Prometheus text exposition format. Includes request counts by model/provider, latency histograms, token usage, cost, cache hit/miss, and circuit breaker states.
+
+**Response:** `text/plain; version=0.0.4`
+
+**Source:** `crates/server/src/handler/health.rs`, `crates/core/src/prometheus.rs`
 
 **Response:**
 ```json
@@ -227,9 +237,11 @@ The middleware checks two header locations in order:
 
 ### Behavior
 
-- If `config.api_keys` is empty (no keys configured), auth is skipped entirely -- all requests pass through.
-- If keys are configured, the extracted token must be present in the `api_keys_set` (HashSet for O(1) lookup).
-- On failure: returns `ProxyError::Auth("Invalid API key")` which produces a 401 response.
+- If `config.auth_keys` is empty (no keys configured), auth is skipped entirely -- all requests pass through.
+- If keys are configured, the extracted token is looked up in `AuthKeyStore` (O(1) HashMap lookup).
+- Expired keys return `ProxyError::KeyExpired` (401).
+- Invalid keys return `ProxyError::Auth("Invalid API key")` (401).
+- On success, the middleware injects `api_key_id`, `tenant_id`, and `auth_key` into `RequestContext`.
 
 ### Example
 
@@ -313,6 +325,13 @@ pub struct AppState {
     pub executors: Arc<ExecutorRegistry>,
     pub translators: Arc<TranslatorRegistry>,
     pub metrics: Arc<Metrics>,
+    pub request_logs: Arc<RequestLogStore>,
+    pub config_path: Arc<Mutex<String>>,
+    pub rate_limiter: Arc<CompositeRateLimiter>,
+    pub cost_calculator: Arc<CostCalculator>,
+    pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,
+    pub audit: Arc<dyn AuditBackend>,
+    pub start_time: Instant,
 }
 ```
 
@@ -323,3 +342,10 @@ pub struct AppState {
 | `executors` | `Arc<ExecutorRegistry>` | Provider executor instances. |
 | `translators` | `Arc<TranslatorRegistry>` | Format translation functions. |
 | `metrics` | `Arc<Metrics>` | In-memory metrics counters. |
+| `request_logs` | `Arc<RequestLogStore>` | Ring buffer for recent request/response logs (dashboard). |
+| `config_path` | `Arc<Mutex<String>>` | Path to config file (for hot-reload). |
+| `rate_limiter` | `Arc<CompositeRateLimiter>` | Per-key and global rate limiter. |
+| `cost_calculator` | `Arc<CostCalculator>` | Token cost calculation. |
+| `response_cache` | `Option<Arc<dyn ResponseCacheBackend>>` | Optional response cache (Moka). |
+| `audit` | `Arc<dyn AuditBackend>` | Audit log backend (file or noop). |
+| `start_time` | `Instant` | Server start time (for uptime calculation). |

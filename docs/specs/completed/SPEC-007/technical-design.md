@@ -4,7 +4,7 @@
 |-----------|------------------------------------|
 | Spec ID   | SPEC-007                           |
 | Title     | Request Cloaking & Payload Rules   |
-| Author    | AI Proxy Team                      |
+| Author    | Prism Team                      |
 | Status    | Completed                          |
 | Created   | 2026-02-27                         |
 | Updated   | 2026-02-27                         |
@@ -274,7 +274,7 @@ let translated_payload = {
     let mut payload_value: serde_json::Value = serde_json::from_slice(&translated_payload)
         .unwrap_or_else(|_| serde_json::Value::Null);
     if payload_value.is_object() {
-        ai_proxy_core::payload::apply_payload_rules(
+        prism_core::payload::apply_payload_rules(
             &mut payload_value,
             &config.payload,
             &actual_model,

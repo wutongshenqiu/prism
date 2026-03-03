@@ -1,12 +1,12 @@
 [package]
-name = "ai-proxy-server"
+name = "prism-server"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ai-proxy-core = { workspace = true }
-ai-proxy-provider = { workspace = true }
-ai-proxy-translator = { workspace = true }
+prism-core = { workspace = true }
+prism-provider = { workspace = true }
+prism-translator = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }

@@ -1,7 +1,7 @@
-use ai_proxy_core::error::ProxyError;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::Stream;
 use futures::stream::StreamExt;
+use prism_core::error::ProxyError;
 use std::convert::Infallible;
 use std::time::Duration;
 

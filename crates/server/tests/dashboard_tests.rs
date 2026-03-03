@@ -1,14 +1,14 @@
-use ai_proxy_core::config::{Config, DashboardConfig, RoutingStrategy};
-use ai_proxy_core::cost::CostCalculator;
-use ai_proxy_core::metrics::Metrics;
-use ai_proxy_core::rate_limit::CompositeRateLimiter;
-use ai_proxy_core::request_log::RequestLogStore;
-use ai_proxy_provider::build_registry;
-use ai_proxy_provider::routing::CredentialRouter;
-use ai_proxy_server::{AppState, build_router};
 use arc_swap::ArcSwap;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use prism_core::config::{Config, DashboardConfig, RoutingStrategy};
+use prism_core::cost::CostCalculator;
+use prism_core::metrics::Metrics;
+use prism_core::rate_limit::CompositeRateLimiter;
+use prism_core::request_log::RequestLogStore;
+use prism_provider::build_registry;
+use prism_provider::routing::CredentialRouter;
+use prism_server::{AppState, build_router};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -50,7 +50,7 @@ fn create_test_harness() -> TestHarness {
     credential_router.update_from_config(&config);
 
     let executors = Arc::new(build_registry(None));
-    let translators = Arc::new(ai_proxy_translator::build_registry());
+    let translators = Arc::new(prism_translator::build_registry());
     let metrics = Arc::new(Metrics::new());
     let request_logs = Arc::new(RequestLogStore::new(1000));
 
@@ -65,7 +65,7 @@ fn create_test_harness() -> TestHarness {
         rate_limiter: Arc::new(CompositeRateLimiter::new(&config.rate_limit)),
         cost_calculator: Arc::new(CostCalculator::new(&config.model_prices)),
         response_cache: None,
-        audit: Arc::new(ai_proxy_core::audit::NoopAuditBackend),
+        audit: Arc::new(prism_core::audit::NoopAuditBackend),
         start_time: Instant::now(),
     };
 
@@ -797,7 +797,7 @@ async fn test_log_stats_with_entries() {
     harness
         .state
         .request_logs
-        .push(ai_proxy_core::request_log::RequestLogEntry {
+        .push(prism_core::request_log::RequestLogEntry {
             timestamp: chrono::Utc::now().timestamp_millis(),
             request_id: "req-1".to_string(),
             method: "POST".to_string(),
@@ -817,7 +817,7 @@ async fn test_log_stats_with_entries() {
     harness
         .state
         .request_logs
-        .push(ai_proxy_core::request_log::RequestLogEntry {
+        .push(prism_core::request_log::RequestLogEntry {
             timestamp: chrono::Utc::now().timestamp_millis(),
             request_id: "req-2".to_string(),
             method: "POST".to_string(),
@@ -853,7 +853,7 @@ async fn test_query_logs_with_entries() {
         harness
             .state
             .request_logs
-            .push(ai_proxy_core::request_log::RequestLogEntry {
+            .push(prism_core::request_log::RequestLogEntry {
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 request_id: format!("req-{i}"),
                 method: "POST".to_string(),

@@ -1,10 +1,10 @@
-# AI Proxy Gateway - Agent Context
+# Prism - Agent Context
 
 Universal context for AI agents working on this project.
 
 ## Project
 
-AI Proxy Gateway is a Rust/Axum multi-provider AI API gateway. It routes and translates requests across Claude (Anthropic), OpenAI, Gemini (Google AI), and OpenAI-compatible providers (DeepSeek, Groq, etc.). The project follows Spec-Driven Development (SDD) methodology.
+Prism is a Rust/Axum multi-provider AI API gateway. It routes and translates requests across Claude (Anthropic), OpenAI, Gemini (Google AI), and OpenAI-compatible providers (DeepSeek, Groq, etc.). The project follows Spec-Driven Development (SDD) methodology.
 
 ## Key Paths
 
@@ -77,6 +77,12 @@ Foundation types shared across all crates:
 - `metrics` -- Atomic counters for requests, errors, latency, token usage, cost (micro-USD)
 - `rate_limit` -- `RateLimiter` with sliding window algorithm, per-key and global RPM tracking
 - `cost` -- `CostCalculator` with built-in model price table (30+ models) and user overrides
+- `audit` -- `AuditBackend` trait, `FileAuditBackend` (append-only JSONL), `NoopAuditBackend`
+- `cache` -- `ResponseCacheBackend` trait, `MokaCache` in-memory cache, `CacheKey` builder
+- `circuit_breaker` -- `CircuitBreakerPolicy` trait, `ThreeStateCircuitBreaker` (Closed→Open→HalfOpen), `NoopCircuitBreaker`
+- `prometheus` -- Prometheus text format renderer for metrics, cache stats, circuit breaker states
+- `secret` -- Secret resolver (`env://`, `file://` prefixes for sensitive config values)
+- `request_log` -- `RequestLogStore` ring buffer for recent request/response log entries
 
 ### `crates/provider/`
 Provider-specific execution logic:
@@ -111,6 +117,7 @@ HTTP server and request dispatch:
   - `config_ops` -- Config validation (dry-run), hot-reload, get current sanitized config
   - `system` -- System health (uptime, version), application log viewer
   - `websocket` -- WebSocket at `/ws/dashboard` with metrics and request_log subscription channels
+  - `tenant` -- Tenant listing and per-tenant metrics
 
 ### `web/` (Dashboard Frontend)
 React 19 + TypeScript + Vite SPA:
@@ -130,6 +137,7 @@ Subcommand architecture with daemon support:
 ### Public (no auth)
 - `GET /health` -- Health check
 - `GET /metrics` -- Metrics (custom JSON format)
+- `GET /metrics/prometheus` -- Metrics (Prometheus text format)
 
 ### Admin (no auth required)
 - `GET /admin/config` -- Current configuration
@@ -150,7 +158,7 @@ Subcommand architecture with daemon support:
 - `GET/POST /api/dashboard/providers` -- List / create providers
 - `GET/PATCH/DELETE /api/dashboard/providers/{id}` -- Get / update / delete provider
 - `GET/POST /api/dashboard/auth-keys` -- List / create auth keys
-- `DELETE /api/dashboard/auth-keys/{id}` -- Delete auth key
+- `PATCH/DELETE /api/dashboard/auth-keys/{id}` -- Update / delete auth key
 - `GET/PATCH /api/dashboard/routing` -- Get / update routing config
 - `GET /api/dashboard/logs` -- Query request logs
 - `GET /api/dashboard/logs/stats` -- Request log statistics
@@ -159,6 +167,8 @@ Subcommand architecture with daemon support:
 - `GET /api/dashboard/config/current` -- Get current sanitized config
 - `GET /api/dashboard/system/health` -- System health details
 - `GET /api/dashboard/system/logs` -- Application log viewer
+- `GET /api/dashboard/tenants` -- List tenants
+- `GET /api/dashboard/tenants/{id}/metrics` -- Tenant metrics
 
 ### WebSocket
 - `GET /ws/dashboard` -- Real-time metrics and request log push (JWT via query param)

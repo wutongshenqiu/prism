@@ -1,11 +1,11 @@
 use crate::AppState;
-use ai_proxy_core::context::RequestContext;
-use ai_proxy_core::error::ProxyError;
-use ai_proxy_core::provider::Format;
 use axum::Extension;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use bytes::Bytes;
+use prism_core::context::RequestContext;
+use prism_core::error::ProxyError;
+use prism_core::provider::Format;
 
 /// OpenAI Responses API passthrough (/v1/responses).
 /// This endpoint forwards directly to upstream since there's no translation layer.
@@ -46,7 +46,7 @@ pub async fn responses(
     let base_url = auth.base_url_or_default("https://api.openai.com");
     let url = format!("{base_url}/v1/responses");
 
-    let client = ai_proxy_core::proxy::build_http_client(
+    let client = prism_core::proxy::build_http_client(
         auth.effective_proxy(state.config.load().proxy_url.as_deref()),
         state.config.load().proxy_url.as_deref(),
     )
@@ -64,14 +64,14 @@ pub async fn responses(
 
     let resp = req.send().await?;
     let status = resp.status().as_u16();
-    let headers = ai_proxy_provider::extract_headers(&resp);
+    let headers = prism_provider::extract_headers(&resp);
     let resp_body = resp.bytes().await?;
 
     if status >= 400 {
         return Err(ProxyError::Upstream {
             status,
             body: String::from_utf8_lossy(&resp_body).to_string(),
-            retry_after_secs: ai_proxy_provider::parse_retry_after(&headers),
+            retry_after_secs: prism_provider::parse_retry_after(&headers),
         });
     }
 

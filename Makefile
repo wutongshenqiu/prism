@@ -51,16 +51,16 @@ check:
 
 # Docker
 docker-build:
-	docker build -t ai-proxy:local .
+	docker build -t prism:local .
 
 docker-run:
-	docker run -d --name ai-proxy -p 8317:8317 -v $(PWD)/config.yaml:/etc/ai-proxy/config.yaml:ro ai-proxy:local
+	docker run -d --name prism -p 8317:8317 -v $(PWD)/config.yaml:/etc/prism/config.yaml:ro prism:local
 
 docker-stop:
-	docker stop ai-proxy && docker rm ai-proxy
+	docker stop prism && docker rm prism
 
 docker-logs:
-	docker logs -f ai-proxy
+	docker logs -f prism
 
 # Docker Compose
 docker-compose-up:

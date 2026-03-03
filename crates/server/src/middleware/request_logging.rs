@@ -1,10 +1,10 @@
 use crate::AppState;
 use crate::dispatch::DispatchMeta;
-use ai_proxy_core::audit::AuditEntry;
-use ai_proxy_core::context::RequestContext;
-use ai_proxy_core::request_log::RequestLogEntry;
 use axum::extract::State;
 use axum::{extract::Request, middleware::Next, response::Response};
+use prism_core::audit::AuditEntry;
+use prism_core::context::RequestContext;
+use prism_core::request_log::RequestLogEntry;
 
 /// Middleware that logs request/response with request context info.
 /// Also captures proxy requests (/v1/*) into the request log ring buffer

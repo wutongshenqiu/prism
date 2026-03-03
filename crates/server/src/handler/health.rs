@@ -21,7 +21,7 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
     let cb_states = state.router.circuit_breaker_states();
 
     let body =
-        ai_proxy_core::prometheus::render_metrics(&state.metrics, cache_stats.as_ref(), &cb_states);
+        prism_core::prometheus::render_metrics(&state.metrics, cache_stats.as_ref(), &cb_states);
 
     (
         [(
