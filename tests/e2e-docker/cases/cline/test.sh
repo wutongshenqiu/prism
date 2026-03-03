@@ -17,9 +17,16 @@ log_info "Installing Cline CLI..."
 npm install -g cline 2>&1 | tail -1
 log_info "Cline installed"
 
-# 3. Configure: Cline uses env vars for OpenAI-compatible
-export OPENAI_API_KEY="sk-proxy-e2e-dummy"
-export OPENAI_BASE_URL="http://gateway:8317/v1"
+# 3. Authenticate with OpenAI-compatible provider (non-interactive)
+log_info "Configuring Cline auth..."
+cline auth \
+    -p openai-compatible \
+    -k "sk-proxy-e2e-dummy" \
+    -b "http://gateway:8317/v1" \
+    -m "$MODEL" 2>&1 || {
+    log_warn "cline auth returned non-zero, continuing anyway"
+}
+log_info "Cline auth configured"
 
 # 4. Set up git workspace
 WORKDIR=$(mktemp -d)
@@ -34,8 +41,9 @@ log_info "Testing model: $MODEL"
 timer_start
 
 OUTPUT=$(cline -m "$MODEL" -y "Respond with exactly: PONG" 2>&1) || {
+    rc=$?
     elapsed=$(timer_elapsed)
-    log_fail "$MODEL — cline exited with code $? ($(format_duration "$elapsed"))"
+    log_fail "$MODEL — cline exited with code $rc ($(format_duration "$elapsed"))"
     echo "$OUTPUT"
     report_row "$CASE_NAME" "fail" "$MODEL" "$elapsed" "$OUTPUT"
     rm -rf "$WORKDIR"

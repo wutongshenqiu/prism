@@ -35,8 +35,9 @@ log_info "Testing model: $MODEL"
 timer_start
 
 OUTPUT=$(aider --model "openai/$MODEL" --no-auto-commits --message "Respond with exactly: PONG" 2>&1) || {
+    rc=$?
     elapsed=$(timer_elapsed)
-    log_fail "$MODEL — aider exited with code $? ($(format_duration "$elapsed"))"
+    log_fail "$MODEL — aider exited with code $rc ($(format_duration "$elapsed"))"
     echo "$OUTPUT"
     report_row "$CASE_NAME" "fail" "$MODEL" "$elapsed" "$OUTPUT"
     rm -rf "$WORKDIR"
