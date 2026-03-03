@@ -127,7 +127,7 @@ routing:
 Controls when cloaking is applied to Claude API requests (system prompt injection, user_id generation, sensitive word obfuscation).
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CloakMode {
     Auto,

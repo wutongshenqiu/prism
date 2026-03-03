@@ -330,8 +330,9 @@ pub type NonStreamTransformFn =
 |------|----|--------------------|---------------------|
 | `OpenAI` | `Claude` | `openai_to_claude::translate_request` | `claude_to_openai::translate_stream` / `translate_non_stream` |
 | `OpenAI` | `Gemini` | `openai_to_gemini::translate_request` | `gemini_to_openai::translate_stream` / `translate_non_stream` |
+| `OpenAI` | `OpenAICompat` | Passthrough (model name replacement only) | Passthrough (no transformation) |
 
-Same-format pairs (e.g., OpenAI -> OpenAI) are handled implicitly: only the `model` field is replaced.
+Same-format pairs (e.g., OpenAI -> OpenAI) are handled implicitly: only the `model` field is replaced. The OpenAI→OpenAICompat entry is an explicit passthrough registered in `build_registry()` to ensure dispatch routing works for OpenAI-compatible providers.
 
 ---
 
