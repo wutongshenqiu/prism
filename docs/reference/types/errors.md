@@ -42,6 +42,15 @@ pub enum ProxyError {
     #[error("model not found: {0}")]
     ModelNotFound(String),
 
+    #[error("rate limit exceeded: {0}")]
+    RateLimited(String),
+
+    #[error("model access denied: {0}")]
+    ModelNotAllowed(String),
+
+    #[error("API key expired")]
+    KeyExpired,
+
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -55,13 +64,16 @@ pub enum ProxyError {
 |---------|--------|-------------|
 | `Config` | `String` | Configuration validation or loading error. |
 | `Auth` | `String` | Client authentication failure (invalid or missing API key). |
-| `NoCredentials` | `provider: String, model: String` | No available credentials for the given provider and model. All credentials may be disabled, in cooldown, or not configured. |
+| `NoCredentials` | `provider: String, model: String` | No available credentials for the given provider and model. All credentials may be disabled, circuit-broken, or not configured. |
 | `ModelCooldown` | `model: String, seconds: u64` | The requested model's credentials are all in cooldown. |
 | `Upstream` | `status: u16, body: String, retry_after_secs: Option<u64>` | Error response from upstream provider. `retry_after_secs` is parsed from the upstream `Retry-After` header if present. |
 | `Network` | `String` | Network-level failure (timeout, connection refused, DNS failure). |
 | `Translation` | `String` | Error during request/response format translation (JSON parse errors, missing fields). |
 | `BadRequest` | `String` | Malformed client request (missing model field, invalid JSON, etc.). |
 | `ModelNotFound` | `String` | No provider has a credential that supports the requested model. |
+| `RateLimited` | `String` | Global or per-key rate limit exceeded (RPM, TPM, or daily cost). |
+| `ModelNotAllowed` | `String` | The auth key does not have access to the requested model (restricted by `allowed_models`). |
+| `KeyExpired` | (none) | The client's API key has passed its `expires_at` date. |
 | `Internal` | `String` | Unexpected internal error (response build failure, task panic, etc.). |
 
 ---
@@ -75,9 +87,10 @@ impl ProxyError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Config(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,  // 500
-            Self::Auth(_) => StatusCode::UNAUTHORIZED,                                  // 401
+            Self::Auth(_) | Self::KeyExpired => StatusCode::UNAUTHORIZED,               // 401
+            Self::ModelNotAllowed(_) => StatusCode::FORBIDDEN,                          // 403
             Self::NoCredentials { .. } => StatusCode::SERVICE_UNAVAILABLE,              // 503
-            Self::ModelCooldown { .. } => StatusCode::TOO_MANY_REQUESTS,               // 429
+            Self::ModelCooldown { .. } | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS, // 429
             Self::Upstream { status, .. } => {
                 StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)       // pass-through or 502
             }
@@ -96,8 +109,11 @@ impl ProxyError {
 |---------|-------------|------|
 | `Config` | 500 Internal Server Error | |
 | `Auth` | 401 Unauthorized | |
+| `KeyExpired` | 401 Unauthorized | |
+| `ModelNotAllowed` | 403 Forbidden | |
 | `NoCredentials` | 503 Service Unavailable | |
 | `ModelCooldown` | 429 Too Many Requests | |
+| `RateLimited` | 429 Too Many Requests | |
 | `Upstream` | pass-through (e.g., 429, 500) or 502 | |
 | `Network` | 502 Bad Gateway | |
 | `Translation` | 500 Internal Server Error | |
@@ -115,9 +131,10 @@ The `error_type()` and `error_code()` are **private** helper methods (not part o
 
 | Variant | error_type |
 |---------|------------|
-| `Auth` | `"authentication_error"` |
+| `Auth`, `KeyExpired` | `"authentication_error"` |
+| `ModelNotAllowed` | `"permission_error"` |
 | `NoCredentials` | `"insufficient_quota"` |
-| `ModelCooldown` | `"rate_limit_error"` |
+| `ModelCooldown`, `RateLimited` | `"rate_limit_error"` |
 | `BadRequest` | `"invalid_request_error"` |
 | `ModelNotFound` | `"invalid_request_error"` |
 | `Upstream` | `"upstream_error"` |
@@ -127,9 +144,10 @@ The `error_type()` and `error_code()` are **private** helper methods (not part o
 
 | Variant | error_code |
 |---------|------------|
-| `Auth` | `"invalid_api_key"` |
+| `Auth`, `KeyExpired` | `"invalid_api_key"` |
+| `ModelNotAllowed` | `"model_not_allowed"` |
 | `NoCredentials` | `"insufficient_quota"` |
-| `ModelCooldown` | `"rate_limit_exceeded"` |
+| `ModelCooldown`, `RateLimited` | `"rate_limit_exceeded"` |
 | `ModelNotFound` | `"model_not_found"` |
 | `BadRequest` | `"invalid_request"` |
 | all others | `"internal_error"` |
@@ -159,6 +177,10 @@ For all variants except `Upstream` (with valid JSON body):
 For `Upstream` errors where the body is valid JSON, the original upstream error body is passed through verbatim with the upstream's HTTP status code. This preserves provider-specific error details.
 
 If the upstream body is not valid JSON, the standard error format is used instead.
+
+### Retry-After header
+
+For `RateLimited` and `ModelCooldown` responses, the `Retry-After` header is automatically set to `"60"` seconds.
 
 ---
 

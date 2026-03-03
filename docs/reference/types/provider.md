@@ -11,7 +11,7 @@ Runtime types for provider execution, credential routing, and format translation
 Runtime credential representation built from `ProviderKeyEntry` during config loading. Carries all data needed to authenticate and route a request to a specific upstream provider.
 
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthRecord {
     pub id: String,
     pub provider: Format,
@@ -23,9 +23,12 @@ pub struct AuthRecord {
     pub excluded_models: Vec<String>,
     pub prefix: Option<String>,
     pub disabled: bool,
-    pub cooldown_until: Option<std::time::Instant>,
+    pub circuit_breaker: Arc<dyn CircuitBreakerPolicy>,
     pub cloak: Option<CloakConfig>,
     pub wire_api: WireApi,
+    pub credential_name: Option<String>,
+    pub weight: u32,
+    pub region: Option<String>,
 }
 ```
 
@@ -41,9 +44,12 @@ pub struct AuthRecord {
 | `excluded_models` | `Vec<String>` | Glob patterns for excluded models. |
 | `prefix` | `Option<String>` | Model name prefix for namespace isolation. |
 | `disabled` | `bool` | Whether this credential is disabled. |
-| `cooldown_until` | `Option<Instant>` | Cooldown expiry time. Set by `CredentialRouter.mark_unavailable()`. |
+| `circuit_breaker` | `Arc<dyn CircuitBreakerPolicy>` | Circuit breaker instance managing availability state. |
 | `cloak` | `Option<CloakConfig>` | Cloak config. Only `Some` for Claude credentials. |
 | `wire_api` | `WireApi` | Wire API format (Chat or Responses). |
+| `credential_name` | `Option<String>` | Human-readable name from `ProviderKeyEntry.name`. |
+| `weight` | `u32` | Weight for weighted round-robin routing (default 1). |
+| `region` | `Option<String>` | Region identifier for geo-aware routing. |
 
 ### Key methods
 
@@ -56,7 +62,9 @@ pub struct AuthRecord {
 | `strip_prefix` | `fn strip_prefix<'a>(&self, model: &'a str) -> &'a str` | Removes prefix from model name. Returns original if no prefix match. |
 | `prefixed_model_id` | `fn prefixed_model_id(&self, model_id: &str) -> String` | Prepends the configured prefix to a model ID. |
 | `is_model_excluded` | `fn is_model_excluded(&self, model: &str) -> bool` | Checks exclusion list using glob matching. |
-| `is_available` | `fn is_available(&self) -> bool` | Returns `false` if disabled or currently in cooldown. |
+| `name` | `fn name(&self) -> Option<&str>` | Returns the credential's human-readable name. |
+| `is_available` | `fn is_available(&self) -> bool` | Returns `false` if disabled or circuit breaker denies execution (`circuit_breaker.can_execute()` returns false). |
+| `circuit_state` | `fn circuit_state(&self) -> CircuitState` | Returns the current circuit breaker state (`Closed`, `Open`, or `HalfOpen`). |
 
 ---
 
@@ -244,13 +252,16 @@ pub trait ProviderExecutor: Send + Sync {
 
 **Source:** `crates/provider/src/routing.rs`
 
-Thread-safe credential store that selects the appropriate credential for each request based on provider, model, routing strategy, and cooldown state.
+Thread-safe credential store that selects the appropriate credential for each request based on provider, model, routing strategy, and circuit breaker state.
 
 ```rust
 pub struct CredentialRouter {
     credentials: RwLock<HashMap<Format, Vec<AuthRecord>>>,
     counters: RwLock<HashMap<String, AtomicUsize>>,
     strategy: RwLock<RoutingStrategy>,
+    latency_ewma: RwLock<HashMap<String, f64>>,
+    ewma_alpha: RwLock<f64>,
+    cb_config: RwLock<CircuitBreakerConfig>,
 }
 ```
 
@@ -259,10 +270,13 @@ pub struct CredentialRouter {
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `new` | `fn new(strategy: RoutingStrategy) -> Self` | Create a new router with the given strategy. |
-| `pick` | `fn pick(&self, provider: Format, model: &str, tried: &[String]) -> Option<AuthRecord>` | Pick the next available credential. Filters by availability, model support, and exclusion of already-tried IDs. Uses round-robin (with `AtomicUsize` counter per `"provider:model"` key) or fill-first based on strategy. |
-| `mark_unavailable` | `fn mark_unavailable(&self, auth_id: &str, duration: Duration)` | Set cooldown on a credential. Sets `cooldown_until` to `Instant::now() + duration`. |
-| `update_from_config` | `fn update_from_config(&self, config: &Config)` | Rebuild all credentials from config. Preserves cooldown state from existing credentials (matched by `api_key` + format). Also updates routing strategy. |
-| `all_models` | `fn all_models(&self) -> Vec<ModelInfo>` | List all unique models across all available (non-disabled, non-cooled-down) credentials. Prefers alias over raw ID. Deduplicates by model ID. |
+| `pick` | `fn pick(&self, provider: Format, model: &str, tried: &[String], client_region: Option<&str>) -> Option<AuthRecord>` | Pick the next available credential. Filters by availability (circuit breaker), model support, and exclusion of already-tried IDs. Strategy-specific selection: round-robin, fill-first, latency-aware (lowest EWMA), or geo-aware (region match). |
+| `record_latency` | `fn record_latency(&self, credential_id: &str, latency_ms: f64)` | Record request latency for EWMA calculation (used by latency-aware routing). |
+| `record_success` | `fn record_success(&self, auth_id: &str)` | Report a successful request to the credential's circuit breaker. |
+| `record_failure` | `fn record_failure(&self, auth_id: &str)` | Report a failed request to the credential's circuit breaker. May trip the circuit open. |
+| `circuit_breaker_states` | `fn circuit_breaker_states(&self) -> Vec<(String, bool)>` | Get circuit breaker availability state for all credentials. Returns `(credential_id, can_execute)`. |
+| `update_from_config` | `fn update_from_config(&self, config: &Config)` | Rebuild all credentials from config. Also updates routing strategy and circuit breaker config. |
+| `all_models` | `fn all_models(&self) -> Vec<ModelInfo>` | List all unique models across all available (non-disabled, circuit-closed) credentials. Prefers alias over raw ID. Deduplicates by model ID. |
 | `model_has_prefix` | `fn model_has_prefix(&self, model: &str) -> bool` | Check if any available credential with a prefix supports this model. Used for `force_model_prefix` enforcement. |
 | `resolve_providers` | `fn resolve_providers(&self, model: &str) -> Vec<Format>` | Return all provider formats that have at least one available credential supporting the model. |
 
@@ -370,7 +384,7 @@ pub struct ExecutorRegistry {
 |--------|-----------|-------------|
 | `get` | `fn get(&self, name: &str) -> Option<Arc<dyn ProviderExecutor>>` | Look up executor by name. |
 | `get_by_format` | `fn get_by_format(&self, format: Format) -> Option<Arc<dyn ProviderExecutor>>` | Look up executor by native format. |
-| `all` | `fn all(&self) -> impl Iterator<...>` | Iterate all registered executors. |
+| `all` | `fn all(&self) -> impl Iterator<Item = (&String, &Arc<dyn ProviderExecutor>)>` | Iterate all registered executors. |
 
 ---
 
@@ -386,6 +400,10 @@ pub struct RequestContext {
     pub request_id: String,
     pub start_time: Instant,
     pub client_ip: Option<String>,
+    pub api_key_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub auth_key: Option<AuthKeyEntry>,
+    pub client_region: Option<String>,
 }
 ```
 
@@ -394,6 +412,10 @@ pub struct RequestContext {
 | `request_id` | `String` | UUID v4 generated per request. |
 | `start_time` | `Instant` | When the request was received. |
 | `client_ip` | `Option<String>` | Extracted from `X-Forwarded-For` or `X-Real-IP` headers. |
+| `api_key_id` | `Option<String>` | Masked API key ID (set by auth middleware after key validation). |
+| `tenant_id` | `Option<String>` | Tenant ID from the matching `AuthKeyEntry`. |
+| `auth_key` | `Option<AuthKeyEntry>` | Full auth key entry (for per-key rate limits and model access checks). |
+| `client_region` | `Option<String>` | Client region for geo-aware routing (extracted from headers or config). |
 
 ### Methods
 

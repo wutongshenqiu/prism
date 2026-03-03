@@ -89,6 +89,8 @@ Controls how credentials are selected when multiple credentials can serve a requ
 pub enum RoutingStrategy {
     RoundRobin,
     FillFirst,
+    LatencyAware,
+    GeoAware,
 }
 ```
 
@@ -98,12 +100,17 @@ pub enum RoutingStrategy {
 |---------|-----------------|----------|
 | `RoundRobin` | `"round-robin"` | Distributes requests across credentials using `AtomicUsize` counters per `"provider:model"` key. Default strategy. |
 | `FillFirst` | `"fill-first"` | Always picks the first available credential in the list. |
+| `LatencyAware` | `"latency-aware"` | Picks the credential with the lowest EWMA latency. Uses `ewma_alpha` smoothing factor from `RoutingConfig`. |
+| `GeoAware` | `"geo-aware"` | Prefers credentials whose `region` matches the client's region. Falls back to `default_region` in `RoutingConfig`. |
 
 ### YAML example
 
 ```yaml
 routing:
-  strategy: round-robin   # or fill-first
+  strategy: round-robin   # or fill-first, latency-aware, geo-aware
+  fallback-enabled: true
+  ewma-alpha: 0.3          # for latency-aware
+  default-region: us-east   # for geo-aware
 ```
 
 ### Usage context
@@ -154,3 +161,58 @@ claude-api-key:
 - `CloakConfig.mode` -- per-credential cloak config
 - `should_cloak()` function evaluates this against `User-Agent`
 - `apply_cloak()` injects system prompt, `metadata.user_id`, and obfuscates sensitive words
+
+---
+
+## CircuitState
+
+**Source:** `crates/core/src/circuit_breaker.rs`
+
+The state of a credential's circuit breaker.
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+```
+
+| Variant | Serialized value | Meaning |
+|---------|-----------------|---------|
+| `Closed` | `"closed"` | Healthy -- requests flow normally. |
+| `Open` | `"open"` | Tripped -- requests blocked until cooldown expires. |
+| `HalfOpen` | `"half-open"` | Probing -- limited requests allowed to test recovery. |
+
+### Usage context
+
+- `CircuitBreakerPolicy.state()` -- current state of a credential's circuit breaker
+- `AuthRecord.circuit_state()` -- convenience accessor
+
+---
+
+## BudgetPeriod
+
+**Source:** `crates/core/src/auth_key.rs`
+
+Budget reset period for per-key cost budgets.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BudgetPeriod {
+    Daily,
+    Monthly,
+}
+```
+
+| Variant | Serialized value |
+|---------|-----------------|
+| `Daily` | `"daily"` |
+| `Monthly` | `"monthly"` |
+
+### Usage context
+
+- `BudgetConfig.period` -- in `AuthKeyEntry` budget configuration
