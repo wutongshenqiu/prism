@@ -41,6 +41,8 @@ jobs:
     timeout-minutes: 30
     env:
       E2E_BAILIAN_API_KEY: ${{ secrets.E2E_BAILIAN_API_KEY }}
+      # quick on push, full on manual/schedule
+      TEST_LEVEL: ${{ github.event_name == 'push' && 'quick' || 'full' }}
     steps:
       - uses: actions/checkout@v6
 
