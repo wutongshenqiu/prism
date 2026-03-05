@@ -12,7 +12,7 @@ Steps:
    - Config/hot-reload → crates/core/src/config.rs
    - Auth → crates/server/src/auth.rs
    - Cloaking/Payload → crates/core/src/cloak.rs, crates/core/src/payload.rs
-   - Dispatch/retry → crates/server/src/dispatch.rs
+   - Dispatch/retry → crates/server/src/dispatch/ (mod.rs, helpers.rs, streaming.rs, retry.rs)
    - Provider execution → crates/provider/src/
 2. Examine related code paths, error handling (ProxyError), config.example.yaml
 3. Attempt to reproduce: check existing tests, construct minimal test case if needed

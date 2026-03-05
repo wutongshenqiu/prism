@@ -8,7 +8,7 @@ Steps:
    - 配置/热重载 → crates/core/src/config.rs (ConfigWatcher)
    - 认证问题 → crates/server/src/auth.rs
    - Cloaking/Payload → crates/core/src/cloak.rs, crates/core/src/payload.rs
-   - 请求分发/重试 → crates/server/src/dispatch.rs
+   - 请求分发/重试 → crates/server/src/dispatch/ (mod.rs, helpers.rs, streaming.rs, retry.rs)
    - Provider 执行 → crates/provider/src/ (对应的 executor)
 2. 检查相关代码路径:
    - 读取可能涉及的源文件
