@@ -1,12 +1,19 @@
+mod helpers;
+mod retry;
+mod streaming;
+
 use crate::AppState;
 use crate::streaming::build_sse_response;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use prism_core::config::RetryConfig;
+use helpers::{
+    build_json_response, inject_debug_headers, inject_dispatch_meta, rewrite_model_in_body,
+};
 use prism_core::error::ProxyError;
-use prism_core::provider::{Format, ProviderRequest, ProviderResponse, StreamChunk};
-use prism_translator::TranslateState;
+use prism_core::provider::{Format, ProviderRequest, ProviderResponse};
+use retry::handle_retry_error;
 use std::time::{Duration, Instant};
+use streaming::{build_keepalive_body, translate_stream};
 
 /// A dispatch request encapsulating all information needed to route and execute an API call.
 pub struct DispatchRequest {
@@ -50,104 +57,6 @@ pub struct DispatchMeta {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cost: Option<f64>,
-}
-
-/// Extract token usage from a response payload (any format).
-fn extract_usage(payload: &str) -> (Option<u64>, Option<u64>) {
-    let val: serde_json::Value = match serde_json::from_str(payload) {
-        Ok(v) => v,
-        Err(_) => return (None, None),
-    };
-    // OpenAI/Claude format: usage.prompt_tokens / usage.input_tokens
-    if let Some(usage) = val.get("usage") {
-        let input = usage
-            .get("prompt_tokens")
-            .and_then(|v| v.as_u64())
-            .or_else(|| usage.get("input_tokens").and_then(|v| v.as_u64()));
-        let output = usage
-            .get("completion_tokens")
-            .and_then(|v| v.as_u64())
-            .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()));
-        return (input, output);
-    }
-    // Gemini format: usageMetadata
-    if let Some(usage) = val.get("usageMetadata") {
-        let input = usage.get("promptTokenCount").and_then(|v| v.as_u64());
-        let output = usage.get("candidatesTokenCount").and_then(|v| v.as_u64());
-        return (input, output);
-    }
-    (None, None)
-}
-
-/// Inject dispatch metadata into response extensions for request logging.
-fn inject_dispatch_meta(
-    response: &mut Response,
-    debug: &DispatchDebug,
-    translated_payload: &str,
-    cost_calculator: &prism_core::cost::CostCalculator,
-    metrics: &prism_core::metrics::Metrics,
-) {
-    let (input_tokens, output_tokens) = extract_usage(translated_payload);
-    let model = debug.model.as_deref();
-    let cost = match (model, input_tokens, output_tokens) {
-        (Some(m), Some(inp), Some(out)) => cost_calculator.calculate(m, inp, out),
-        _ => None,
-    };
-    // Record tokens and cost in global metrics
-    if let (Some(inp), Some(out)) = (input_tokens, output_tokens) {
-        metrics.record_tokens(inp, out);
-    }
-    if let (Some(m), Some(c)) = (model, cost) {
-        metrics.record_cost(m, c);
-    }
-    response.extensions_mut().insert(DispatchMeta {
-        provider: debug.provider.clone(),
-        model: debug.model.clone(),
-        input_tokens,
-        output_tokens,
-        cost,
-    });
-}
-
-/// Build a non-stream JSON response with passthrough headers.
-fn build_json_response(
-    translated: &str,
-    passthrough_headers: &[String],
-    upstream_headers: &std::collections::HashMap<String, String>,
-) -> Result<Response, ProxyError> {
-    let mut builder = axum::http::Response::builder()
-        .header(axum::http::header::CONTENT_TYPE, "application/json");
-
-    for header_name in passthrough_headers {
-        if let Some(val) = upstream_headers.get(header_name) {
-            builder = builder.header(header_name.as_str(), val.as_str());
-        }
-    }
-
-    builder
-        .body(axum::body::Body::from(translated.to_string()))
-        .map_err(|e| ProxyError::Internal(format!("failed to build response: {e}")))
-        .map(IntoResponse::into_response)
-}
-
-/// Inject debug headers into a response if debug mode is enabled.
-fn inject_debug_headers(response: &mut Response, debug: &DispatchDebug) {
-    let headers = response.headers_mut();
-    if let Some(ref provider) = debug.provider {
-        headers.insert("x-debug-provider", provider.parse().unwrap());
-    }
-    if let Some(ref model) = debug.model {
-        headers.insert("x-debug-model", model.parse().unwrap());
-    }
-    if let Some(ref name) = debug.credential_name {
-        headers.insert("x-debug-credential", name.parse().unwrap());
-    }
-    if !debug.attempts.is_empty() {
-        headers.insert(
-            "x-debug-attempts",
-            debug.attempts.join(", ").parse().unwrap(),
-        );
-    }
 }
 
 /// Unified dispatch: resolves providers, picks credentials, translates, executes, retries.
@@ -629,189 +538,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     }))
 }
 
-// ─── Model rewriting for fallback ──────────────────────────────────────────
-
-/// Rewrite the `model` field in a JSON request body to use a different model name.
-fn rewrite_model_in_body(body: &Bytes, new_model: &str) -> Bytes {
-    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(body)
-        && let Some(obj) = val.as_object_mut()
-    {
-        obj.insert(
-            "model".to_string(),
-            serde_json::Value::String(new_model.to_string()),
-        );
-        if let Ok(bytes) = serde_json::to_vec(&val) {
-            return Bytes::from(bytes);
-        }
-    }
-    body.clone()
-}
-
-// ─── Non-stream keepalive body ─────────────────────────────────────────────
-
-type ProviderResult = Result<ProviderResponse, ProxyError>;
-
-/// Build a chunked response body that sends periodic whitespace while waiting
-/// for the upstream response. Leading whitespace is valid JSON and is ignored
-/// by parsers, so the client receives ` ` ` ` `{"choices":[...]}`.
-fn build_keepalive_body(
-    result_rx: std::pin::Pin<Box<tokio::sync::oneshot::Receiver<ProviderResult>>>,
-    interval_secs: u64,
-    translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
-    source_format: Format,
-    target_format: Format,
-    model: String,
-    original_body: Bytes,
-) -> axum::body::Body {
-    struct KeepaliveState {
-        rx: Option<std::pin::Pin<Box<tokio::sync::oneshot::Receiver<ProviderResult>>>>,
-        interval_secs: u64,
-        translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
-        source_format: Format,
-        target_format: Format,
-        model: String,
-        original_body: Bytes,
-    }
-
-    let state = KeepaliveState {
-        rx: Some(result_rx),
-        interval_secs,
-        translators,
-        source_format,
-        target_format,
-        model,
-        original_body,
-    };
-
-    let stream = futures::stream::unfold(state, |mut state| async move {
-        let mut rx = state.rx.take()?;
-
-        tokio::select! {
-            result = &mut rx => {
-                let data = match result {
-                    Ok(Ok(response)) => {
-                        match state.translators.translate_non_stream(
-                            state.source_format,
-                            state.target_format,
-                            &state.model,
-                            &state.original_body,
-                            &response.payload,
-                        ) {
-                            Ok(translated) => translated,
-                            Err(e) => keepalive_error_json(&e.to_string()),
-                        }
-                    }
-                    Ok(Err(e)) => keepalive_error_json(&e.to_string()),
-                    Err(_) => keepalive_error_json("internal error"),
-                };
-                // rx is consumed; stream will end on the next call (rx = None)
-                Some((Ok::<Bytes, std::convert::Infallible>(Bytes::from(data)), state))
-            }
-            _ = tokio::time::sleep(Duration::from_secs(state.interval_secs)) => {
-                // Put the receiver back for the next iteration
-                state.rx = Some(rx);
-                Some((Ok(Bytes::from_static(b" ")), state))
-            }
-        }
-    });
-
-    axum::body::Body::from_stream(stream)
-}
-
-fn keepalive_error_json(msg: &str) -> String {
-    serde_json::json!({
-        "error": {"message": msg, "type": "server_error"}
-    })
-    .to_string()
-}
-
-// ─── Stream translation ────────────────────────────────────────────────────
-
-fn translate_stream(
-    upstream: std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
-    >,
-    translators: std::sync::Arc<prism_translator::TranslatorRegistry>,
-    from: Format,
-    to: Format,
-    model: String,
-    orig_req: Bytes,
-) -> impl tokio_stream::Stream<Item = Result<String, ProxyError>> + Send {
-    futures::stream::unfold(
-        (upstream, TranslateState::default(), true),
-        move |(mut stream, mut state, active)| {
-            let translators = translators.clone();
-            let model = model.clone();
-            let orig_req = orig_req.clone();
-            async move {
-                if !active {
-                    return None;
-                }
-
-                use tokio_stream::StreamExt;
-                match stream.next().await {
-                    Some(Ok(chunk)) => {
-                        match translators.translate_stream(
-                            from,
-                            to,
-                            &model,
-                            &orig_req,
-                            chunk.event_type.as_deref(),
-                            chunk.data.as_bytes(),
-                            &mut state,
-                        ) {
-                            Ok(lines) => {
-                                let has_done = lines.iter().any(|l| l == "[DONE]");
-                                let combined = lines.join("\n");
-                                if combined.is_empty() {
-                                    Some((Ok(String::new()), (stream, state, !has_done)))
-                                } else {
-                                    Some((Ok(combined), (stream, state, !has_done)))
-                                }
-                            }
-                            Err(e) => Some((Err(e), (stream, state, false))),
-                        }
-                    }
-                    Some(Err(e)) => Some((Err(e), (stream, state, false))),
-                    None => None,
-                }
-            }
-        },
-    )
-}
-
-// ─── Retry error handling ──────────────────────────────────────────────────
-
-fn handle_retry_error(
-    state: &AppState,
-    auth_id: &str,
-    error: &ProxyError,
-    _retry_cfg: &RetryConfig,
-) {
-    state.metrics.record_error();
-    match error {
-        ProxyError::Upstream { status, .. } => match *status {
-            429 => {
-                state.router.record_failure(auth_id);
-                tracing::warn!("Rate limited (429), recording circuit breaker failure");
-            }
-            s if (500..=599).contains(&s) => {
-                state.router.record_failure(auth_id);
-                tracing::warn!("Upstream error ({s}), recording circuit breaker failure");
-            }
-            _ => {}
-        },
-        ProxyError::Network(_) => {
-            state.router.record_failure(auth_id);
-            tracing::warn!("Network error, recording circuit breaker failure");
-        }
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use helpers::*;
+    use streaming::keepalive_error_json;
 
     // === extract_usage ===
 

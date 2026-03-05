@@ -3,6 +3,10 @@ use futures::Stream;
 use std::pin::Pin;
 use tokio_stream::StreamExt;
 
+/// Maximum SSE buffer size (16 MB). Prevents unbounded memory growth from
+/// malicious or misbehaving upstream providers.
+const MAX_SSE_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct SseEvent {
     pub event: Option<String>,
@@ -42,7 +46,7 @@ fn async_stream(
                     } else {
                         2
                     };
-                    state.buffer = state.buffer[pos + skip..].to_string();
+                    drop(state.buffer.drain(..pos + skip));
 
                     if let Some(event) = parse_event_block(&block) {
                         return Some((Ok(event), state));
@@ -54,7 +58,17 @@ fn async_stream(
                 // Need more data
                 match state.stream.next().await {
                     Some(Ok(bytes)) => match std::str::from_utf8(&bytes) {
-                        Ok(text) => state.buffer.push_str(text),
+                        Ok(text) => {
+                            if state.buffer.len() + text.len() > MAX_SSE_BUFFER_SIZE {
+                                return Some((
+                                    Err(prism_core::error::ProxyError::Internal(
+                                        "SSE buffer exceeded maximum size".to_string(),
+                                    )),
+                                    state,
+                                ));
+                            }
+                            state.buffer.push_str(text);
+                        }
                         Err(e) => {
                             return Some((
                                 Err(prism_core::error::ProxyError::Internal(format!(

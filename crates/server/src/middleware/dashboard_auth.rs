@@ -28,19 +28,13 @@ pub async fn dashboard_auth_middleware(
         )
     })?;
 
-    // Extract token from Authorization: Bearer header or query param
+    // Extract token from Authorization: Bearer header only
     let token = request
         .headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .or_else(|| {
-            request.uri().query().and_then(|q| {
-                q.split('&')
-                    .find_map(|p| p.strip_prefix("token=").map(|t| t.to_string()))
-            })
-        });
+        .map(|s| s.to_string());
 
     let token = token.ok_or_else(|| {
         error_response(

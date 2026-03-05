@@ -991,11 +991,11 @@ async fn test_validate_config_invalid() {
 // ===========================================================================
 
 #[tokio::test]
-async fn test_protected_endpoint_with_token_query_param() {
+async fn test_protected_endpoint_with_token_query_param_rejected() {
     let harness = create_test_harness();
     let token = login_and_get_token(&harness).await;
 
-    // Access protected endpoint with token as query parameter
+    // Query param tokens should be rejected (security: only Bearer header allowed)
     let uri = format!("/api/dashboard/providers?token={token}");
     let req = Request::builder()
         .method("GET")
@@ -1003,9 +1003,8 @@ async fn test_protected_endpoint_with_token_query_param() {
         .body(Body::empty())
         .unwrap();
 
-    let (status, body) = send_request(&harness, req).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body["providers"].is_array());
+    let (status, _body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 // ===========================================================================

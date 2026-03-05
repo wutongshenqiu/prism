@@ -99,7 +99,7 @@ fn convert_messages(req: &Value) -> Result<Vec<Value>, ProxyError> {
 
             // Try to parse content as JSON, fallback to wrapping in result object
             let response_val = serde_json::from_str::<Value>(content_text)
-                .unwrap_or(json!({"result": content_text}));
+                .unwrap_or_else(|_| json!({"result": content_text}));
 
             let part = json!({
                 "functionResponse": {
@@ -200,7 +200,10 @@ fn convert_content_to_parts(msg: &Value) -> Result<Vec<Value>, ProxyError> {
                 .and_then(|f| f.get("arguments"))
                 .and_then(|a| a.as_str())
                 .unwrap_or("{}");
-            let args: Value = serde_json::from_str(arguments_str).unwrap_or(json!({}));
+            let args: Value = serde_json::from_str(arguments_str).unwrap_or_else(|e| {
+                tracing::debug!("Malformed tool_call arguments JSON: {e}");
+                json!({})
+            });
 
             parts.push(json!({
                 "functionCall": {

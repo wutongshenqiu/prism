@@ -169,7 +169,10 @@ fn convert_messages(req: &Value) -> Result<Vec<Value>, ProxyError> {
                         .and_then(|f| f.get("arguments"))
                         .and_then(|a| a.as_str())
                         .unwrap_or("{}");
-                    let input: Value = serde_json::from_str(arguments_str).unwrap_or(json!({}));
+                    let input: Value = serde_json::from_str(arguments_str).unwrap_or_else(|e| {
+                        tracing::debug!("Malformed tool_call arguments JSON: {e}");
+                        json!({})
+                    });
 
                     content_blocks.push(json!({
                         "type": "tool_use",

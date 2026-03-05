@@ -110,10 +110,17 @@ impl FileAuditBackend {
 impl AuditBackend for FileAuditBackend {
     async fn write(&self, entry: &AuditEntry) {
         self.rotate_if_needed().await;
-        if let Ok(json) = serde_json::to_string(entry) {
-            let mut writer = self.writer.lock().await;
-            if let Some(ref mut w) = *writer {
-                let _ = writeln!(w, "{json}");
+        match serde_json::to_string(entry) {
+            Ok(json) => {
+                let mut writer = self.writer.lock().await;
+                if let Some(ref mut w) = *writer
+                    && let Err(e) = writeln!(w, "{json}")
+                {
+                    tracing::warn!("Failed to write audit entry: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to serialize audit entry: {e}");
             }
         }
     }

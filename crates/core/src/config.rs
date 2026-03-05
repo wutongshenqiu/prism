@@ -140,7 +140,12 @@ impl Config {
     /// Load config from a YAML file, sanitize, and validate.
     pub fn load(path: &str) -> Result<Self, anyhow::Error> {
         let contents = std::fs::read_to_string(path)?;
-        let mut config: Config = serde_yml::from_str(&contents)?;
+        Self::load_from_str(&contents)
+    }
+
+    /// Parse config from a string (avoids re-reading the file).
+    pub fn load_from_str(contents: &str) -> Result<Self, anyhow::Error> {
+        let mut config: Config = serde_yml::from_str(contents)?;
         config.sanitize();
         config.validate()?;
         Ok(config)
@@ -494,15 +499,15 @@ impl ConfigWatcher {
                         }
                     } => {
                         debounce = None;
-                        match std::fs::read(&path_clone) {
+                        match std::fs::read_to_string(&path_clone) {
                             Ok(contents) => {
-                                let hash: [u8; 32] = sha2::Sha256::digest(&contents).into();
+                                let hash: [u8; 32] = sha2::Sha256::digest(contents.as_bytes()).into();
                                 if last_hash.as_ref() == Some(&hash) {
                                     continue;
                                 }
                                 last_hash = Some(hash);
 
-                                match Config::load(&path_clone) {
+                                match Config::load_from_str(&contents) {
                                     Ok(new_cfg) => {
                                         tracing::info!("Configuration reloaded successfully");
                                         on_reload(&new_cfg);

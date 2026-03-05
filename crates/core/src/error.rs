@@ -37,8 +37,12 @@ pub enum ProxyError {
     #[error("model not found: {0}")]
     ModelNotFound(String),
 
-    #[error("rate limit exceeded: {0}")]
-    RateLimited(String),
+    #[error("rate limit exceeded: {message}")]
+    RateLimited {
+        message: String,
+        /// Seconds until the rate limit resets.
+        retry_after_secs: u64,
+    },
 
     #[error("model access denied: {0}")]
     ModelNotAllowed(String),
@@ -57,7 +61,7 @@ impl ProxyError {
             Self::Auth(_) | Self::KeyExpired => StatusCode::UNAUTHORIZED,
             Self::ModelNotAllowed(_) => StatusCode::FORBIDDEN,
             Self::NoCredentials { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::ModelCooldown { .. } | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::ModelCooldown { .. } | Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Upstream { status, .. } => {
                 StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
             }
@@ -73,7 +77,7 @@ impl ProxyError {
             Self::Auth(_) | Self::KeyExpired => "authentication_error",
             Self::ModelNotAllowed(_) => "permission_error",
             Self::NoCredentials { .. } => "insufficient_quota",
-            Self::ModelCooldown { .. } | Self::RateLimited(_) => "rate_limit_error",
+            Self::ModelCooldown { .. } | Self::RateLimited { .. } => "rate_limit_error",
             Self::BadRequest(_) => "invalid_request_error",
             Self::ModelNotFound(_) => "invalid_request_error",
             Self::Upstream { .. } => "upstream_error",
@@ -86,7 +90,7 @@ impl ProxyError {
             Self::Auth(_) | Self::KeyExpired => "invalid_api_key",
             Self::ModelNotAllowed(_) => "model_not_allowed",
             Self::NoCredentials { .. } => "insufficient_quota",
-            Self::ModelCooldown { .. } | Self::RateLimited(_) => "rate_limit_exceeded",
+            Self::ModelCooldown { .. } | Self::RateLimited { .. } => "rate_limit_exceeded",
             Self::ModelNotFound(_) => "model_not_found",
             Self::BadRequest(_) => "invalid_request",
             _ => "internal_error",
@@ -121,10 +125,17 @@ impl IntoResponse for ProxyError {
             .into_response();
 
         // Add Retry-After header for rate limited responses
-        if matches!(&self, Self::RateLimited(_) | Self::ModelCooldown { .. }) {
-            response
-                .headers_mut()
-                .insert("retry-after", "60".parse().unwrap());
+        let retry_secs = match &self {
+            Self::RateLimited {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
+            Self::ModelCooldown { seconds, .. } => Some(*seconds),
+            _ => None,
+        };
+        if let Some(secs) = retry_secs
+            && let Ok(val) = secs.to_string().parse()
+        {
+            response.headers_mut().insert("retry-after", val);
         }
 
         response

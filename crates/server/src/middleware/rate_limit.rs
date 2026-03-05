@@ -29,10 +29,10 @@ pub async fn rate_limit_middleware(
     let info = state.rate_limiter.check(api_key.as_deref());
 
     if !info.allowed {
-        return Err(ProxyError::RateLimited(format!(
-            "Rate limit exceeded. Retry after {}s",
-            info.reset_secs
-        )));
+        return Err(ProxyError::RateLimited {
+            message: format!("Rate limit exceeded. Retry after {}s", info.reset_secs),
+            retry_after_secs: info.reset_secs,
+        });
     }
 
     // Record the request (RPM dimension)
