@@ -15,7 +15,7 @@ Steps:
    - Config/hot-reload → crates/core/src/config.rs (ConfigWatcher)
    - Auth issues → crates/server/src/auth.rs
    - Cloaking/Payload → crates/core/src/cloak.rs, crates/core/src/payload.rs
-   - Request dispatch/retry → crates/server/src/dispatch.rs
+   - Request dispatch/retry → crates/server/src/dispatch/ (mod.rs, helpers.rs, streaming.rs, retry.rs)
    - Provider execution → crates/provider/src/ (corresponding executor)
 2. Examine related code paths:
    - Read potentially involved source files
