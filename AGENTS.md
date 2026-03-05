@@ -106,8 +106,8 @@ HTTP server and request dispatch:
 - Handlers: `chat_completions`, `messages`, `responses`, `models`, `admin`, `health`
 - Auth: `auth.rs` -- Bearer token / x-api-key validation (top-level module)
 - Middleware: `request_logging`, `request_context`, `dashboard_auth` (JWT), `rate_limit` (in `middleware/` directory)
-- `dispatch` -- Core routing logic with retry, credential rotation, translation, cloaking, payload rules, model fallback (`models` array), debug mode (`x-debug` header), cost calculation, and token usage extraction
-- `streaming` -- SSE response builder with keepalive
+- `dispatch/` -- Core routing logic (split into `mod.rs`, `helpers.rs`, `streaming.rs`, `retry.rs`): credential rotation, translation, cloaking, payload rules, model fallback (`models` array), debug mode (`x-debug` header), cost calculation, token usage extraction, and keepalive body builder
+- `streaming` -- SSE response builder
 - `handler/dashboard/` -- Dashboard API handlers:
   - `auth` -- Login (bcrypt verify + JWT), token refresh
   - `providers` -- Provider CRUD with API key masking and atomic config write-back

@@ -42,8 +42,11 @@ pub enum ProxyError {
     #[error("model not found: {0}")]
     ModelNotFound(String),
 
-    #[error("rate limit exceeded: {0}")]
-    RateLimited(String),
+    #[error("rate limit exceeded: {message}")]
+    RateLimited {
+        message: String,
+        retry_after_secs: u64,
+    },
 
     #[error("model access denied: {0}")]
     ModelNotAllowed(String),
@@ -71,7 +74,7 @@ pub enum ProxyError {
 | `Translation` | `String` | Error during request/response format translation (JSON parse errors, missing fields). |
 | `BadRequest` | `String` | Malformed client request (missing model field, invalid JSON, etc.). |
 | `ModelNotFound` | `String` | No provider has a credential that supports the requested model. |
-| `RateLimited` | `String` | Global or per-key rate limit exceeded (RPM, TPM, or daily cost). |
+| `RateLimited` | `message: String, retry_after_secs: u64` | Global or per-key rate limit exceeded (RPM, TPM, or daily cost). `retry_after_secs` is used in the `Retry-After` response header. |
 | `ModelNotAllowed` | `String` | The auth key does not have access to the requested model (restricted by `allowed_models`). |
 | `KeyExpired` | (none) | The client's API key has passed its `expires_at` date. |
 | `Internal` | `String` | Unexpected internal error (response build failure, task panic, etc.). |

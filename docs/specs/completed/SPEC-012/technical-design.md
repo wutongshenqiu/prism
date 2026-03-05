@@ -5,7 +5,7 @@
 | Spec ID   | SPEC-012       |
 | Title     | Rate Limiting  |
 | Author    | AI Proxy Team  |
-| Status    | Active         |
+| Status    | Completed      |
 | Created   | 2026-03-01     |
 | Updated   | 2026-03-01     |
 

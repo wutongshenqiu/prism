@@ -257,6 +257,7 @@ Thread-safe credential store that selects the appropriate credential for each re
 ```rust
 pub struct CredentialRouter {
     credentials: RwLock<HashMap<Format, Vec<AuthRecord>>>,
+    credential_index: RwLock<HashMap<String, (Format, usize)>>,
     counters: RwLock<HashMap<String, AtomicUsize>>,
     strategy: RwLock<RoutingStrategy>,
     latency_ewma: RwLock<HashMap<String, f64>>,
@@ -348,8 +349,8 @@ pub struct TranslateState {
     pub response_id: String,
     pub model: String,
     pub created: i64,
-    pub current_tool_call_index: i32,
-    pub current_content_index: i32,
+    pub current_tool_call_index: Option<usize>,
+    pub current_content_index: Option<usize>,
     pub sent_role: bool,
     pub input_tokens: u64,
 }
@@ -360,8 +361,8 @@ pub struct TranslateState {
 | `response_id` | `String` | `""` | Generated response ID for the translated response. |
 | `model` | `String` | `""` | Model name for the translated response. |
 | `created` | `i64` | `0` | Unix timestamp for the translated response. |
-| `current_tool_call_index` | `i32` | `0` | Tracks the current tool call index during stream assembly. |
-| `current_content_index` | `i32` | `0` | Tracks the current content block index during stream assembly. |
+| `current_tool_call_index` | `Option<usize>` | `None` | Tracks the current tool call index during stream assembly. |
+| `current_content_index` | `Option<usize>` | `None` | Tracks the current content block index during stream assembly. |
 | `sent_role` | `bool` | `false` | Whether the assistant role delta has been emitted. |
 | `input_tokens` | `u64` | `0` | Accumulated input token count from upstream. |
 
