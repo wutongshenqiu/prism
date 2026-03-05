@@ -23,17 +23,13 @@ impl GeminiExecutor {
     ) -> Result<reqwest::RequestBuilder, ProxyError> {
         let client = common::build_client(auth, self.global_proxy.as_deref())?;
 
-        let mut req = client
+        let req = client
             .post(url)
             .header("content-type", "application/json")
             .header("x-goog-api-key", &auth.api_key)
             .body(request.payload.to_vec());
 
-        for (k, v) in &auth.headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
-        Ok(req)
+        Ok(common::apply_headers(req, &request.headers, auth))
     }
 }
 

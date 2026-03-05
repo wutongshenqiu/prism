@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct CredentialRouter {
     credentials: RwLock<HashMap<Format, Vec<AuthRecord>>>,
+    /// Index: credential_id → (Format, index in Vec) for O(1) lookup.
+    credential_index: RwLock<HashMap<String, (Format, usize)>>,
     counters: RwLock<HashMap<String, AtomicUsize>>,
     strategy: RwLock<RoutingStrategy>,
     /// EWMA latency per credential_id (ms).
@@ -25,6 +27,7 @@ impl CredentialRouter {
     pub fn new(strategy: RoutingStrategy) -> Self {
         Self {
             credentials: RwLock::new(HashMap::new()),
+            credential_index: RwLock::new(HashMap::new()),
             counters: RwLock::new(HashMap::new()),
             strategy: RwLock::new(strategy),
             latency_ewma: RwLock::new(HashMap::new()),
@@ -144,38 +147,38 @@ impl CredentialRouter {
 
     /// Record a credential's request latency for EWMA tracking.
     pub fn record_latency(&self, credential_id: &str, latency_ms: f64) {
-        let alpha = *self.ewma_alpha.read().unwrap();
-        let mut ewma = self.latency_ewma.write().unwrap();
+        let Ok(alpha_guard) = self.ewma_alpha.read() else {
+            return;
+        };
+        let alpha = *alpha_guard;
+        drop(alpha_guard);
+        let Ok(mut ewma) = self.latency_ewma.write() else {
+            return;
+        };
         let current = ewma.entry(credential_id.to_string()).or_insert(latency_ms);
         *current = alpha * latency_ms + (1.0 - alpha) * *current;
     }
 
     /// Record a successful request for a credential.
     pub fn record_success(&self, auth_id: &str) {
-        if let Ok(creds) = self.credentials.read() {
-            for entries in creds.values() {
-                for auth in entries {
-                    if auth.id == auth_id {
-                        auth.circuit_breaker.record_success();
-                        return;
-                    }
-                }
-            }
+        if let Some(auth) = self.find_credential(auth_id) {
+            auth.circuit_breaker.record_success();
         }
     }
 
     /// Record a failure for a credential (circuit breaker).
     pub fn record_failure(&self, auth_id: &str) {
-        if let Ok(creds) = self.credentials.read() {
-            for entries in creds.values() {
-                for auth in entries {
-                    if auth.id == auth_id {
-                        auth.circuit_breaker.record_failure();
-                        return;
-                    }
-                }
-            }
+        if let Some(auth) = self.find_credential(auth_id) {
+            auth.circuit_breaker.record_failure();
         }
+    }
+
+    /// O(1) credential lookup by ID using the index.
+    fn find_credential(&self, auth_id: &str) -> Option<AuthRecord> {
+        let index = self.credential_index.read().ok()?;
+        let &(format, idx) = index.get(auth_id)?;
+        let creds = self.credentials.read().ok()?;
+        creds.get(&format)?.get(idx).cloned()
     }
 
     /// Get circuit breaker states for all credentials (for Prometheus).
@@ -248,6 +251,16 @@ impl CredentialRouter {
                 }
             }
             *creds = map;
+
+            // Rebuild credential index for O(1) lookups
+            if let Ok(mut index) = self.credential_index.write() {
+                index.clear();
+                for (format, entries) in creds.iter() {
+                    for (i, auth) in entries.iter().enumerate() {
+                        index.insert(auth.id.clone(), (*format, i));
+                    }
+                }
+            }
         }
 
         // Preserve latency EWMA data (keyed by credential id changes, so

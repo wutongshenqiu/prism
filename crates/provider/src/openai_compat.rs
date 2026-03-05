@@ -10,6 +10,25 @@ pub struct OpenAICompatExecutor {
     pub global_proxy: Option<String>,
 }
 
+impl OpenAICompatExecutor {
+    /// Build a POST request with Bearer auth and standard headers.
+    fn build_request(
+        &self,
+        auth: &AuthRecord,
+        url: &str,
+        body: &[u8],
+        request_headers: &std::collections::HashMap<String, String>,
+    ) -> Result<reqwest::RequestBuilder, ProxyError> {
+        let client = common::build_client(auth, self.global_proxy.as_deref())?;
+        let req = client
+            .post(url)
+            .header("authorization", format!("Bearer {}", auth.api_key))
+            .header("content-type", "application/json")
+            .body(body.to_vec());
+        Ok(common::apply_headers(req, request_headers, auth))
+    }
+}
+
 /// Check if the auth record uses the Responses API wire format.
 fn use_responses_api(auth: &AuthRecord) -> bool {
     auth.wire_api == prism_core::provider::WireApi::Responses
@@ -155,7 +174,6 @@ impl ProviderExecutor for OpenAICompatExecutor {
         auth: &AuthRecord,
         request: ProviderRequest,
     ) -> Result<ProviderResponse, ProxyError> {
-        let client = common::build_client(auth, self.global_proxy.as_deref())?;
         let base_url = auth.base_url_or_default(&self.default_base_url);
 
         let (url, body) = if use_responses_api(auth) {
@@ -170,16 +188,7 @@ impl ProviderExecutor for OpenAICompatExecutor {
             )
         };
 
-        let mut req = client
-            .post(&url)
-            .header("authorization", format!("Bearer {}", auth.api_key))
-            .header("content-type", "application/json")
-            .body(body);
-
-        for (k, v) in &auth.headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
+        let req = self.build_request(auth, &url, &body, &request.headers)?;
         let (resp_body, headers) = common::handle_response(req.send().await?).await?;
 
         // Convert Responses API response back to Chat Completions format
@@ -254,20 +263,10 @@ impl ProviderExecutor for OpenAICompatExecutor {
             });
         }
 
-        let client = common::build_client(auth, self.global_proxy.as_deref())?;
         let base_url = auth.base_url_or_default(&self.default_base_url);
         let url = format!("{base_url}/v1/chat/completions");
 
-        let mut req = client
-            .post(&url)
-            .header("authorization", format!("Bearer {}", auth.api_key))
-            .header("content-type", "application/json")
-            .body(request.payload.to_vec());
-
-        for (k, v) in &auth.headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
+        let req = self.build_request(auth, &url, &request.payload, &request.headers)?;
         common::handle_stream_response(req.send().await?).await
     }
 

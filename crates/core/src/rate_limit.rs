@@ -91,8 +91,8 @@ impl SlidingWindowLimiter {
 impl RateLimitDimension for SlidingWindowLimiter {
     fn check(&self, key: Option<&str>) -> RateLimitInfo {
         let now = Instant::now();
-        let global_limit = *self.global_limit.read().unwrap();
-        let per_key_limit = *self.per_key_limit.read().unwrap();
+        let global_limit = self.global_limit.read().map(|g| *g).unwrap_or(0);
+        let per_key_limit = self.per_key_limit.read().map(|p| *p).unwrap_or(0);
 
         let mut most_restrictive = RateLimitInfo {
             allowed: true,
@@ -103,7 +103,9 @@ impl RateLimitDimension for SlidingWindowLimiter {
 
         // Check global limit
         if global_limit > 0 {
-            let mut global = self.global.lock().unwrap();
+            let Ok(mut global) = self.global.lock() else {
+                return most_restrictive;
+            };
             let count = global.count_and_prune(now, self.window_secs);
             let remaining = (global_limit).saturating_sub(count) as u32;
             if count >= global_limit {
@@ -128,9 +130,13 @@ impl RateLimitDimension for SlidingWindowLimiter {
         if per_key_limit > 0
             && let Some(key) = key
         {
-            let per_key = self.per_key.read().unwrap();
+            let Ok(per_key) = self.per_key.read() else {
+                return most_restrictive;
+            };
             if let Some(window) = per_key.get(key) {
-                let mut window = window.lock().unwrap();
+                let Ok(mut window) = window.lock() else {
+                    return most_restrictive;
+                };
                 let count = window.count_and_prune(now, self.window_secs);
                 let remaining = (per_key_limit).saturating_sub(count) as u32;
                 if count >= per_key_limit {
@@ -157,11 +163,12 @@ impl RateLimitDimension for SlidingWindowLimiter {
 
     fn record(&self, key: Option<&str>, amount: u64) {
         let now = Instant::now();
-        let global_limit = *self.global_limit.read().unwrap();
-        let per_key_limit = *self.per_key_limit.read().unwrap();
+        let global_limit = self.global_limit.read().map(|g| *g).unwrap_or(0);
+        let per_key_limit = self.per_key_limit.read().map(|p| *p).unwrap_or(0);
 
-        if global_limit > 0 {
-            let mut global = self.global.lock().unwrap();
+        if global_limit > 0
+            && let Ok(mut global) = self.global.lock()
+        {
             global.record(now, amount);
         }
 
@@ -170,21 +177,25 @@ impl RateLimitDimension for SlidingWindowLimiter {
         {
             // Fast path: read lock
             {
-                let per_key = self.per_key.read().unwrap();
-                if let Some(window) = per_key.get(key) {
-                    let mut window = window.lock().unwrap();
-                    window.record(now, amount);
+                if let Ok(per_key) = self.per_key.read()
+                    && let Some(window) = per_key.get(key)
+                {
+                    if let Ok(mut window) = window.lock() {
+                        window.record(now, amount);
+                    }
                     return;
                 }
             }
             // Slow path: write lock
             {
-                let mut per_key = self.per_key.write().unwrap();
-                let window = per_key
-                    .entry(key.to_string())
-                    .or_insert_with(|| Mutex::new(SlidingWindow::new()));
-                let window = window.get_mut().unwrap();
-                window.record(now, amount);
+                if let Ok(mut per_key) = self.per_key.write() {
+                    let window = per_key
+                        .entry(key.to_string())
+                        .or_insert_with(|| Mutex::new(SlidingWindow::new()));
+                    if let Ok(window) = window.get_mut() {
+                        window.record(now, amount);
+                    }
+                }
             }
         }
     }
@@ -219,7 +230,7 @@ impl CostLimiter {
 
 impl RateLimitDimension for CostLimiter {
     fn check(&self, key: Option<&str>) -> RateLimitInfo {
-        let limit = *self.per_key_daily_limit.read().unwrap();
+        let limit = self.per_key_daily_limit.read().map(|l| *l).unwrap_or(0.0);
         if limit <= 0.0 {
             return RateLimitInfo {
                 allowed: true,
@@ -242,9 +253,23 @@ impl RateLimitDimension for CostLimiter {
         let day_secs = 86400u64;
         let cutoff = now - std::time::Duration::from_secs(day_secs);
 
-        let per_key = self.per_key.read().unwrap();
+        let Ok(per_key) = self.per_key.read() else {
+            return RateLimitInfo {
+                allowed: true,
+                remaining: u32::MAX,
+                limit: 0,
+                reset_secs: 0,
+            };
+        };
         if let Some(entries) = per_key.get(key) {
-            let mut entries = entries.lock().unwrap();
+            let Ok(mut entries) = entries.lock() else {
+                return RateLimitInfo {
+                    allowed: true,
+                    remaining: u32::MAX,
+                    limit: 0,
+                    reset_secs: 0,
+                };
+            };
             entries.retain(|&(t, _)| t > cutoff);
             let total_cost: f64 = entries.iter().map(|&(_, c)| c).sum();
             if total_cost >= limit {
@@ -284,20 +309,25 @@ impl CostLimiter {
         let now = Instant::now();
         // Fast path
         {
-            let per_key = self.per_key.read().unwrap();
-            if let Some(entries) = per_key.get(key) {
-                let mut entries = entries.lock().unwrap();
-                entries.push((now, cost));
+            if let Ok(per_key) = self.per_key.read()
+                && let Some(entries) = per_key.get(key)
+            {
+                if let Ok(mut entries) = entries.lock() {
+                    entries.push((now, cost));
+                }
                 return;
             }
         }
         // Slow path
         {
-            let mut per_key = self.per_key.write().unwrap();
-            let entries = per_key
-                .entry(key.to_string())
-                .or_insert_with(|| Mutex::new(Vec::new()));
-            entries.get_mut().unwrap().push((now, cost));
+            if let Ok(mut per_key) = self.per_key.write() {
+                let entries = per_key
+                    .entry(key.to_string())
+                    .or_insert_with(|| Mutex::new(Vec::new()));
+                if let Ok(entries) = entries.get_mut() {
+                    entries.push((now, cost));
+                }
+            }
         }
     }
 }
@@ -339,7 +369,7 @@ impl CompositeRateLimiter {
 
     /// Check rate limits. Returns info about the most restrictive limit.
     pub fn check(&self, api_key: Option<&str>) -> RateLimitInfo {
-        if !*self.enabled.read().unwrap() {
+        if !self.enabled.read().map(|e| *e).unwrap_or(false) {
             return RateLimitInfo {
                 allowed: true,
                 remaining: u32::MAX,
@@ -373,7 +403,7 @@ impl CompositeRateLimiter {
 
     /// Record a request (RPM dimension). Call after check() returns allowed=true.
     pub fn record_request(&self, api_key: Option<&str>) {
-        if !*self.enabled.read().unwrap() {
+        if !self.enabled.read().map(|e| *e).unwrap_or(false) {
             return;
         }
         self.rpm.record(api_key, 1);
@@ -381,7 +411,7 @@ impl CompositeRateLimiter {
 
     /// Record tokens (TPM dimension). Call after response is received.
     pub fn record_tokens(&self, api_key: Option<&str>, tokens: u64) {
-        if !*self.enabled.read().unwrap() {
+        if !self.enabled.read().map(|e| *e).unwrap_or(false) {
             return;
         }
         self.tpm.record(api_key, tokens);
@@ -389,7 +419,7 @@ impl CompositeRateLimiter {
 
     /// Record cost (Cost dimension). Call after response is received.
     pub fn record_cost(&self, api_key: Option<&str>, cost: f64) {
-        if !*self.enabled.read().unwrap() || cost <= 0.0 {
+        if !self.enabled.read().map(|e| *e).unwrap_or(false) || cost <= 0.0 {
             return;
         }
         if let Some(key) = api_key {

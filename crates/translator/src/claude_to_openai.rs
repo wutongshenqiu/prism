@@ -107,8 +107,8 @@ pub fn translate_stream(
                     .unwrap_or("unknown")
                     .to_string();
                 state.created = chrono::Utc::now().timestamp();
-                state.current_content_index = -1;
-                state.current_tool_call_index = -1;
+                state.current_content_index = None;
+                state.current_tool_call_index = None;
                 state.sent_role = false;
                 state.input_tokens = msg
                     .get("usage")
@@ -130,18 +130,18 @@ pub fn translate_stream(
         }
 
         Some("content_block_start") => {
-            state.current_content_index += 1;
+            state.next_content_index();
 
             if let Some(cb) = event.get("content_block") {
                 let block_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 if block_type == "tool_use" {
-                    state.current_tool_call_index += 1;
+                    let tc_idx = state.next_tool_call_index() as i32;
                     let tc_id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("");
 
                     let delta = json!({
                         "tool_calls": [build_tool_call_delta(
-                            state.current_tool_call_index,
+                            tc_idx,
                             tc_id,
                             name,
                             "",
@@ -185,7 +185,7 @@ pub fn translate_stream(
                             &state.model,
                             json!({
                                 "tool_calls": [{
-                                    "index": state.current_tool_call_index,
+                                    "index": state.tool_call_index(),
                                     "function": {
                                         "arguments": partial,
                                     },
@@ -436,8 +436,8 @@ mod tests {
         state.created = 1000;
         state.model = "claude-3-5-sonnet-20241022".to_string();
         // Simulate post-message_start state
-        state.current_content_index = -1;
-        state.current_tool_call_index = -1;
+        state.current_content_index = None;
+        state.current_tool_call_index = None;
 
         let event = json!({
             "type": "content_block_start",
@@ -468,7 +468,7 @@ mod tests {
             chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
             "get_weather"
         );
-        assert_eq!(state.current_tool_call_index, 0);
+        assert_eq!(state.current_tool_call_index, Some(0));
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
         let mut state = new_state();
         state.response_id = "chatcmpl-test".to_string();
         // Simulate post-message_start state
-        state.current_content_index = -1;
+        state.current_content_index = None;
 
         let event = json!({
             "type": "content_block_start",
@@ -495,7 +495,7 @@ mod tests {
 
         // Text block start should not emit a chunk
         assert!(chunks.is_empty());
-        assert_eq!(state.current_content_index, 0);
+        assert_eq!(state.current_content_index, Some(0));
     }
 
     #[test]
@@ -531,7 +531,7 @@ mod tests {
         state.response_id = "chatcmpl-test".to_string();
         state.created = 1000;
         state.model = "claude".to_string();
-        state.current_tool_call_index = 0;
+        state.current_tool_call_index = Some(0);
 
         let event = json!({
             "type": "content_block_delta",
