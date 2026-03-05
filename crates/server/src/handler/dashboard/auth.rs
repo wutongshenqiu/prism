@@ -39,9 +39,21 @@ pub async fn login(
     }
 
     // Verify password against bcrypt hash
-    if dashboard.password_hash.is_empty()
-        || !bcrypt::verify(&body.password, &dashboard.password_hash).unwrap_or(false)
-    {
+    let password_valid = if dashboard.password_hash.is_empty() {
+        false
+    } else {
+        match bcrypt::verify(&body.password, &dashboard.password_hash) {
+            Ok(valid) => valid,
+            Err(e) => {
+                tracing::error!("bcrypt verification error: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "auth_error", "message": "Password verification failed"})),
+                );
+            }
+        }
+    };
+    if !password_valid {
         return (
             StatusCode::UNAUTHORIZED,
             Json(

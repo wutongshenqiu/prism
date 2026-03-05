@@ -14,10 +14,31 @@ pub struct TranslateState {
     pub response_id: String,
     pub model: String,
     pub created: i64,
-    pub current_tool_call_index: i32,
-    pub current_content_index: i32,
+    pub current_tool_call_index: Option<usize>,
+    pub current_content_index: Option<usize>,
     pub sent_role: bool,
     pub input_tokens: u64,
+}
+
+impl TranslateState {
+    /// Increment the tool call index (starts at 0 on first call).
+    pub fn next_tool_call_index(&mut self) -> usize {
+        let next = self.current_tool_call_index.map(|i| i + 1).unwrap_or(0);
+        self.current_tool_call_index = Some(next);
+        next
+    }
+
+    /// Increment the content index (starts at 0 on first call).
+    pub fn next_content_index(&mut self) -> usize {
+        let next = self.current_content_index.map(|i| i + 1).unwrap_or(0);
+        self.current_content_index = Some(next);
+        next
+    }
+
+    /// Get the current tool call index for streaming deltas.
+    pub fn tool_call_index(&self) -> i32 {
+        self.current_tool_call_index.map(|i| i as i32).unwrap_or(0)
+    }
 }
 
 pub type RequestTransformFn =

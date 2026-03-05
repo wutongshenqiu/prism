@@ -104,6 +104,8 @@ pub async fn request_logging_middleware(
         let audit = state.audit.clone();
         tokio::spawn(async move {
             audit.write(&audit_entry).await;
+            // Note: audit.write() is fire-and-forget by trait design.
+            // Errors are logged within the backend implementation.
         });
     }
 

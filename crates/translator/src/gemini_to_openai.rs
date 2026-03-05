@@ -114,7 +114,7 @@ pub fn translate_stream(
     if state.response_id.is_empty() {
         state.response_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
         state.created = chrono::Utc::now().timestamp();
-        state.current_tool_call_index = -1;
+        state.current_tool_call_index = None;
 
         // Emit initial role chunk
         let chunk = build_openai_chunk(
@@ -156,7 +156,7 @@ pub fn translate_stream(
                     );
                     chunks.push(serde_json::to_string(&chunk)?);
                 } else if let Some(fc) = part.get("functionCall") {
-                    state.current_tool_call_index += 1;
+                    let tc_idx = state.next_tool_call_index() as i32;
                     let name = fc.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let args = fc.get("args").cloned().unwrap_or(json!({}));
                     let arguments = serde_json::to_string(&args).unwrap_or_default();
@@ -164,7 +164,7 @@ pub fn translate_stream(
 
                     let delta = json!({
                         "tool_calls": [build_tool_call_delta(
-                            state.current_tool_call_index,
+                            tc_idx,
                             &tc_id,
                             name,
                             &arguments,
@@ -407,7 +407,7 @@ mod tests {
         state.response_id = "chatcmpl-test".to_string();
         state.created = 1000;
         state.model = "gemini".to_string();
-        state.current_tool_call_index = -1;
+        state.current_tool_call_index = None;
 
         let resp = json!({
             "candidates": [{
@@ -429,7 +429,7 @@ mod tests {
         let chunk = parse_chunk(&chunks[0]);
         let tc = &chunk["choices"][0]["delta"]["tool_calls"][0];
         assert_eq!(tc["function"]["name"], "weather");
-        assert_eq!(state.current_tool_call_index, 0);
+        assert_eq!(state.current_tool_call_index, Some(0));
     }
 
     #[test]

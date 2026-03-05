@@ -5,6 +5,33 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::json;
+use std::io::{Read, Seek, SeekFrom};
+
+/// Read the tail of a file up to `max_bytes`. Returns a String starting at
+/// the first complete line within the read window.
+fn read_file_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    let file_size = metadata.len();
+
+    if file_size <= max_bytes {
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        return Ok(contents);
+    }
+
+    // Seek to (file_size - max_bytes) and skip the first partial line
+    file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    // Skip the first partial line
+    if let Some(pos) = contents.find('\n') {
+        contents = contents[pos + 1..].to_string();
+    }
+
+    Ok(contents)
+}
 
 /// GET /api/dashboard/system/health
 pub async fn system_health(State(state): State<AppState>) -> impl IntoResponse {
@@ -91,7 +118,10 @@ pub async fn system_logs(
         }
     };
 
-    let contents = match std::fs::read_to_string(&file_path) {
+    // Read only the tail of the log file to avoid OOM on large files.
+    // We read the last 2MB which is sufficient for recent log viewing.
+    const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
+    let contents = match read_file_tail(&file_path, MAX_READ_BYTES) {
         Ok(c) => c,
         Err(e) => {
             return (
