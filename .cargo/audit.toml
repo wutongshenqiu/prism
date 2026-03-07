@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # rsa crate Marvin Attack (timing sidechannel in RSA decryption).
+    # We only use HMAC (HS256) for JWT, never RSA.
+    # Pulled in transitively by jsonwebtoken's rust_crypto feature.
+    "RUSTSEC-2023-0071",
+]
