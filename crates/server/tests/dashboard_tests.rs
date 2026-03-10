@@ -42,7 +42,7 @@ fn create_test_harness() -> TestHarness {
     };
 
     // Write the config to the temp file so update_config_file can read it back
-    let yaml = serde_yml::to_string(&config).expect("failed to serialize config");
+    let yaml = serde_yaml_ng::to_string(&config).expect("failed to serialize config");
     std::fs::write(&config_path, &yaml).expect("failed to write config");
 
     let config_arc = Arc::new(ArcSwap::new(Arc::new(config.clone())));

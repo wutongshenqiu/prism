@@ -363,15 +363,15 @@ async fn update_config_file(
     let contents =
         std::fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {e}"))?;
     let mut config: prism_core::config::Config =
-        serde_yml::from_str(&contents).map_err(|e| format!("Failed to parse config: {e}"))?;
+        serde_yaml_ng::from_str(&contents).map_err(|e| format!("Failed to parse config: {e}"))?;
 
     mutate(&mut config);
 
     // Rebuild derived fields
     config.auth_key_store = prism_core::auth_key::AuthKeyStore::new(config.auth_keys.clone());
 
-    let yaml =
-        serde_yml::to_string(&config).map_err(|e| format!("Failed to serialize config: {e}"))?;
+    let yaml = serde_yaml_ng::to_string(&config)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
     // Atomic write: write to temp file then rename
     let dir = std::path::Path::new(&config_path)

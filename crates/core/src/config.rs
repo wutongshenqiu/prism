@@ -145,7 +145,7 @@ impl Config {
 
     /// Parse config from a string (avoids re-reading the file).
     pub fn load_from_str(contents: &str) -> Result<Self, anyhow::Error> {
-        let mut config: Config = serde_yml::from_str(contents)?;
+        let mut config: Config = serde_yaml_ng::from_str(contents)?;
         config.sanitize();
         config.validate()?;
         Ok(config)
@@ -632,7 +632,7 @@ claude-api-key:
       - id: "claude-sonnet-4-20250514"
         alias: "sonnet"
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 9000);
         assert_eq!(config.auth_keys.len(), 1);
@@ -657,13 +657,13 @@ daemon:
   pid-file: "/run/prism.pid"
   shutdown-timeout: 60
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(config.daemon.pid_file, "/run/prism.pid");
         assert_eq!(config.daemon.shutdown_timeout, 60);
 
         // Round-trip
-        let serialized = serde_yml::to_string(&config).unwrap();
-        let config2: Config = serde_yml::from_str(&serialized).unwrap();
+        let serialized = serde_yaml_ng::to_string(&config).unwrap();
+        let config2: Config = serde_yaml_ng::from_str(&serialized).unwrap();
         assert_eq!(config2.daemon.pid_file, "/run/prism.pid");
         assert_eq!(config2.daemon.shutdown_timeout, 60);
     }
@@ -679,7 +679,7 @@ rate-limit:
   per-key-tpm: 500000
   per-key-cost-per-day-usd: 10.0
 "#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert!(config.rate_limit.enabled);
         assert_eq!(config.rate_limit.global_tpm, 1_000_000);
         assert_eq!(config.rate_limit.per_key_tpm, 500_000);
@@ -689,11 +689,11 @@ rate-limit:
     #[test]
     fn test_routing_strategy_variants() {
         let yaml = r#"routing: { strategy: latency-aware }"#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(config.routing.strategy, RoutingStrategy::LatencyAware);
 
         let yaml = r#"routing: { strategy: geo-aware }"#;
-        let config: Config = serde_yml::from_str(yaml).unwrap();
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(config.routing.strategy, RoutingStrategy::GeoAware);
     }
 }
