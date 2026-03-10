@@ -420,22 +420,35 @@ fn default_base_url(provider_type: &str) -> Option<&'static str> {
     }
 }
 
+/// Strip trailing slash and known version prefixes (/v1, /v1beta) from a base URL.
+fn normalize_base_url(base_url: &str) -> &str {
+    let url = base_url.trim_end_matches('/');
+    if let Some(stripped) = url.strip_suffix("/v1") {
+        stripped
+    } else if let Some(stripped) = url.strip_suffix("/v1beta") {
+        stripped
+    } else {
+        url
+    }
+}
+
 fn build_models_request(
     client: &reqwest::Client,
     provider_type: &str,
     api_key: &str,
     base_url: &str,
 ) -> Result<reqwest::RequestBuilder, String> {
+    let base = normalize_base_url(base_url);
     match provider_type {
         "openai" | "openai-compat" | "openai_compat" => Ok(client
-            .get(format!("{}/v1/models", base_url.trim_end_matches('/')))
+            .get(format!("{base}/v1/models"))
             .header("Authorization", format!("Bearer {api_key}"))),
         "claude" => Ok(client
-            .get(format!("{}/v1/models", base_url.trim_end_matches('/')))
+            .get(format!("{base}/v1/models"))
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")),
         "gemini" => Ok(client
-            .get(format!("{}/v1beta/models", base_url.trim_end_matches('/')))
+            .get(format!("{base}/v1beta/models"))
             .header("x-goog-api-key", api_key)),
         _ => Err(format!("Unsupported provider_type: {provider_type}")),
     }
