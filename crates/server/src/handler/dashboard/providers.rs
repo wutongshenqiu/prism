@@ -702,21 +702,15 @@ pub async fn health_check(
             _ => format!("{base}/v1/chat/completions"),
         };
 
-        let probe_body = if ptype == "claude" {
-            json!({
-                "model": entry.models.first().map(|m| m.id.as_str()).unwrap_or("claude-sonnet-4-20250514"),
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "hi"}]
-            })
-        } else {
-            json!({
-                "model": entry.models.first().map(|m| m.id.as_str()).unwrap_or("gpt-4o-mini"),
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "hi"}]
-            })
-        };
-
-        let mut req = client.post(&chat_url).json(&probe_body);
+        // Send an intentionally invalid request (empty body) to probe connectivity
+        // and key validity without consuming tokens.
+        // - 400 = reachable, key accepted (just bad params) -> healthy
+        // - 401/403 = reachable but key invalid -> report error
+        // - 5xx = server error -> report error
+        let mut req = client
+            .post(&chat_url)
+            .header("content-type", "application/json")
+            .body("{}");
         // Add auth headers
         match ptype {
             "claude" => {
@@ -737,12 +731,31 @@ pub async fn health_check(
             Ok(resp) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 let status_code = resp.status().as_u16();
-                // 200 or 400 (bad request but reachable) both indicate the service is up
-                if status_code < 500 {
-                    return (
-                        StatusCode::OK,
-                        Json(json!({"status": "ok", "latency_ms": latency_ms})),
-                    );
+                // 400 = reachable & key valid (bad params expected)
+                // 401/403 = key invalid
+                // 5xx = server error
+                match status_code {
+                    400 | 422 => {
+                        return (
+                            StatusCode::OK,
+                            Json(json!({"status": "ok", "latency_ms": latency_ms})),
+                        );
+                    }
+                    401 | 403 => {
+                        return (
+                            StatusCode::OK,
+                            Json(
+                                json!({"status": "error", "latency_ms": latency_ms, "message": "Authentication failed: invalid API key"}),
+                            ),
+                        );
+                    }
+                    _ if status_code < 500 => {
+                        return (
+                            StatusCode::OK,
+                            Json(json!({"status": "ok", "latency_ms": latency_ms})),
+                        );
+                    }
+                    _ => {}
                 }
                 let body_text = resp.text().await.unwrap_or_default();
                 return (
