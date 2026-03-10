@@ -16,6 +16,14 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin prism
 
+# === Frontend: build dashboard SPA (parallel with Rust build) ===
+FROM node:20-alpine AS frontend
+WORKDIR /app
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+COPY web/ .
+RUN npm run build
+
 # === Runtime ===
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -24,6 +32,7 @@ RUN apt-get update \
 
 RUN groupadd -g 1001 prism && useradd -u 1001 -g prism -s /bin/false prism
 COPY --from=builder /app/target/release/prism /usr/local/bin/prism
+COPY --from=frontend /app/dist /usr/share/prism/web
 
 USER prism
 EXPOSE 8317

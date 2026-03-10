@@ -55,3 +55,47 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to ECS
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /opt/prism
+
+            # Pull latest image
+            docker pull ghcr.io/wutongshenqiu/prism:latest
+
+            # Extract frontend dist from image
+            CONTAINER_ID=$(docker create ghcr.io/wutongshenqiu/prism:latest)
+            rm -rf /opt/prism/web-dist/*
+            docker cp "$CONTAINER_ID":/usr/share/prism/web/. /opt/prism/web-dist/
+            docker rm "$CONTAINER_ID"
+
+            # Restart prism service
+            docker compose down
+            docker compose up -d
+
+            # Wait for health check
+            echo "Waiting for health check..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:8317/health > /dev/null 2>&1; then
+                echo "Health check passed!"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "Health check failed after 60s"
+            docker compose logs --tail=50
+            exit 1
