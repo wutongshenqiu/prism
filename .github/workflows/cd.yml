@@ -87,13 +87,15 @@ jobs:
             docker compose down
             docker compose up -d
 
-            # Wait for health check
+            # Wait for Docker health check to pass
             echo "Waiting for health check..."
             for i in $(seq 1 30); do
-              if curl -sf http://localhost:8317/health > /dev/null 2>&1; then
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' prism-prism-1 2>/dev/null || echo "starting")
+              if [ "$STATUS" = "healthy" ]; then
                 echo "Health check passed!"
                 exit 0
               fi
+              echo "  status: $STATUS ($i/30)"
               sleep 2
             done
             echo "Health check failed after 60s"
