@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLogsStore } from '../stores/logsStore';
 import type { RequestLogFilter } from '../types';
-import { FileText, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { FileText, ChevronLeft, ChevronRight, Search, X, ChevronDown, ChevronUp, Copy } from 'lucide-react';
 
 export default function RequestLogs() {
   const logs = useLogsStore((s) => s.logs);
@@ -18,6 +18,7 @@ export default function RequestLogs() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLogs();
@@ -48,6 +49,18 @@ export default function RequestLogs() {
     if (status >= 500) return 'status-5xx';
     return '';
   };
+
+  const formatCost = (cost: number | null): string => {
+    if (cost == null || cost === 0) return '-';
+    if (cost < 0.01) return `$${cost.toFixed(6)}`;
+    return `$${cost.toFixed(4)}`;
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedId(expandedId === id ? null : id);
+  };
+
+  const COL_COUNT = 9;
 
   return (
     <div className="page">
@@ -120,26 +133,27 @@ export default function RequestLogs() {
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 32 }}></th>
                 <th>Time</th>
-                <th>Method</th>
-                <th>Path</th>
-                <th>Provider</th>
-                <th>Model</th>
+                <th>Client IP</th>
+                <th>Provider / Model</th>
                 <th>Status</th>
                 <th>Latency</th>
                 <th>Tokens</th>
+                <th>Cost</th>
+                <th>API Key</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="table-empty">
+                  <td colSpan={COL_COUNT} className="table-empty">
                     Loading...
                   </td>
                 </tr>
               ) : logs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="table-empty">
+                  <td colSpan={COL_COUNT} className="table-empty">
                     <div className="empty-state">
                       <FileText size={48} />
                       <p>No request logs found</p>
@@ -148,28 +162,126 @@ export default function RequestLogs() {
                 </tr>
               ) : (
                 logs.map((log) => (
-                  <tr key={log.request_id}>
-                    <td className="text-nowrap">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </td>
-                    <td>
-                      <span className="method-badge">{log.method}</span>
-                    </td>
-                    <td className="text-mono text-ellipsis" title={log.path}>
-                      {log.path}
-                    </td>
-                    <td>{log.provider}</td>
-                    <td className="text-mono">{log.model}</td>
-                    <td>
-                      <span className={`status-code ${getStatusClass(log.status)}`}>
-                        {log.status}
-                      </span>
-                    </td>
-                    <td className="text-nowrap">{log.latency_ms}ms</td>
-                    <td className="text-nowrap">
-                      {(log.input_tokens ?? 0) + (log.output_tokens ?? 0)}
-                    </td>
-                  </tr>
+                  <>
+                    <tr
+                      key={log.request_id}
+                      className={`log-row ${expandedId === log.request_id ? 'log-row-expanded' : ''}`}
+                      onClick={() => toggleExpand(log.request_id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <td style={{ width: 32, textAlign: 'center' }}>
+                        {expandedId === log.request_id
+                          ? <ChevronUp size={14} />
+                          : <ChevronDown size={14} />}
+                      </td>
+                      <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                      <td className="text-mono" style={{ fontSize: '0.85rem' }}>
+                        {log.client_ip || '-'}
+                      </td>
+                      <td>
+                        <div>
+                          {log.provider && <span className="type-badge" style={{ marginRight: 4 }}>{log.provider}</span>}
+                          <span className="text-mono" style={{ fontSize: '0.85rem' }}>{log.model || '-'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status-code ${getStatusClass(log.status)}`}>
+                          {log.status}
+                        </span>
+                      </td>
+                      <td className="text-nowrap">{log.latency_ms}ms</td>
+                      <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
+                        {log.input_tokens != null || log.output_tokens != null
+                          ? `${log.input_tokens ?? 0} / ${log.output_tokens ?? 0}`
+                          : '-'}
+                      </td>
+                      <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
+                        {formatCost(log.cost)}
+                      </td>
+                      <td className="text-mono" style={{ fontSize: '0.8rem' }}>
+                        {log.api_key_id || '-'}
+                      </td>
+                    </tr>
+                    {expandedId === log.request_id && (
+                      <tr key={`${log.request_id}-detail`} className="log-detail-row">
+                        <td colSpan={COL_COUNT}>
+                          <div className="log-detail">
+                            <div className="log-detail-grid">
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Request ID</span>
+                                <span className="log-detail-value text-mono">
+                                  {log.request_id}
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.request_id); }}
+                                    style={{ padding: '0 4px', marginLeft: 4 }}
+                                  >
+                                    <Copy size={12} />
+                                  </button>
+                                </span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Method & Path</span>
+                                <span className="log-detail-value text-mono">
+                                  {log.method} {log.path}
+                                </span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Client IP</span>
+                                <span className="log-detail-value text-mono">{log.client_ip || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Tenant</span>
+                                <span className="log-detail-value">{log.tenant_id || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">API Key</span>
+                                <span className="log-detail-value text-mono">{log.api_key_id || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Provider</span>
+                                <span className="log-detail-value">{log.provider || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Model</span>
+                                <span className="log-detail-value text-mono">{log.model || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Status</span>
+                                <span className="log-detail-value">
+                                  <span className={`status-code ${getStatusClass(log.status)}`}>{log.status}</span>
+                                </span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Latency</span>
+                                <span className="log-detail-value">{log.latency_ms}ms</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Input Tokens</span>
+                                <span className="log-detail-value">{log.input_tokens ?? '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Output Tokens</span>
+                                <span className="log-detail-value">{log.output_tokens ?? '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Cost</span>
+                                <span className="log-detail-value">{formatCost(log.cost)}</span>
+                              </div>
+                            </div>
+                            {log.error && (
+                              <div className="log-detail-error">
+                                <span className="log-detail-label">Error</span>
+                                <pre className="log-error-pre">{log.error}</pre>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 ))
               )}
             </tbody>
