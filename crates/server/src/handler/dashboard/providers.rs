@@ -643,47 +643,127 @@ pub async fn health_check(
         }
     };
 
-    let request = match build_models_request(
+    // Try /v1/models first, fallback to a minimal chat completions probe
+    let start = Instant::now();
+    let models_req = build_models_request(
         &client,
         ptype,
         &entry.api_key,
         &base_url,
         Some(&entry.headers),
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"status": "error", "message": e})),
-            );
-        }
-    };
+    );
 
-    let start = Instant::now();
-    let response: reqwest::Response = match request.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::OK,
-                Json(
-                    json!({"status": "error", "message": format!("Failed to reach upstream: {e}")}),
-                ),
-            );
+    let mut success = false;
+    if let Ok(req) = models_req {
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                success = true;
+            }
+            Ok(resp) if resp.status().as_u16() == 404 || resp.status().as_u16() == 405 => {
+                // /v1/models not supported, try chat completions probe
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+                let latency_ms = start.elapsed().as_millis() as u64;
+                return (
+                    StatusCode::OK,
+                    Json(
+                        json!({"status": "error", "latency_ms": latency_ms, "message": format!("Upstream returned {status}: {body_text}")}),
+                    ),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::OK,
+                    Json(
+                        json!({"status": "error", "message": format!("Failed to reach upstream: {e}")}),
+                    ),
+                );
+            }
         }
-    };
-    let latency_ms = start.elapsed().as_millis() as u64;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        return (
-            StatusCode::OK,
-            Json(
-                json!({"status": "error", "message": format!("Upstream returned {status}: {body_text}")}),
-            ),
-        );
     }
 
+    // Fallback: send a minimal chat completions request with max_tokens=1
+    if !success {
+        let base = normalize_base_url(&base_url);
+        let chat_url = match ptype {
+            "gemini" => {
+                // Gemini uses a different endpoint; just report models endpoint unsupported
+                let latency_ms = start.elapsed().as_millis() as u64;
+                return (
+                    StatusCode::OK,
+                    Json(
+                        json!({"status": "error", "latency_ms": latency_ms, "message": "Models endpoint not available for this provider"}),
+                    ),
+                );
+            }
+            "claude" => format!("{base}/v1/messages"),
+            _ => format!("{base}/v1/chat/completions"),
+        };
+
+        let probe_body = if ptype == "claude" {
+            json!({
+                "model": entry.models.first().map(|m| m.id.as_str()).unwrap_or("claude-sonnet-4-20250514"),
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}]
+            })
+        } else {
+            json!({
+                "model": entry.models.first().map(|m| m.id.as_str()).unwrap_or("gpt-4o-mini"),
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}]
+            })
+        };
+
+        let mut req = client.post(&chat_url).json(&probe_body);
+        // Add auth headers
+        match ptype {
+            "claude" => {
+                req = req
+                    .header("x-api-key", &entry.api_key)
+                    .header("anthropic-version", "2023-06-01");
+            }
+            _ => {
+                req = req.header("Authorization", format!("Bearer {}", entry.api_key));
+            }
+        }
+        // Add custom headers
+        for (k, v) in &entry.headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                let status_code = resp.status().as_u16();
+                // 200 or 400 (bad request but reachable) both indicate the service is up
+                if status_code < 500 {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({"status": "ok", "latency_ms": latency_ms})),
+                    );
+                }
+                let body_text = resp.text().await.unwrap_or_default();
+                return (
+                    StatusCode::OK,
+                    Json(
+                        json!({"status": "error", "latency_ms": latency_ms, "message": format!("Upstream returned {status_code}: {body_text}")}),
+                    ),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::OK,
+                    Json(
+                        json!({"status": "error", "message": format!("Failed to reach upstream: {e}")}),
+                    ),
+                );
+            }
+        }
+    }
+
+    let latency_ms = start.elapsed().as_millis() as u64;
     (
         StatusCode::OK,
         Json(json!({"status": "ok", "latency_ms": latency_ms})),
