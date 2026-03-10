@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { providersApi } from '../services/api';
 import type { Provider, ProviderCreateRequest, ProviderType } from '../types';
 import StatusBadge from '../components/StatusBadge';
-import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse } from 'lucide-react';
+import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse, PlusCircle, MinusCircle, Copy } from 'lucide-react';
 
 const PROVIDER_TYPES: { value: ProviderType; label: string }[] = [
   { value: 'openai', label: 'OpenAI' },
@@ -18,6 +18,11 @@ const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   openai_compat: '',
 };
 
+interface HeaderPair {
+  key: string;
+  value: string;
+}
+
 interface FormState {
   name: string;
   provider_type: ProviderType;
@@ -25,7 +30,7 @@ interface FormState {
   api_key: string;
   enabled: boolean;
   models: string;
-  headers: string;
+  headers: HeaderPair[];
 }
 
 const emptyForm: FormState = {
@@ -35,7 +40,7 @@ const emptyForm: FormState = {
   api_key: '',
   enabled: true,
   models: '',
-  headers: '',
+  headers: [],
 };
 
 export default function Providers() {
@@ -74,9 +79,9 @@ export default function Providers() {
 
   const openEdit = (provider: Provider) => {
     setEditId(provider.id);
-    const headersStr = provider.headers
-      ? Object.entries(provider.headers).map(([k, v]) => `${k}: ${v}`).join('\n')
-      : '';
+    const headerPairs: HeaderPair[] = provider.headers
+      ? Object.entries(provider.headers).map(([key, value]) => ({ key, value }))
+      : [];
     setForm({
       name: provider.name ?? '',
       provider_type: provider.provider_type,
@@ -84,7 +89,7 @@ export default function Providers() {
       api_key: '',
       enabled: provider.enabled,
       models: provider.models.join(', '),
-      headers: headersStr,
+      headers: headerPairs,
     });
     setError('');
     setShowModal(true);
@@ -114,13 +119,8 @@ export default function Providers() {
         .filter(Boolean);
 
       const headers: Record<string, string> = {};
-      form.headers.split('\n').forEach((line) => {
-        const idx = line.indexOf(':');
-        if (idx > 0) {
-          const key = line.slice(0, idx).trim();
-          const val = line.slice(idx + 1).trim();
-          if (key && val) headers[key] = val;
-        }
+      form.headers.forEach(({ key, value }) => {
+        if (key.trim() && value.trim()) headers[key.trim()] = value.trim();
       });
 
       if (editId) {
@@ -231,18 +231,17 @@ export default function Providers() {
                 <th>Base URL</th>
                 <th>Models</th>
                 <th>Status</th>
-                <th>Updated</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="table-empty">Loading...</td>
+                  <td colSpan={6} className="table-empty">Loading...</td>
                 </tr>
               ) : providers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="table-empty">
+                  <td colSpan={6} className="table-empty">
                     <div className="empty-state">
                       <Server size={48} />
                       <p>No providers configured</p>
@@ -262,8 +261,24 @@ export default function Providers() {
                         {PROVIDER_TYPES.find((t) => t.value === provider.provider_type)?.label ?? provider.provider_type}
                       </span>
                     </td>
-                    <td className="text-mono text-ellipsis" title={provider.base_url ?? undefined}>
-                      {provider.base_url}
+                    <td className="text-mono" style={{ maxWidth: 250 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="text-ellipsis" style={{ flex: 1 }} title={provider.base_url ?? undefined}>
+                          {provider.base_url}
+                        </span>
+                        {provider.base_url && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => {
+                              navigator.clipboard.writeText(provider.base_url ?? '');
+                            }}
+                            title="Copy URL"
+                            style={{ flexShrink: 0, padding: '2px 4px' }}
+                          >
+                            <Copy size={12} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="tag-list">
@@ -281,10 +296,7 @@ export default function Providers() {
                       </div>
                     </td>
                     <td>
-                      <StatusBadge
-                        status={(provider.enabled ?? !provider.disabled) ? 'active' : 'inactive'}
-                      />
-                      {healthResults[provider.id] && (
+                      {healthResults[provider.id] ? (
                         <span
                           className={`health-badge ${healthResults[provider.id].status === 'ok' ? 'health-ok' : 'health-error'}`}
                           title={healthResults[provider.id].message || `${healthResults[provider.id].latency_ms}ms`}
@@ -293,10 +305,11 @@ export default function Providers() {
                             ? `✓ ${healthResults[provider.id].latency_ms}ms`
                             : '✗ Error'}
                         </span>
+                      ) : (
+                        <StatusBadge
+                          status={(provider.enabled ?? !provider.disabled) ? 'active' : 'inactive'}
+                        />
                       )}
-                    </td>
-                    <td className="text-nowrap">
-                      {provider.updated_at ? new Date(provider.updated_at).toLocaleDateString() : '-'}
                     </td>
                     <td>
                       <div className="action-btns">
@@ -411,13 +424,58 @@ export default function Providers() {
               </div>
 
               <div className="form-group">
-                <label>Custom Headers <span className="form-hint">(one per line, format: Key: Value)</span></label>
-                <textarea
-                  rows={3}
-                  value={form.headers}
-                  onChange={(e) => setForm({ ...form, headers: e.target.value })}
-                  placeholder={"user-agent: my-app/1.0\nanthropics-beta: max-tokens"}
-                />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label>Custom Headers</label>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setForm({ ...form, headers: [...form.headers, { key: '', value: '' }] })}
+                  >
+                    <PlusCircle size={14} />
+                    Add Header
+                  </button>
+                </div>
+                {form.headers.map((header, idx) => (
+                  <div key={idx} className="header-pair">
+                    <input
+                      type="text"
+                      value={header.key}
+                      onChange={(e) => {
+                        const next = [...form.headers];
+                        next[idx] = { ...next[idx], key: e.target.value };
+                        setForm({ ...form, headers: next });
+                      }}
+                      placeholder="Header name"
+                      className="header-key"
+                    />
+                    <input
+                      type="text"
+                      value={header.value}
+                      onChange={(e) => {
+                        const next = [...form.headers];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setForm({ ...form, headers: next });
+                      }}
+                      placeholder="Header value"
+                      className="header-value"
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm btn-danger-ghost"
+                      onClick={() => {
+                        const next = form.headers.filter((_, i) => i !== idx);
+                        setForm({ ...form, headers: next });
+                      }}
+                    >
+                      <MinusCircle size={14} />
+                    </button>
+                  </div>
+                ))}
+                {form.headers.length === 0 && (
+                  <p className="form-hint" style={{ margin: '4px 0 0', fontSize: '0.8rem', opacity: 0.6 }}>
+                    No custom headers. Click "Add Header" to configure User-Agent, etc.
+                  </p>
+                )}
               </div>
 
               <div className="form-group form-group-inline">

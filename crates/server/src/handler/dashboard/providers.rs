@@ -437,21 +437,28 @@ fn build_models_request(
     provider_type: &str,
     api_key: &str,
     base_url: &str,
+    extra_headers: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<reqwest::RequestBuilder, String> {
     let base = normalize_base_url(base_url);
-    match provider_type {
-        "openai" | "openai-compat" | "openai_compat" => Ok(client
+    let mut req = match provider_type {
+        "openai" | "openai-compat" | "openai_compat" => client
             .get(format!("{base}/v1/models"))
-            .header("Authorization", format!("Bearer {api_key}"))),
-        "claude" => Ok(client
+            .header("Authorization", format!("Bearer {api_key}")),
+        "claude" => client
             .get(format!("{base}/v1/models"))
             .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")),
-        "gemini" => Ok(client
+            .header("anthropic-version", "2023-06-01"),
+        "gemini" => client
             .get(format!("{base}/v1beta/models"))
-            .header("x-goog-api-key", api_key)),
-        _ => Err(format!("Unsupported provider_type: {provider_type}")),
+            .header("x-goog-api-key", api_key),
+        _ => return Err(format!("Unsupported provider_type: {provider_type}")),
+    };
+    if let Some(headers) = extra_headers {
+        for (k, v) in headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
     }
+    Ok(req)
 }
 
 fn extract_model_ids(provider_type: &str, body: &serde_json::Value) -> Vec<String> {
@@ -529,7 +536,8 @@ pub async fn fetch_models(
         }
     };
 
-    let request = match build_models_request(&client, provider_type, &body.api_key, &base_url) {
+    let request = match build_models_request(&client, provider_type, &body.api_key, &base_url, None)
+    {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -635,7 +643,13 @@ pub async fn health_check(
         }
     };
 
-    let request = match build_models_request(&client, ptype, &entry.api_key, &base_url) {
+    let request = match build_models_request(
+        &client,
+        ptype,
+        &entry.api_key,
+        &base_url,
+        Some(&entry.headers),
+    ) {
         Ok(r) => r,
         Err(e) => {
             return (

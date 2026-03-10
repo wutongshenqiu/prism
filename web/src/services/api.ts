@@ -99,7 +99,10 @@ export const providersApi = {
             name: (item.name as string) || '',
             base_url: (item.base_url as string) || '',
             enabled: item.disabled !== undefined ? !(item.disabled as boolean) : true,
-            models: Array.isArray(item.models) ? item.models : [],
+            models: Array.isArray(item.models)
+              ? item.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
+              : [],
+            headers: (item.headers as Record<string, string>) || {},
             models_count: item.models_count,
           }))
         : [];
@@ -112,6 +115,10 @@ export const providersApi = {
       ...res.data,
       provider_type: providerTypeToFrontend(res.data.provider_type),
       enabled: res.data.disabled !== undefined ? !res.data.disabled : true,
+      models: Array.isArray(res.data.models)
+        ? res.data.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
+        : [],
+      headers: res.data.headers || {},
     },
   })),
 

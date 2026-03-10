@@ -137,3 +137,20 @@ a {
   color: var(--color-danger, #ef4444);
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* ── Header pairs ── */
+
+.header-pair {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.header-pair .header-key {
+  flex: 2;
+}
+
+.header-pair .header-value {
+  flex: 3;
+}
