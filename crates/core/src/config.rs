@@ -153,6 +153,17 @@ impl Config {
         Ok(config)
     }
 
+    /// Deserialize config from a YAML string without sanitization or validation.
+    /// Used by dashboard config editing where the caller handles sanitization.
+    pub fn from_yaml(yaml: &str) -> Result<Self, anyhow::Error> {
+        Ok(serde_yaml_ng::from_str(yaml)?)
+    }
+
+    /// Serialize config to a YAML string.
+    pub fn to_yaml(&self) -> Result<String, anyhow::Error> {
+        Ok(serde_yaml_ng::to_string(self)?)
+    }
+
     /// Validate configuration.
     fn validate(&self) -> Result<(), anyhow::Error> {
         if self.tls.enable {

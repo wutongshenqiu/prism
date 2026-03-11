@@ -29,6 +29,7 @@ All specifications for the AI Proxy Gateway project.
 |----------|------------------------------------------------|-----------|---------------------------------|
 | SPEC-030 | Provider & Dispatch Unit Tests                 | Active    | [active/SPEC-030/](active/SPEC-030/) |
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
+| SPEC-042 | Crate Structure Refactoring                    | Draft     | [active/SPEC-042/](active/SPEC-042/) |
 
 ## Retroactively Completed
 

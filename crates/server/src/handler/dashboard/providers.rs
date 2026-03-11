@@ -362,15 +362,16 @@ async fn update_config_file(
 
     let contents =
         std::fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {e}"))?;
-    let mut config: prism_core::config::Config =
-        serde_yaml_ng::from_str(&contents).map_err(|e| format!("Failed to parse config: {e}"))?;
+    let mut config = prism_core::config::Config::from_yaml(&contents)
+        .map_err(|e| format!("Failed to parse config: {e}"))?;
 
     mutate(&mut config);
 
     // Rebuild derived fields
     config.auth_key_store = prism_core::auth_key::AuthKeyStore::new(config.auth_keys.clone());
 
-    let yaml = serde_yaml_ng::to_string(&config)
+    let yaml = config
+        .to_yaml()
         .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
     // Atomic write: write to temp file then rename
@@ -400,14 +401,7 @@ fn build_reqwest_client(
     proxy_url: Option<&str>,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    let mut builder =
-        reqwest::Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
-    if let Some(proxy) = proxy_url {
-        let p = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid proxy URL: {e}"))?;
-        builder = builder.proxy(p);
-    }
-    builder
-        .build()
+    prism_core::proxy::build_http_client_with_timeout(None, proxy_url, timeout_secs, timeout_secs)
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 

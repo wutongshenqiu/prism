@@ -33,8 +33,6 @@ sd-notify = { workspace = true }
 libc = { workspace = true }
 fork = { workspace = true }
 
-jsonwebtoken = { workspace = true }
-bcrypt = { workspace = true }
 moka = { workspace = true }
 
 [dev-dependencies]

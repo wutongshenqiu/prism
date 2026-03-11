@@ -26,7 +26,6 @@ chrono = { workspace = true }
 rand = { workspace = true }
 jsonwebtoken = { workspace = true }
 bcrypt = { workspace = true }
-serde_yaml_ng = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
