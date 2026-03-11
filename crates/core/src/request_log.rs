@@ -128,6 +128,21 @@ impl RequestLogStore {
         }
     }
 
+    /// Update usage and cost for an existing log entry (used after streaming completes).
+    pub fn update_usage(
+        &self,
+        request_id: &str,
+        usage: crate::request_record::TokenUsage,
+        cost: Option<f64>,
+    ) {
+        if let Ok(mut entries) = self.entries.write()
+            && let Some(entry) = entries.iter_mut().rfind(|e| e.request_id == request_id)
+        {
+            entry.usage = Some(usage);
+            entry.cost = cost;
+        }
+    }
+
     /// Return summary statistics.
     pub fn stats(&self) -> serde_json::Value {
         let entries = self.entries.read().unwrap();

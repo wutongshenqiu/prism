@@ -97,6 +97,7 @@ pub(crate) async fn dispatch_api_request(
             debug: parsed.debug,
             api_key: ctx.auth_key.as_ref().map(|e| e.key.clone()),
             client_region: ctx.client_region.clone(),
+            request_id: Some(ctx.request_id.clone()),
         },
     )
     .await
