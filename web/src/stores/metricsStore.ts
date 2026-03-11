@@ -1,60 +1,50 @@
 import { create } from 'zustand';
 import { logsApi } from '../services/api';
-import type {
-  MetricsSnapshot,
-  MetricsTimeSeries,
-  ProviderDistribution,
-  LatencyBucket,
-} from '../types';
+import type { MetricsSnapshot, LogStats, TimeRange } from '../types';
+
+const TIME_RANGE_MS: Record<TimeRange, number> = {
+  '5m': 5 * 60_000,
+  '15m': 15 * 60_000,
+  '1h': 60 * 60_000,
+  '6h': 6 * 60 * 60_000,
+  '24h': 24 * 60 * 60_000,
+};
 
 interface MetricsState {
   snapshot: MetricsSnapshot | null;
-  timeSeries: MetricsTimeSeries[];
-  providerDistribution: ProviderDistribution[];
-  latencyBuckets: LatencyBucket[];
+  stats: LogStats | null;
+  timeRange: TimeRange;
+  isLoading: boolean;
   setSnapshot: (snapshot: MetricsSnapshot) => void;
-  addTimeSeriesPoint: (point: MetricsTimeSeries) => void;
-  setProviderDistribution: (data: ProviderDistribution[]) => void;
-  setLatencyBuckets: (data: LatencyBucket[]) => void;
-  fetchStats: () => Promise<void>;
+  setTimeRange: (range: TimeRange) => void;
+  fetchStats: (range?: TimeRange) => Promise<void>;
 }
 
-const MAX_TIMESERIES_POINTS = 60;
-
-export const useMetricsStore = create<MetricsState>((set) => ({
+export const useMetricsStore = create<MetricsState>((set, get) => ({
   snapshot: null,
-  timeSeries: [],
-  providerDistribution: [],
-  latencyBuckets: [],
+  stats: null,
+  timeRange: '1h',
+  isLoading: false,
 
   setSnapshot: (snapshot) => set({ snapshot }),
 
-  addTimeSeriesPoint: (point) =>
-    set((state) => {
-      const updated = [...state.timeSeries, point];
-      if (updated.length > MAX_TIMESERIES_POINTS) {
-        updated.shift();
-      }
-      return { timeSeries: updated };
-    }),
+  setTimeRange: (range) => {
+    set({ timeRange: range });
+    get().fetchStats(range);
+  },
 
-  setProviderDistribution: (data) => set({ providerDistribution: data }),
+  fetchStats: async (range?: TimeRange) => {
+    const tr = range ?? get().timeRange;
+    const now = Date.now();
+    const from = now - TIME_RANGE_MS[tr];
 
-  setLatencyBuckets: (data) => set({ latencyBuckets: data }),
-
-  fetchStats: async () => {
+    set({ isLoading: true });
     try {
-      const response = await logsApi.stats();
-      const data = response.data;
-
-      set({
-        snapshot: data.snapshot ?? null,
-        timeSeries: data.time_series ?? [],
-        providerDistribution: data.provider_distribution ?? [],
-        latencyBuckets: data.latency_buckets ?? [],
-      });
+      const response = await logsApi.stats({ from, to: now });
+      set({ stats: response.data, isLoading: false });
     } catch (err) {
-      console.error('Failed to fetch metrics stats:', err);
+      console.error('Failed to fetch stats:', err);
+      set({ isLoading: false });
     }
   },
 }));

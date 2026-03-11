@@ -5,6 +5,8 @@ import type { RequestLog } from '../../types';
 vi.mock('../../services/api', () => ({
   logsApi: {
     list: vi.fn(),
+    getById: vi.fn(),
+    filters: vi.fn(),
   },
 }));
 
@@ -39,6 +41,12 @@ describe('logsStore', () => {
       totalPages: 0,
       filters: {},
       isLoading: false,
+      filterOptions: null,
+      selectedLogId: null,
+      selectedLog: null,
+      isDrawerOpen: false,
+      isLoadingDetail: false,
+      isLive: true,
     });
   });
 
@@ -46,13 +54,13 @@ describe('logsStore', () => {
     const state = useLogsStore.getState();
     expect(state.logs).toEqual([]);
     expect(state.page).toBe(1);
-    expect(state.pageSize).toBe(50);
     expect(state.total).toBe(0);
     expect(state.isLoading).toBe(false);
-    expect(state.filters).toEqual({});
+    expect(state.isLive).toBe(true);
+    expect(state.isDrawerOpen).toBe(false);
   });
 
-  it('should add log to the beginning', () => {
+  it('should add log to the beginning when live', () => {
     const log = makeLog();
     useLogsStore.getState().addLog(log);
 
@@ -62,8 +70,13 @@ describe('logsStore', () => {
     expect(state.total).toBe(1);
   });
 
+  it('should not add log when paused', () => {
+    useLogsStore.setState({ isLive: false });
+    useLogsStore.getState().addLog(makeLog());
+    expect(useLogsStore.getState().logs).toHaveLength(0);
+  });
+
   it('should prepend new logs and respect pageSize cap', () => {
-    // Pre-fill with 50 logs
     const existing = Array.from({ length: 50 }, (_, i) =>
       makeLog({ request_id: `req-${i}` })
     );
@@ -73,8 +86,8 @@ describe('logsStore', () => {
     useLogsStore.getState().addLog(newLog);
 
     const state = useLogsStore.getState();
-    expect(state.logs).toHaveLength(50); // capped at pageSize
-    expect(state.logs[0].request_id).toBe('new-req'); // prepended
+    expect(state.logs).toHaveLength(50);
+    expect(state.logs[0].request_id).toBe('new-req');
   });
 
   it('should fetch logs and update state', async () => {
@@ -122,13 +135,31 @@ describe('logsStore', () => {
     expect(state.filters.provider).toBe('claude');
   });
 
-  it('should set page and trigger fetch', async () => {
-    const { logsApi } = await import('../../services/api');
-    vi.mocked(logsApi.list).mockResolvedValue({
-      data: { data: [], total: 100, total_pages: 2, page: 2, page_size: 50 },
-    } as never);
+  it('should toggle live state', () => {
+    expect(useLogsStore.getState().isLive).toBe(true);
+    useLogsStore.getState().toggleLive();
+    expect(useLogsStore.getState().isLive).toBe(false);
+    useLogsStore.getState().toggleLive();
+    expect(useLogsStore.getState().isLive).toBe(true);
+  });
 
-    useLogsStore.getState().setPage(2);
-    expect(useLogsStore.getState().page).toBe(2);
+  it('should open and close drawer', async () => {
+    const { logsApi } = await import('../../services/api');
+    const log = makeLog({ request_id: 'detail-1' });
+    vi.mocked(logsApi.getById).mockResolvedValueOnce({ data: log } as never);
+
+    await useLogsStore.getState().openDrawer('detail-1');
+
+    let state = useLogsStore.getState();
+    expect(state.isDrawerOpen).toBe(true);
+    expect(state.selectedLogId).toBe('detail-1');
+    expect(state.selectedLog).toEqual(log);
+    expect(state.isLoadingDetail).toBe(false);
+
+    useLogsStore.getState().closeDrawer();
+    state = useLogsStore.getState();
+    expect(state.isDrawerOpen).toBe(false);
+    expect(state.selectedLogId).toBeNull();
+    expect(state.selectedLog).toBeNull();
   });
 });

@@ -55,7 +55,7 @@ async fn handle_ws(mut socket: WebSocket, state: AppState) {
     let mut subscribed_logs = true;
 
     let mut log_rx: broadcast::Receiver<prism_core::request_record::RequestRecord> =
-        state.request_logs.subscribe();
+        state.log_store.subscribe();
 
     let mut metrics_interval = tokio::time::interval(Duration::from_secs(1));
 

@@ -13,6 +13,8 @@ import type {
   RequestLog,
   PaginatedResponse,
   RequestLogFilter,
+  LogStats,
+  FilterOptions,
   SystemHealth,
   SystemLog,
   ConfigValidateResponse,
@@ -207,6 +209,12 @@ export const routingApi = {
 
 // ── Logs ──
 
+function setIfDefined(params: URLSearchParams, key: string, value: unknown) {
+  if (value !== undefined && value !== null && value !== '') {
+    params.set(key, String(value));
+  }
+}
+
 export const logsApi = {
   list: (
     page: number = 1,
@@ -216,34 +224,57 @@ export const logsApi = {
     const params = new URLSearchParams();
     params.set('page', String(page));
     params.set('page_size', String(pageSize));
-    if (filters?.provider) params.set('provider', filters.provider);
-    if (filters?.model) params.set('model', filters.model);
-    if (filters?.status) params.set('status', filters.status);
-    if (filters?.date_from) params.set('date_from', filters.date_from);
-    if (filters?.date_to) params.set('date_to', filters.date_to);
+    if (filters) {
+      setIfDefined(params, 'provider', filters.provider);
+      setIfDefined(params, 'model', filters.model);
+      setIfDefined(params, 'status', filters.status);
+      setIfDefined(params, 'error_type', filters.error_type);
+      setIfDefined(params, 'request_id', filters.request_id);
+      setIfDefined(params, 'tenant_id', filters.tenant_id);
+      setIfDefined(params, 'api_key_id', filters.api_key_id);
+      setIfDefined(params, 'keyword', filters.keyword);
+      setIfDefined(params, 'from', filters.from);
+      setIfDefined(params, 'to', filters.to);
+      setIfDefined(params, 'latency_min', filters.latency_min);
+      setIfDefined(params, 'latency_max', filters.latency_max);
+      if (filters.stream !== undefined) params.set('stream', String(filters.stream));
+      setIfDefined(params, 'sort_by', filters.sort_by);
+      setIfDefined(params, 'sort_order', filters.sort_order);
+    }
     return api.get(`/logs?${params.toString()}`).then((res) => {
-      // Backend returns {items, page, page_size, total}; normalize to PaginatedResponse
       const raw = res.data;
       const items = raw.items || raw.data || [];
       const total = raw.total || 0;
-      const pageSize = raw.page_size || 50;
+      const ps = raw.page_size || 50;
       return {
         ...res,
         data: {
-          data: items.map((item: Record<string, unknown>) => ({
-            ...item,
-            id: item.request_id || item.id || '',
-          })),
+          data: items,
           total,
-          total_pages: Math.ceil(total / pageSize),
+          total_pages: Math.ceil(total / ps),
           page: raw.page || 1,
-          page_size: pageSize,
+          page_size: ps,
         },
       };
     }) as Promise<{ data: PaginatedResponse<RequestLog> } & Record<string, unknown>>;
   },
 
-  stats: () => api.get('/logs/stats'),
+  getById: (id: string) =>
+    api.get<RequestLog>(`/logs/${encodeURIComponent(id)}`),
+
+  stats: (query?: { from?: number; to?: number; provider?: string; model?: string }) => {
+    const params = new URLSearchParams();
+    if (query) {
+      setIfDefined(params, 'from', query.from);
+      setIfDefined(params, 'to', query.to);
+      setIfDefined(params, 'provider', query.provider);
+      setIfDefined(params, 'model', query.model);
+    }
+    const qs = params.toString();
+    return api.get<LogStats>(`/logs/stats${qs ? `?${qs}` : ''}`);
+  },
+
+  filters: () => api.get<FilterOptions>('/logs/filters'),
 };
 
 // ── System ──

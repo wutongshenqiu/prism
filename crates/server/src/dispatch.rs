@@ -69,8 +69,8 @@ struct DispatchDebug {
 pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response, ProxyError> {
     let start = Instant::now();
     let config = state.config.load();
-    let detail_level = config.audit.detail_level;
-    let max_body_bytes = config.audit.max_body_bytes;
+    let detail_level = config.log_store.detail_level;
+    let max_body_bytes = config.log_store.max_body_bytes;
 
     let request_id = req.request_id.clone().unwrap_or_else(|| "-".to_string());
 

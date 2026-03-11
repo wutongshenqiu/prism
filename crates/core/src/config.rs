@@ -1,8 +1,9 @@
-use crate::audit::AuditConfig;
 use crate::auth_key::{AuthKeyEntry, AuthKeyStore};
 use crate::cache::CacheConfig;
 use crate::circuit_breaker::CircuitBreakerConfig;
+use crate::file_audit::FileAuditConfig;
 use crate::payload::PayloadConfig;
+use crate::request_record::LogDetailLevel;
 use arc_swap::ArcSwap;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -80,8 +81,9 @@ pub struct Config {
     // Response cache
     pub cache: CacheConfig,
 
-    // Audit logging
-    pub audit: AuditConfig,
+    // Log store
+    #[serde(alias = "audit")]
+    pub log_store: LogStoreConfig,
 
     // Dashboard
     pub dashboard: DashboardConfig,
@@ -125,7 +127,7 @@ impl Default for Config {
             rate_limit: RateLimitConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             cache: CacheConfig::default(),
-            audit: AuditConfig::default(),
+            log_store: LogStoreConfig::default(),
             dashboard: DashboardConfig::default(),
             daemon: DaemonConfig::default(),
             claude_api_key: Vec::new(),
@@ -263,6 +265,42 @@ impl Default for RateLimitConfig {
     }
 }
 
+// ─── Log store config ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct LogStoreConfig {
+    /// Log store backend type.
+    pub backend: LogStoreBackend,
+    /// Ring buffer capacity (memory backend).
+    pub capacity: usize,
+    /// How much request/response body content to capture.
+    pub detail_level: LogDetailLevel,
+    /// Maximum bytes of body content per field.
+    pub max_body_bytes: usize,
+    /// Optional file audit (JSONL persistence).
+    pub file_audit: FileAuditConfig,
+}
+
+impl Default for LogStoreConfig {
+    fn default() -> Self {
+        Self {
+            backend: LogStoreBackend::Memory,
+            capacity: 10_000,
+            detail_level: LogDetailLevel::Full,
+            max_body_bytes: 32768,
+            file_audit: FileAuditConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LogStoreBackend {
+    #[default]
+    Memory,
+}
+
 // ─── Dashboard config ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,8 +316,6 @@ pub struct DashboardConfig {
     pub jwt_secret: Option<String>,
     /// JWT token TTL in seconds.
     pub jwt_ttl_secs: u64,
-    /// Request log ring buffer capacity.
-    pub request_log_capacity: usize,
 }
 
 impl Default for DashboardConfig {
@@ -290,7 +326,6 @@ impl Default for DashboardConfig {
             password_hash: String::new(),
             jwt_secret: None,
             jwt_ttl_secs: 3600,
-            request_log_capacity: 10_000,
         }
     }
 }
@@ -577,7 +612,7 @@ mod tests {
         assert_eq!(cfg.retry.cooldown_5xx_secs, 15);
         assert_eq!(cfg.retry.cooldown_network_secs, 10);
         assert!(!cfg.cache.enabled);
-        assert!(!cfg.audit.enabled);
+        assert!(!cfg.log_store.file_audit.enabled);
         assert!(cfg.circuit_breaker.enabled);
     }
 

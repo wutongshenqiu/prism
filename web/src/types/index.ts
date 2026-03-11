@@ -122,7 +122,7 @@ export interface RoutingUpdateRequest {
   model_fallbacks?: Record<string, string[]>;
 }
 
-// ── Metrics ──
+// ── Metrics (real-time WebSocket snapshot) ──
 
 export interface MetricsSnapshot {
   total_requests: number;
@@ -134,25 +134,6 @@ export interface MetricsSnapshot {
   error_rate: number;
   uptime_seconds: number;
   [key: string]: unknown;
-}
-
-export interface MetricsTimeSeries {
-  timestamp: string;
-  requests: number;
-  errors: number;
-  tokens: number;
-  latency_ms: number;
-}
-
-export interface ProviderDistribution {
-  provider: string;
-  requests: number;
-  percentage: number;
-}
-
-export interface LatencyBucket {
-  range: string;
-  count: number;
 }
 
 // ── Request Logs ──
@@ -204,12 +185,89 @@ export interface AttemptSummary {
 }
 
 export interface RequestLogFilter {
+  // Exact match
+  request_id?: string;
+  tenant_id?: string;
+  api_key_id?: string;
+  // Filter
   provider?: string;
   model?: string;
   status?: string;
-  date_from?: string;
-  date_to?: string;
+  error_type?: string;
+  stream?: boolean;
+  // Range (epoch ms)
+  from?: number;
+  to?: number;
+  latency_min?: number;
+  latency_max?: number;
+  // Keyword search
+  keyword?: string;
+  // Sort
+  sort_by?: 'timestamp' | 'latency' | 'cost';
+  sort_order?: 'asc' | 'desc';
 }
+
+// ── Log Stats (from /logs/stats) ──
+
+export interface LogStats {
+  total_entries: number;
+  error_count: number;
+  avg_latency_ms: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
+  p99_latency_ms: number;
+  total_cost: number;
+  total_tokens: number;
+  time_series: TimeSeriesBucket[];
+  top_models: ModelStats[];
+  top_errors: ErrorStats[];
+  provider_distribution: ProviderDistribution[];
+  status_distribution: StatusDistribution;
+}
+
+export interface TimeSeriesBucket {
+  timestamp: string;
+  requests: number;
+  errors: number;
+  avg_latency_ms: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface ModelStats {
+  model: string;
+  requests: number;
+  avg_latency_ms: number;
+  total_tokens: number;
+  total_cost: number;
+}
+
+export interface ErrorStats {
+  error_type: string;
+  count: number;
+  last_seen: string;
+}
+
+export interface ProviderDistribution {
+  provider: string;
+  requests: number;
+  percentage: number;
+}
+
+export interface StatusDistribution {
+  success: number;
+  client_error: number;
+  server_error: number;
+}
+
+export interface FilterOptions {
+  providers: string[];
+  models: string[];
+  error_types: string[];
+  tenant_ids: string[];
+}
+
+export type TimeRange = '5m' | '15m' | '1h' | '6h' | '24h';
 
 export interface PaginatedResponse<T> {
   data: T[];
