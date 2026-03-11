@@ -22,6 +22,16 @@ impl TokenUsage {
     pub fn total(&self) -> u64 {
         self.total_input() + self.output_tokens
     }
+
+    /// Merge another usage into this one, taking the max of each field.
+    /// Claude sends input_tokens in `message_start` and output_tokens in `message_delta`,
+    /// so we accumulate by taking the max of each field across events.
+    pub fn merge(&mut self, other: &TokenUsage) {
+        self.input_tokens = self.input_tokens.max(other.input_tokens);
+        self.output_tokens = self.output_tokens.max(other.output_tokens);
+        self.cache_read_tokens = self.cache_read_tokens.max(other.cache_read_tokens);
+        self.cache_creation_tokens = self.cache_creation_tokens.max(other.cache_creation_tokens);
+    }
 }
 
 /// A single request record used for both in-memory log store and persistent audit.
@@ -87,6 +97,27 @@ mod tests {
     fn token_usage_default_is_zero() {
         let usage = TokenUsage::default();
         assert_eq!(usage.total(), 0);
+    }
+
+    #[test]
+    fn token_usage_merge_takes_max() {
+        let mut a = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 0,
+            cache_read_tokens: 50,
+            cache_creation_tokens: 0,
+        };
+        let b = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 200,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 30,
+        };
+        a.merge(&b);
+        assert_eq!(a.input_tokens, 100);
+        assert_eq!(a.output_tokens, 200);
+        assert_eq!(a.cache_read_tokens, 50);
+        assert_eq!(a.cache_creation_tokens, 30);
     }
 
     #[test]

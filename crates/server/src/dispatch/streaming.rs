@@ -1,8 +1,12 @@
 use bytes::Bytes;
 use prism_core::error::ProxyError;
 use prism_core::provider::{Format, ProviderResponse, StreamChunk};
+use prism_core::request_record::TokenUsage;
 use prism_translator::TranslateState;
+use std::sync::Arc;
 use std::time::Duration;
+
+use super::helpers::extract_usage;
 
 type ProviderResult = Result<ProviderResponse, ProxyError>;
 
@@ -132,4 +136,78 @@ pub(super) fn keepalive_error_json(msg: &str) -> String {
         "error": {"message": msg, "type": "server_error"}
     })
     .to_string()
+}
+
+/// Callback context for updating request logs after a stream completes.
+pub(super) struct StreamDoneContext {
+    pub request_id: String,
+    pub model: Option<String>,
+    pub request_logs: Arc<prism_core::request_log::RequestLogStore>,
+    pub cost_calculator: Arc<prism_core::cost::CostCalculator>,
+    pub metrics: Arc<prism_core::metrics::Metrics>,
+}
+
+/// Wrap an upstream `StreamChunk` stream to capture token usage from SSE events.
+///
+/// Each chunk's `data` is inspected for usage fields (supports OpenAI, Claude, and Gemini
+/// response formats). When the stream ends, the captured usage is written back to the
+/// request log entry and recorded in global metrics.
+pub(super) fn with_usage_capture(
+    stream: std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
+    >,
+    ctx: StreamDoneContext,
+) -> std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>> {
+    struct State {
+        inner: std::pin::Pin<
+            Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
+        >,
+        usage: Option<TokenUsage>,
+        ctx: StreamDoneContext,
+    }
+
+    let state = State {
+        inner: stream,
+        usage: None,
+        ctx,
+    };
+
+    Box::pin(futures::stream::unfold(state, |mut state| async move {
+        use tokio_stream::StreamExt;
+        match state.inner.next().await {
+            Some(result) => {
+                if let Ok(ref chunk) = result
+                    && let Some(u) = extract_usage(&chunk.data)
+                {
+                    match state.usage.as_mut() {
+                        Some(existing) => existing.merge(&u),
+                        None => state.usage = Some(u),
+                    }
+                }
+                Some((result, state))
+            }
+            None => {
+                // Stream ended — update log entry with captured usage
+                if let Some(ref usage) = state.usage {
+                    let cost = state
+                        .ctx
+                        .model
+                        .as_deref()
+                        .and_then(|m| state.ctx.cost_calculator.calculate(m, usage));
+                    state
+                        .ctx
+                        .metrics
+                        .record_tokens(usage.total_input(), usage.output_tokens);
+                    if let (Some(m), Some(c)) = (state.ctx.model.as_deref(), cost) {
+                        state.ctx.metrics.record_cost(m, c);
+                    }
+                    state
+                        .ctx
+                        .request_logs
+                        .update_usage(&state.ctx.request_id, usage.clone(), cost);
+                }
+                None
+            }
+        }
+    }))
 }
