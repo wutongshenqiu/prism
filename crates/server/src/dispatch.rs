@@ -40,6 +40,10 @@ pub struct DispatchRequest {
     pub client_region: Option<String>,
     /// Request ID for correlating streaming usage updates with log entries.
     pub request_id: Option<String>,
+    /// Masked API key ID for logging.
+    pub api_key_id: Option<String>,
+    /// Tenant ID for logging.
+    pub tenant_id: Option<String>,
 }
 
 /// Debug information collected during dispatch for x-debug response headers.
@@ -64,6 +68,8 @@ pub struct DispatchMeta {
     pub usage: Option<prism_core::request_record::TokenUsage>,
     pub cost: Option<f64>,
     pub error_detail: Option<String>,
+    pub api_key_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 /// Unified dispatch: resolves providers, picks credentials, translates, executes, retries.
@@ -107,6 +113,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                 model: Some(cached.model),
                 requested_model: Some(req.model.clone()),
                 stream: false,
+                api_key_id: req.api_key_id.clone(),
+                tenant_id: req.tenant_id.clone(),
                 ..Default::default()
             });
             return Ok(resp);
@@ -323,6 +331,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 credential_name: debug_info.credential_name.clone(),
                                 stream: true,
                                 retry_count: total_attempts.saturating_sub(1),
+                                api_key_id: req.api_key_id.clone(),
+                                tenant_id: req.tenant_id.clone(),
                                 ..Default::default()
                             };
 
@@ -438,7 +448,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         &response.payload,
                                         &state.cost_calculator,
                                         &state.metrics,
-                                        &req.model,
+                                        &req,
                                         total_attempts,
                                     );
                                     if req.debug {
@@ -531,7 +541,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 &response.payload,
                                 &state.cost_calculator,
                                 &state.metrics,
-                                &req.model,
+                                &req,
                                 total_attempts,
                             );
                             if req.debug {
@@ -720,6 +730,8 @@ mod tests {
             api_key: None,
             client_region: None,
             request_id: None,
+            api_key_id: None,
+            tenant_id: None,
         };
 
         let chain: Vec<String> = if let Some(ref models) = req.models {
