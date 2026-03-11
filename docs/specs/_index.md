@@ -27,15 +27,22 @@ All specifications for the AI Proxy Gateway project.
 
 | ID       | Title                                          | Status    | Location                        |
 |----------|------------------------------------------------|-----------|---------------------------------|
-| SPEC-009 | Dashboard Admin API & WebSocket                | Draft     | [active/SPEC-009/](active/SPEC-009/) |
-| SPEC-010 | Web Dashboard - Monitoring                     | Draft     | [active/SPEC-010/](active/SPEC-010/) |
-| SPEC-011 | Web Dashboard - Configuration & Operations     | Draft     | [active/SPEC-011/](active/SPEC-011/) |
-| SPEC-029 | Translator Unit Tests                          | Active    | [active/SPEC-029/](active/SPEC-029/) |
 | SPEC-030 | Provider & Dispatch Unit Tests                 | Active    | [active/SPEC-030/](active/SPEC-030/) |
-| SPEC-032 | Frontend Testing Infrastructure                | Active    | [active/SPEC-032/](active/SPEC-032/) |
-| SPEC-034 | Translator & Server Refactoring                | Active    | [active/SPEC-034/](active/SPEC-034/) |
-| SPEC-035 | Frontend Code Cleanup                          | Active    | [active/SPEC-035/](active/SPEC-035/) |
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
+
+## Retroactively Completed
+
+These specs were implemented before formal tracking was in place.
+
+| ID       | Title                                          | Status    | Location                        |
+|----------|------------------------------------------------|-----------|---------------------------------|
+| SPEC-009 | Dashboard Admin API & WebSocket                | Completed | [completed/SPEC-009/](completed/SPEC-009/) |
+| SPEC-010 | Web Dashboard - Monitoring                     | Completed | [completed/SPEC-010/](completed/SPEC-010/) |
+| SPEC-011 | Web Dashboard - Configuration & Operations     | Completed | [completed/SPEC-011/](completed/SPEC-011/) |
+| SPEC-029 | Translator Unit Tests                          | Completed | [completed/SPEC-029/](completed/SPEC-029/) |
+| SPEC-032 | Frontend Testing Infrastructure                | Completed | [completed/SPEC-032/](completed/SPEC-032/) |
+| SPEC-034 | Translator & Server Refactoring                | Completed | [completed/SPEC-034/](completed/SPEC-034/) |
+| SPEC-035 | Frontend Code Cleanup                          | Completed | [completed/SPEC-035/](completed/SPEC-035/) |
 
 ## How to Create a New Spec
 
