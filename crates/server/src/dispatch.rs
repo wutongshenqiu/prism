@@ -7,7 +7,8 @@ use crate::streaming::build_sse_response;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use helpers::{
-    build_json_response, inject_debug_headers, inject_dispatch_meta, rewrite_model_in_body,
+    build_json_response, inject_debug_headers, inject_dispatch_meta, inject_stream_usage_option,
+    rewrite_model_in_body,
 };
 use prism_core::error::ProxyError;
 use prism_core::provider::{Format, ProviderRequest, ProviderResponse};
@@ -257,6 +258,16 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                         request_headers.insert(k.clone(), v.clone());
                     }
                 }
+
+                // Inject stream_options.include_usage for OpenAI-format streaming
+                // so that usage data is included in the final SSE chunk.
+                let translated_payload = if req.stream
+                    && matches!(target_format, Format::OpenAI | Format::OpenAICompat)
+                {
+                    inject_stream_usage_option(translated_payload)
+                } else {
+                    translated_payload
+                };
 
                 let provider_request = ProviderRequest {
                     model: actual_model.clone(),
@@ -777,5 +788,56 @@ mod tests {
         };
 
         assert_eq!(model_chain, vec!["gpt-4"]);
+    }
+
+    // === extract_usage: Claude streaming nested message.usage ===
+
+    #[test]
+    fn test_extract_usage_claude_message_start() {
+        let payload = r#"{"type":"message_start","message":{"id":"msg_1","model":"claude-3","usage":{"input_tokens":25,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#;
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 25);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 100);
+        assert_eq!(usage.cache_creation_tokens, 10);
+    }
+
+    #[test]
+    fn test_extract_usage_claude_message_delta() {
+        let payload = r#"{"type":"message_delta","usage":{"output_tokens":47}}"#;
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.output_tokens, 47);
+    }
+
+    // === inject_stream_usage_option ===
+
+    #[test]
+    fn test_inject_stream_usage_option_adds_option() {
+        let payload =
+            serde_json::to_vec(&serde_json::json!({"model": "gpt-4", "stream": true})).unwrap();
+        let result = inject_stream_usage_option(payload);
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn test_inject_stream_usage_option_preserves_existing() {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "model": "gpt-4",
+            "stream_options": {"include_usage": false, "other": 1}
+        }))
+        .unwrap();
+        let result = inject_stream_usage_option(payload);
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Does not overwrite existing include_usage
+        assert_eq!(val["stream_options"]["include_usage"], false);
+        assert_eq!(val["stream_options"]["other"], 1);
+    }
+
+    #[test]
+    fn test_inject_stream_usage_option_invalid_json() {
+        let payload = b"not json".to_vec();
+        let result = inject_stream_usage_option(payload.clone());
+        assert_eq!(result, payload);
     }
 }

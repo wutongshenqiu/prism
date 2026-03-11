@@ -14,8 +14,14 @@ pub(super) fn extract_usage(payload: &str) -> Option<TokenUsage> {
     }
     let val: serde_json::Value = serde_json::from_str(payload).ok()?;
 
+    // Claude streaming: message_start has usage nested inside "message"
+    // e.g. {"type":"message_start","message":{"usage":{"input_tokens":15}}}
+    let usage_obj = val
+        .get("usage")
+        .or_else(|| val.get("message").and_then(|m| m.get("usage")));
+
     // OpenAI format: usage.prompt_tokens / usage.completion_tokens
-    if let Some(usage) = val.get("usage") {
+    if let Some(usage) = usage_obj {
         let input = usage
             .get("prompt_tokens")
             .and_then(|v| v.as_u64())
@@ -159,6 +165,26 @@ pub(super) fn inject_debug_headers(response: &mut Response, debug: &DispatchDebu
             debug.attempts.join(", ").parse().unwrap(),
         );
     }
+}
+
+/// Inject `stream_options.include_usage = true` into an OpenAI-format streaming request
+/// payload so that the final SSE chunk includes token usage data.
+pub(super) fn inject_stream_usage_option(payload: Vec<u8>) -> Vec<u8> {
+    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&payload)
+        && let Some(obj) = val.as_object_mut()
+    {
+        let stream_opts = obj
+            .entry("stream_options")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(opts) = stream_opts.as_object_mut() {
+            opts.entry("include_usage")
+                .or_insert(serde_json::Value::Bool(true));
+        }
+        if let Ok(bytes) = serde_json::to_vec(&val) {
+            return bytes;
+        }
+    }
+    payload
 }
 
 /// Rewrite the `model` field in a JSON request body to use a different model name.
