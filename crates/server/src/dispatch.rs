@@ -13,7 +13,7 @@ use prism_core::error::ProxyError;
 use prism_core::provider::{Format, ProviderRequest, ProviderResponse};
 use retry::handle_retry_error;
 use std::time::{Duration, Instant};
-use streaming::{build_keepalive_body, translate_stream};
+use streaming::{StreamDoneContext, build_keepalive_body, translate_stream, with_usage_capture};
 
 /// A dispatch request encapsulating all information needed to route and execute an API call.
 pub struct DispatchRequest {
@@ -37,6 +37,8 @@ pub struct DispatchRequest {
     pub api_key: Option<String>,
     /// Client region (for geo-aware routing).
     pub client_region: Option<String>,
+    /// Request ID for correlating streaming usage updates with log entries.
+    pub request_id: Option<String>,
 }
 
 /// Debug information collected during dispatch for x-debug response headers.
@@ -285,13 +287,38 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
 
                             let keepalive = config.streaming.keepalive_seconds;
 
-                            // For streaming, we can't easily inject headers after the fact.
-                            // Debug info is not available for streaming responses.
+                            // Wrap upstream stream to capture token usage from SSE events.
+                            // When the stream ends, captured usage is written back to the
+                            // request log entry created by the logging middleware.
+                            let captured_stream = if let Some(ref rid) = req.request_id {
+                                with_usage_capture(
+                                    stream_result.stream,
+                                    StreamDoneContext {
+                                        request_id: rid.clone(),
+                                        model: debug_info.model.clone(),
+                                        request_logs: state.request_logs.clone(),
+                                        cost_calculator: state.cost_calculator.clone(),
+                                        metrics: state.metrics.clone(),
+                                    },
+                                )
+                            } else {
+                                stream_result.stream
+                            };
+
+                            let dispatch_meta = DispatchMeta {
+                                provider: debug_info.provider.clone(),
+                                model: debug_info.model.clone(),
+                                requested_model: Some(req.model.clone()),
+                                credential_name: debug_info.credential_name.clone(),
+                                stream: true,
+                                retry_count: total_attempts.saturating_sub(1),
+                                ..Default::default()
+                            };
+
                             if !need_translate {
                                 if req.source_format == Format::Claude {
-                                    let data_stream = tokio_stream::StreamExt::map(
-                                        stream_result.stream,
-                                        |result| {
+                                    let data_stream =
+                                        tokio_stream::StreamExt::map(captured_stream, |result| {
                                             result.map(|chunk| {
                                                 if let Some(ref event_type) = chunk.event_type {
                                                     format!(
@@ -302,39 +329,22 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                                     chunk.data
                                                 }
                                             })
-                                        },
-                                    );
+                                        });
                                     let mut resp =
                                         build_sse_response(data_stream, keepalive).into_response();
-                                    resp.extensions_mut().insert(DispatchMeta {
-                                        provider: debug_info.provider.clone(),
-                                        model: debug_info.model.clone(),
-                                        requested_model: Some(req.model.clone()),
-                                        credential_name: debug_info.credential_name.clone(),
-                                        stream: true,
-                                        retry_count: total_attempts.saturating_sub(1),
-                                        ..Default::default()
-                                    });
+                                    resp.extensions_mut().insert(dispatch_meta);
                                     if req.debug {
                                         inject_debug_headers(&mut resp, &debug_info);
                                     }
                                     return Ok(resp);
                                 }
                                 let data_stream =
-                                    tokio_stream::StreamExt::map(stream_result.stream, |result| {
+                                    tokio_stream::StreamExt::map(captured_stream, |result| {
                                         result.map(|chunk| chunk.data)
                                     });
                                 let mut resp =
                                     build_sse_response(data_stream, keepalive).into_response();
-                                resp.extensions_mut().insert(DispatchMeta {
-                                    provider: debug_info.provider.clone(),
-                                    model: debug_info.model.clone(),
-                                    requested_model: Some(req.model.clone()),
-                                    credential_name: debug_info.credential_name.clone(),
-                                    stream: true,
-                                    retry_count: total_attempts.saturating_sub(1),
-                                    ..Default::default()
-                                });
+                                resp.extensions_mut().insert(dispatch_meta);
                                 if req.debug {
                                     inject_debug_headers(&mut resp, &debug_info);
                                 }
@@ -342,7 +352,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                             }
 
                             let translated_stream = translate_stream(
-                                stream_result.stream,
+                                captured_stream,
                                 state.translators.clone(),
                                 req.source_format,
                                 target_format,
@@ -352,15 +362,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
 
                             let mut resp =
                                 build_sse_response(translated_stream, keepalive).into_response();
-                            resp.extensions_mut().insert(DispatchMeta {
-                                provider: debug_info.provider.clone(),
-                                model: debug_info.model.clone(),
-                                requested_model: Some(req.model.clone()),
-                                credential_name: debug_info.credential_name.clone(),
-                                stream: true,
-                                retry_count: total_attempts.saturating_sub(1),
-                                ..Default::default()
-                            });
+                            resp.extensions_mut().insert(dispatch_meta);
                             if req.debug {
                                 inject_debug_headers(&mut resp, &debug_info);
                             }
@@ -422,7 +424,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                     inject_dispatch_meta(
                                         &mut resp,
                                         &debug_info,
-                                        &translated,
+                                        &response.payload,
                                         &state.cost_calculator,
                                         &state.metrics,
                                         &req.model,
@@ -515,7 +517,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                             inject_dispatch_meta(
                                 &mut resp,
                                 &debug_info,
-                                &translated,
+                                &response.payload,
                                 &state.cost_calculator,
                                 &state.metrics,
                                 &req.model,
@@ -706,6 +708,7 @@ mod tests {
             debug: false,
             api_key: None,
             client_region: None,
+            request_id: None,
         };
 
         let chain: Vec<String> = if let Some(ref models) = req.models {

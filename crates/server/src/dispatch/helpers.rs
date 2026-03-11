@@ -8,6 +8,10 @@ use super::DispatchMeta;
 
 /// Extract token usage from a response payload (any format), including cache tokens.
 pub(super) fn extract_usage(payload: &str) -> Option<TokenUsage> {
+    // Quick string check to avoid JSON parsing on chunks without usage data
+    if !payload.contains("usage") && !payload.contains("usageMetadata") {
+        return None;
+    }
     let val: serde_json::Value = serde_json::from_str(payload).ok()?;
 
     // OpenAI format: usage.prompt_tokens / usage.completion_tokens
@@ -76,16 +80,21 @@ pub(super) fn extract_usage(payload: &str) -> Option<TokenUsage> {
 }
 
 /// Inject dispatch metadata into response extensions for request logging.
+///
+/// `upstream_payload` is the raw upstream response (before translation) — used for
+/// token extraction so that provider-specific fields (e.g. Claude's cache tokens)
+/// are not lost during format translation.
 pub(super) fn inject_dispatch_meta(
     response: &mut Response,
     debug: &DispatchDebug,
-    translated_payload: &str,
+    upstream_payload: &[u8],
     cost_calculator: &prism_core::cost::CostCalculator,
     metrics: &prism_core::metrics::Metrics,
     requested_model: &str,
     total_attempts: u32,
 ) {
-    let usage = extract_usage(translated_payload);
+    let upstream_str = std::str::from_utf8(upstream_payload).unwrap_or("");
+    let usage = extract_usage(upstream_str);
     let model = debug.model.as_deref();
     let cost = match (model, &usage) {
         (Some(m), Some(u)) => cost_calculator.calculate(m, u),

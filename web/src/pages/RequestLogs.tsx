@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLogsStore } from '../stores/logsStore';
 import type { RequestLogFilter } from '../types';
+import { formatNumber } from '../utils/format';
 import { FileText, ChevronLeft, ChevronRight, Search, X, ChevronDown, ChevronUp, Copy } from 'lucide-react';
 
 export default function RequestLogs() {
@@ -56,10 +57,20 @@ export default function RequestLogs() {
     return `$${cost.toFixed(4)}`;
   };
 
-  const formatTokens = (log: typeof logs[0]): string => {
+  const formatTotalTokens = (log: typeof logs[0]): string => {
     if (!log.usage) return '-';
-    const { input_tokens, output_tokens } = log.usage;
-    return `${input_tokens} / ${output_tokens}`;
+    const { input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } = log.usage;
+    const total = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens;
+    return formatNumber(total);
+  };
+
+  const tokenTooltip = (log: typeof logs[0]): string => {
+    if (!log.usage) return '';
+    const { input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } = log.usage;
+    const parts = [`Input: ${input_tokens.toLocaleString()}`, `Output: ${output_tokens.toLocaleString()}`];
+    if (cache_read_tokens > 0) parts.push(`Cache Read: ${cache_read_tokens.toLocaleString()}`);
+    if (cache_creation_tokens > 0) parts.push(`Cache Write: ${cache_creation_tokens.toLocaleString()}`);
+    return parts.join('\n');
   };
 
   const toggleExpand = (id: string) => {
@@ -199,8 +210,12 @@ export default function RequestLogs() {
                         </span>
                       </td>
                       <td className="text-nowrap">{log.latency_ms}ms</td>
-                      <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
-                        {formatTokens(log)}
+                      <td
+                        className="text-nowrap"
+                        style={{ fontSize: '0.85rem', cursor: log.usage ? 'help' : 'default' }}
+                        title={tokenTooltip(log)}
+                      >
+                        {formatTotalTokens(log)}
                       </td>
                       <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
                         {formatCost(log.cost)}
@@ -283,22 +298,22 @@ export default function RequestLogs() {
                               )}
                               <div className="log-detail-item">
                                 <span className="log-detail-label">Input Tokens</span>
-                                <span className="log-detail-value">{log.usage?.input_tokens ?? '-'}</span>
+                                <span className="log-detail-value">{log.usage?.input_tokens?.toLocaleString() ?? '-'}</span>
                               </div>
                               <div className="log-detail-item">
                                 <span className="log-detail-label">Output Tokens</span>
-                                <span className="log-detail-value">{log.usage?.output_tokens ?? '-'}</span>
+                                <span className="log-detail-value">{log.usage?.output_tokens?.toLocaleString() ?? '-'}</span>
                               </div>
                               {(log.usage?.cache_read_tokens ?? 0) > 0 && (
                                 <div className="log-detail-item">
                                   <span className="log-detail-label">Cache Read Tokens</span>
-                                  <span className="log-detail-value">{log.usage?.cache_read_tokens}</span>
+                                  <span className="log-detail-value">{log.usage?.cache_read_tokens?.toLocaleString()}</span>
                                 </div>
                               )}
                               {(log.usage?.cache_creation_tokens ?? 0) > 0 && (
                                 <div className="log-detail-item">
-                                  <span className="log-detail-label">Cache Creation Tokens</span>
-                                  <span className="log-detail-value">{log.usage?.cache_creation_tokens}</span>
+                                  <span className="log-detail-label">Cache Write Tokens</span>
+                                  <span className="log-detail-value">{log.usage?.cache_creation_tokens?.toLocaleString()}</span>
                                 </div>
                               )}
                               <div className="log-detail-item">
