@@ -284,15 +284,6 @@ impl CostLimiter {
 impl RateLimitDimension for CostLimiter {
     fn check(&self, key: Option<&str>) -> RateLimitInfo {
         let limit = self.per_key_daily_limit.read().map(|l| *l).unwrap_or(0.0);
-        if limit <= 0.0 {
-            return RateLimitInfo {
-                allowed: true,
-                remaining: u32::MAX,
-                limit: 0,
-                reset_secs: 0,
-            };
-        }
-
         let Some(key) = key else {
             return RateLimitInfo {
                 allowed: true,
@@ -301,49 +292,7 @@ impl RateLimitDimension for CostLimiter {
                 reset_secs: 0,
             };
         };
-
-        let now = Instant::now();
-        let day_secs = 86400u64;
-        let cutoff = now - std::time::Duration::from_secs(day_secs);
-
-        let Ok(per_key) = self.per_key.read() else {
-            return RateLimitInfo {
-                allowed: true,
-                remaining: u32::MAX,
-                limit: 0,
-                reset_secs: 0,
-            };
-        };
-        if let Some(entries) = per_key.get(key) {
-            let Ok(mut entries) = entries.lock() else {
-                return RateLimitInfo {
-                    allowed: true,
-                    remaining: u32::MAX,
-                    limit: 0,
-                    reset_secs: 0,
-                };
-            };
-            entries.retain(|&(t, _)| t > cutoff);
-            let total_cost: f64 = entries.iter().map(|&(_, c)| c).sum();
-            if total_cost >= limit {
-                return RateLimitInfo {
-                    allowed: false,
-                    remaining: 0,
-                    limit: (limit * 100.0) as u32, // cents
-                    reset_secs: entries
-                        .first()
-                        .map(|&(t, _)| day_secs.saturating_sub(now.duration_since(t).as_secs()))
-                        .unwrap_or(day_secs),
-                };
-            }
-        }
-
-        RateLimitInfo {
-            allowed: true,
-            remaining: u32::MAX,
-            limit: 0,
-            reset_secs: day_secs,
-        }
+        self.check_cost_within_window(key, limit, 86400)
     }
 
     fn record(&self, key: Option<&str>, _amount: u64) {
@@ -357,8 +306,13 @@ impl RateLimitDimension for CostLimiter {
 }
 
 impl CostLimiter {
-    /// Check a specific key against a custom daily cost limit.
-    pub fn check_key_with_limit(&self, key: &str, limit: f64) -> RateLimitInfo {
+    /// Check a specific key against a cost limit within a sliding window.
+    pub fn check_cost_within_window(
+        &self,
+        key: &str,
+        limit: f64,
+        window_secs: u64,
+    ) -> RateLimitInfo {
         if limit <= 0.0 {
             return RateLimitInfo {
                 allowed: true,
@@ -368,8 +322,7 @@ impl CostLimiter {
             };
         }
         let now = Instant::now();
-        let day_secs = 86400u64;
-        let cutoff = now - std::time::Duration::from_secs(day_secs);
+        let cutoff = now - std::time::Duration::from_secs(window_secs);
         let Ok(per_key) = self.per_key.read() else {
             return RateLimitInfo {
                 allowed: true,
@@ -396,8 +349,8 @@ impl CostLimiter {
                     limit: (limit * 100.0) as u32,
                     reset_secs: entries
                         .first()
-                        .map(|&(t, _)| day_secs.saturating_sub(now.duration_since(t).as_secs()))
-                        .unwrap_or(day_secs),
+                        .map(|&(t, _)| window_secs.saturating_sub(now.duration_since(t).as_secs()))
+                        .unwrap_or(window_secs),
                 };
             }
         }
@@ -405,8 +358,13 @@ impl CostLimiter {
             allowed: true,
             remaining: u32::MAX,
             limit: 0,
-            reset_secs: day_secs,
+            reset_secs: window_secs,
         }
+    }
+
+    /// Check a specific key against a custom daily cost limit.
+    pub fn check_key_with_limit(&self, key: &str, limit: f64) -> RateLimitInfo {
+        self.check_cost_within_window(key, limit, 86400)
     }
 
     /// Record cost for a key (in USD).
@@ -560,45 +518,8 @@ impl CompositeRateLimiter {
             crate::auth_key::BudgetPeriod::Daily => 86400u64,
             crate::auth_key::BudgetPeriod::Monthly => 30 * 86400u64,
         };
-        let now = Instant::now();
-        let cutoff = now - std::time::Duration::from_secs(window_secs);
-        let Ok(per_key) = self.cost.per_key.read() else {
-            return RateLimitInfo {
-                allowed: true,
-                remaining: u32::MAX,
-                limit: 0,
-                reset_secs: 0,
-            };
-        };
-        if let Some(entries) = per_key.get(key) {
-            let Ok(mut entries) = entries.lock() else {
-                return RateLimitInfo {
-                    allowed: true,
-                    remaining: u32::MAX,
-                    limit: 0,
-                    reset_secs: 0,
-                };
-            };
-            entries.retain(|&(t, _)| t > cutoff);
-            let total_cost: f64 = entries.iter().map(|&(_, c)| c).sum();
-            if total_cost >= budget.total_usd {
-                return RateLimitInfo {
-                    allowed: false,
-                    remaining: 0,
-                    limit: (budget.total_usd * 100.0) as u32,
-                    reset_secs: entries
-                        .first()
-                        .map(|&(t, _)| window_secs.saturating_sub(now.duration_since(t).as_secs()))
-                        .unwrap_or(window_secs),
-                };
-            }
-        }
-        RateLimitInfo {
-            allowed: true,
-            remaining: u32::MAX,
-            limit: 0,
-            reset_secs: window_secs,
-        }
+        self.cost
+            .check_cost_within_window(key, budget.total_usd, window_secs)
     }
 
     /// Record cost (Cost dimension). Call after response is received.

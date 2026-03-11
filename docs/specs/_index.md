@@ -19,6 +19,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-014 | Cost Tracking                                  | Completed | [completed/SPEC-014/](completed/SPEC-014/) |
 | SPEC-037 | Split dispatch.rs into Focused Modules         | Completed | [completed/SPEC-037/](completed/SPEC-037/) |
 | SPEC-038 | Unify Provider Request Building                | Completed | [completed/SPEC-038/](completed/SPEC-038/) |
+| SPEC-039 | Routing & Auth Key Enhancement                 | Completed | [completed/SPEC-039/](completed/SPEC-039/) |
 
 ## Active
 
@@ -33,7 +34,6 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-034 | Translator & Server Refactoring                | Active    | [active/SPEC-034/](active/SPEC-034/) |
 | SPEC-035 | Frontend Code Cleanup                          | Active    | [active/SPEC-035/](active/SPEC-035/) |
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
-| SPEC-039 | Routing & Auth Key Enhancement                 | Active    | [active/SPEC-039/](active/SPEC-039/) |
 
 ## How to Create a New Spec
 

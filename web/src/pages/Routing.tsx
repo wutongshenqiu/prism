@@ -1,30 +1,40 @@
 import { useEffect, useState } from 'react';
 import { routingApi } from '../services/api';
 import type { RoutingConfig, RoutingStrategy } from '../types';
-import { GitBranch, Save, RotateCcw } from 'lucide-react';
+import { GitBranch, Save, RotateCcw, Plus, Trash2 } from 'lucide-react';
 
 const STRATEGIES: { value: RoutingStrategy; label: string; description: string }[] = [
   {
-    value: 'round_robin',
+    value: 'round-robin',
     label: 'Round Robin',
-    description: 'Distribute requests evenly across all active providers in sequence.',
+    description: 'Distribute requests evenly across all active credentials in sequence.',
   },
   {
-    value: 'random',
-    label: 'Random',
-    description: 'Randomly select a provider for each request.',
+    value: 'fill-first',
+    label: 'Fill First',
+    description: 'Prioritize the first credential by weight, only use others when exhausted.',
   },
   {
-    value: 'least_latency',
-    label: 'Least Latency',
-    description: 'Route to the provider with the lowest average response time.',
+    value: 'latency-aware',
+    label: 'Latency Aware',
+    description: 'Route to the credential with the lowest average response time.',
   },
   {
-    value: 'failover',
-    label: 'Failover',
-    description: 'Use primary provider; failover to others only on error.',
+    value: 'geo-aware',
+    label: 'Geo Aware',
+    description: 'Route based on client region matching credential region tags.',
   },
 ];
+
+interface ModelStrategyRow {
+  pattern: string;
+  strategy: RoutingStrategy;
+}
+
+interface ModelFallbackRow {
+  pattern: string;
+  fallbacks: string;
+}
 
 export default function Routing() {
   const [config, setConfig] = useState<RoutingConfig | null>(null);
@@ -34,20 +44,34 @@ export default function Routing() {
   const [error, setError] = useState('');
 
   // Editable state
-  const [strategy, setStrategy] = useState<RoutingStrategy>('round_robin');
+  const [strategy, setStrategy] = useState<RoutingStrategy>('round-robin');
   const [fallbackEnabled, setFallbackEnabled] = useState(true);
-  const [retryCount, setRetryCount] = useState(3);
-  const [timeoutMs, setTimeoutMs] = useState(30000);
+  const [requestRetry, setRequestRetry] = useState(3);
+  const [maxRetryInterval, setMaxRetryInterval] = useState(30);
+  const [modelStrategies, setModelStrategies] = useState<ModelStrategyRow[]>([]);
+  const [modelFallbacks, setModelFallbacks] = useState<ModelFallbackRow[]>([]);
+
+  const loadConfig = (data: RoutingConfig) => {
+    setConfig(data);
+    setStrategy(data.strategy);
+    setFallbackEnabled(data.fallback_enabled);
+    setRequestRetry(data.request_retry);
+    setMaxRetryInterval(data.max_retry_interval);
+    setModelStrategies(
+      Object.entries(data.model_strategies).map(([pattern, strategy]) => ({ pattern, strategy }))
+    );
+    setModelFallbacks(
+      Object.entries(data.model_fallbacks).map(([pattern, fallbacks]) => ({
+        pattern,
+        fallbacks: fallbacks.join(', '),
+      }))
+    );
+  };
 
   const fetchConfig = async () => {
     try {
       const response = await routingApi.get();
-      const data = response.data;
-      setConfig(data);
-      setStrategy(data.strategy);
-      setFallbackEnabled(data.fallback_enabled);
-      setRetryCount(data.retry_count);
-      setTimeoutMs(data.timeout_ms);
+      loadConfig(response.data);
     } catch (err) {
       console.error('Failed to fetch routing config:', err);
     } finally {
@@ -59,12 +83,26 @@ export default function Routing() {
     fetchConfig();
   }, []);
 
-  const hasChanges = config && (
-    strategy !== config.strategy ||
-    fallbackEnabled !== config.fallback_enabled ||
-    retryCount !== config.retry_count ||
-    timeoutMs !== config.timeout_ms
-  );
+  const buildPayload = () => {
+    const ms: Record<string, RoutingStrategy> = {};
+    for (const row of modelStrategies) {
+      if (row.pattern.trim()) ms[row.pattern.trim()] = row.strategy;
+    }
+    const mf: Record<string, string[]> = {};
+    for (const row of modelFallbacks) {
+      if (row.pattern.trim()) {
+        mf[row.pattern.trim()] = row.fallbacks.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return {
+      strategy,
+      fallback_enabled: fallbackEnabled,
+      request_retry: requestRetry,
+      max_retry_interval: maxRetryInterval,
+      model_strategies: ms,
+      model_fallbacks: mf,
+    };
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -72,13 +110,16 @@ export default function Routing() {
     setSaved(false);
 
     try {
-      const response = await routingApi.update({
-        strategy,
-        fallback_enabled: fallbackEnabled,
-        retry_count: retryCount,
-        timeout_ms: timeoutMs,
+      const payload = buildPayload();
+      await routingApi.update(payload);
+      loadConfig({
+        strategy: payload.strategy,
+        fallback_enabled: payload.fallback_enabled,
+        request_retry: payload.request_retry,
+        max_retry_interval: payload.max_retry_interval,
+        model_strategies: payload.model_strategies,
+        model_fallbacks: payload.model_fallbacks,
       });
-      setConfig(response.data);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -89,12 +130,7 @@ export default function Routing() {
   };
 
   const handleReset = () => {
-    if (config) {
-      setStrategy(config.strategy);
-      setFallbackEnabled(config.fallback_enabled);
-      setRetryCount(config.retry_count);
-      setTimeoutMs(config.timeout_ms);
-    }
+    if (config) loadConfig(config);
   };
 
   if (isLoading) {
@@ -118,16 +154,14 @@ export default function Routing() {
           <p className="page-subtitle">Configure request routing strategy</p>
         </div>
         <div className="page-header-actions">
-          {hasChanges && (
-            <button className="btn btn-secondary" onClick={handleReset}>
-              <RotateCcw size={16} />
-              Reset
-            </button>
-          )}
+          <button className="btn btn-secondary" onClick={handleReset}>
+            <RotateCcw size={16} />
+            Reset
+          </button>
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={saving || !hasChanges}
+            disabled={saving}
           >
             <Save size={16} />
             {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
@@ -141,7 +175,7 @@ export default function Routing() {
       {/* Strategy Selection */}
       <div className="card">
         <div className="card-header">
-          <h3>Routing Strategy</h3>
+          <h3>Default Routing Strategy</h3>
         </div>
         <div className="card-body">
           <div className="strategy-grid">
@@ -170,8 +204,128 @@ export default function Routing() {
         </div>
       </div>
 
+      {/* Per-Model Strategies */}
+      <div className="card">
+        <div className="card-header card-header--actions">
+          <h3>Per-Model Strategies</h3>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setModelStrategies([...modelStrategies, { pattern: '', strategy: 'round-robin' }])}
+          >
+            <Plus size={14} />
+            Add Rule
+          </button>
+        </div>
+        <div className="card-body">
+          {modelStrategies.length === 0 ? (
+            <p className="text-muted">
+              No per-model strategy overrides. All models use the default strategy above.
+            </p>
+          ) : (
+            <div className="kv-rows">
+              {modelStrategies.map((row, idx) => (
+                <div key={idx} className="kv-row">
+                  <input
+                    type="text"
+                    value={row.pattern}
+                    onChange={(e) => {
+                      const next = [...modelStrategies];
+                      next[idx] = { ...next[idx], pattern: e.target.value };
+                      setModelStrategies(next);
+                    }}
+                    placeholder="claude-*, gpt-4o"
+                    style={{ flex: 1 }}
+                  />
+                  <select
+                    value={row.strategy}
+                    onChange={(e) => {
+                      const next = [...modelStrategies];
+                      next[idx] = { ...next[idx], strategy: e.target.value as RoutingStrategy };
+                      setModelStrategies(next);
+                    }}
+                  >
+                    {STRATEGIES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn btn-ghost btn-sm btn-danger-ghost"
+                    onClick={() => setModelStrategies(modelStrategies.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <span className="form-help">
+            Model patterns support glob wildcards (*). More specific patterns take priority over the default.
+          </span>
+        </div>
+      </div>
+
+      {/* Model Fallbacks */}
+      <div className="card">
+        <div className="card-header card-header--actions">
+          <h3>Model Fallbacks</h3>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setModelFallbacks([...modelFallbacks, { pattern: '', fallbacks: '' }])}
+          >
+            <Plus size={14} />
+            Add Fallback
+          </button>
+        </div>
+        <div className="card-body">
+          {modelFallbacks.length === 0 ? (
+            <p className="text-muted">
+              No model fallback chains configured. Requests will only try the requested model.
+            </p>
+          ) : (
+            <div className="kv-rows">
+              {modelFallbacks.map((row, idx) => (
+                <div key={idx} className="kv-row">
+                  <input
+                    type="text"
+                    value={row.pattern}
+                    onChange={(e) => {
+                      const next = [...modelFallbacks];
+                      next[idx] = { ...next[idx], pattern: e.target.value };
+                      setModelFallbacks(next);
+                    }}
+                    placeholder="gpt-4o"
+                    style={{ width: '30%' }}
+                  />
+                  <span className="text-muted" style={{ flexShrink: 0 }}>&rarr;</span>
+                  <input
+                    type="text"
+                    value={row.fallbacks}
+                    onChange={(e) => {
+                      const next = [...modelFallbacks];
+                      next[idx] = { ...next[idx], fallbacks: e.target.value };
+                      setModelFallbacks(next);
+                    }}
+                    placeholder="gpt-4o-mini, gpt-3.5-turbo"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn btn-ghost btn-sm btn-danger-ghost"
+                    onClick={() => setModelFallbacks(modelFallbacks.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <span className="form-help">
+            When all credentials for the primary model are exhausted, the system tries fallback models in order. Comma-separated.
+          </span>
+        </div>
+      </div>
+
       {/* Additional Settings */}
-      <div className="card" style={{ marginTop: '1.5rem' }}>
+      <div className="card">
         <div className="card-header">
           <h3>Settings</h3>
         </div>
@@ -184,7 +338,7 @@ export default function Routing() {
                   checked={fallbackEnabled}
                   onChange={(e) => setFallbackEnabled(e.target.checked)}
                 />
-                Enable fallback to other providers on failure
+                Enable fallback (model fallback chains and provider retry on failure)
               </label>
             </div>
 
@@ -193,8 +347,8 @@ export default function Routing() {
                 <label>Retry Count</label>
                 <input
                   type="number"
-                  value={retryCount}
-                  onChange={(e) => setRetryCount(parseInt(e.target.value, 10) || 0)}
+                  value={requestRetry}
+                  onChange={(e) => setRequestRetry(parseInt(e.target.value, 10) || 0)}
                   min="0"
                   max="10"
                 />
@@ -202,16 +356,15 @@ export default function Routing() {
               </div>
 
               <div className="form-group">
-                <label>Timeout (ms)</label>
+                <label>Max Retry Interval (seconds)</label>
                 <input
                   type="number"
-                  value={timeoutMs}
-                  onChange={(e) => setTimeoutMs(parseInt(e.target.value, 10) || 5000)}
-                  min="1000"
-                  max="300000"
-                  step="1000"
+                  value={maxRetryInterval}
+                  onChange={(e) => setMaxRetryInterval(parseInt(e.target.value, 10) || 5)}
+                  min="1"
+                  max="300"
                 />
-                <span className="form-help">Request timeout in milliseconds</span>
+                <span className="form-help">Maximum wait between retries in seconds</span>
               </div>
             </div>
           </div>

@@ -57,6 +57,7 @@ export interface AuthKey {
   name: string | null;
   tenant_id: string | null;
   allowed_models: string[];
+  allowed_credentials: string[];
   rate_limit: KeyRateLimitConfig | null;
   budget: BudgetConfig | null;
   expires_at: string | null;
@@ -78,7 +79,20 @@ export interface AuthKeyCreateRequest {
   name?: string;
   tenant_id?: string;
   allowed_models?: string[];
+  allowed_credentials?: string[];
+  rate_limit?: KeyRateLimitConfig;
+  budget?: BudgetConfig;
   expires_at?: string;
+}
+
+export interface AuthKeyUpdateRequest {
+  name?: string;
+  tenant_id?: string | null;
+  allowed_models?: string[];
+  allowed_credentials?: string[];
+  rate_limit?: KeyRateLimitConfig | null;
+  budget?: BudgetConfig | null;
+  expires_at?: string | null;
 }
 
 export interface AuthKeyCreateResponse {
@@ -88,20 +102,24 @@ export interface AuthKeyCreateResponse {
 
 // ── Routing ──
 
-export type RoutingStrategy = 'round_robin' | 'random' | 'least_latency' | 'failover';
+export type RoutingStrategy = 'round-robin' | 'fill-first' | 'latency-aware' | 'geo-aware';
 
 export interface RoutingConfig {
   strategy: RoutingStrategy;
   fallback_enabled: boolean;
-  retry_count: number;
-  timeout_ms: number;
+  request_retry: number;
+  max_retry_interval: number;
+  model_strategies: Record<string, RoutingStrategy>;
+  model_fallbacks: Record<string, string[]>;
 }
 
 export interface RoutingUpdateRequest {
   strategy?: RoutingStrategy;
   fallback_enabled?: boolean;
-  retry_count?: number;
-  timeout_ms?: number;
+  request_retry?: number;
+  max_retry_interval?: number;
+  model_strategies?: Record<string, RoutingStrategy>;
+  model_fallbacks?: Record<string, string[]>;
 }
 
 // ── Metrics ──
