@@ -1,0 +1,19 @@
+[package]
+name = "prism-lifecycle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+sd-notify = { workspace = true }
+anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+fork = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

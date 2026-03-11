@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 prism-types = { workspace = true, features = ["reqwest", "axum"] }
+prism-lifecycle = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -25,14 +26,6 @@ tokio-stream = { workspace = true }
 url = "2"
 regex = { workspace = true }
 rand = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-subscriber = { workspace = true }
-sd-notify = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
-fork = { workspace = true }
-
 moka = { workspace = true }
 
 [dev-dependencies]

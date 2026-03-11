@@ -1838,16 +1838,14 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "fork",
  "futures",
- "libc",
  "moka",
  "notify",
+ "prism-lifecycle",
  "prism-types",
  "rand 0.10.0",
  "regex",
  "reqwest",
- "sd-notify",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1857,10 +1855,23 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "prism-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fork",
+ "libc",
+ "sd-notify",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

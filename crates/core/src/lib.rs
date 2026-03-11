@@ -8,7 +8,8 @@ pub mod cost;
 pub mod error;
 pub mod file_audit;
 pub mod glob;
-pub mod lifecycle;
+// Re-export lifecycle from dedicated crate for backward compatibility.
+pub use prism_lifecycle as lifecycle;
 pub mod memory_log_store;
 pub mod metrics;
 pub mod payload;
