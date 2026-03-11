@@ -90,12 +90,14 @@ pub(super) fn extract_usage(payload: &str) -> Option<TokenUsage> {
 /// `upstream_payload` is the raw upstream response (before translation) — used for
 /// token extraction so that provider-specific fields (e.g. Claude's cache tokens)
 /// are not lost during format translation.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn inject_dispatch_meta(
     response: &mut Response,
     debug: &DispatchDebug,
     upstream_payload: &[u8],
     cost_calculator: &prism_core::cost::CostCalculator,
     metrics: &prism_core::metrics::Metrics,
+    rate_limiter: &prism_core::rate_limit::CompositeRateLimiter,
     req: &super::DispatchRequest,
     total_attempts: u32,
 ) {
@@ -109,9 +111,11 @@ pub(super) fn inject_dispatch_meta(
     // Record tokens and cost in global metrics
     if let Some(ref u) = usage {
         metrics.record_tokens(u.total_input(), u.output_tokens);
+        rate_limiter.record_tokens(req.api_key.as_deref(), u.total_input() + u.output_tokens);
     }
     if let (Some(m), Some(c)) = (model, cost) {
         metrics.record_cost(m, c);
+        rate_limiter.record_cost(req.api_key.as_deref(), c);
     }
     response.extensions_mut().insert(DispatchMeta {
         provider: debug.provider.clone(),

@@ -145,6 +145,8 @@ pub(super) struct StreamDoneContext {
     pub request_logs: Arc<prism_core::request_log::RequestLogStore>,
     pub cost_calculator: Arc<prism_core::cost::CostCalculator>,
     pub metrics: Arc<prism_core::metrics::Metrics>,
+    pub rate_limiter: Arc<prism_core::rate_limit::CompositeRateLimiter>,
+    pub api_key: Option<String>,
 }
 
 /// Wrap an upstream `StreamChunk` stream to capture token usage from SSE events.
@@ -180,6 +182,13 @@ pub(super) fn with_usage_capture(
                     .record_tokens(usage.total_input(), usage.output_tokens);
                 if let (Some(m), Some(c)) = (ctx.model.as_deref(), cost) {
                     ctx.metrics.record_cost(m, c);
+                }
+                // Record tokens and cost in rate limiter
+                let total_tokens = usage.total_input() + usage.output_tokens;
+                ctx.rate_limiter
+                    .record_tokens(ctx.api_key.as_deref(), total_tokens);
+                if let Some(c) = cost {
+                    ctx.rate_limiter.record_cost(ctx.api_key.as_deref(), c);
                 }
                 ctx.request_logs
                     .update_usage(&ctx.request_id, usage.clone(), cost);

@@ -1,5 +1,6 @@
 use crate::AppState;
 use axum::{extract::State, http::Request, middleware::Next, response::Response};
+use prism_core::context::RequestContext;
 use prism_core::error::ProxyError;
 
 pub async fn rate_limit_middleware(
@@ -26,6 +27,7 @@ pub async fn rate_limit_middleware(
         })
         .map(|s| s.to_string());
 
+    // Global + global per-key check
     let info = state.rate_limiter.check(api_key.as_deref());
 
     if !info.allowed {
@@ -33,6 +35,39 @@ pub async fn rate_limit_middleware(
             message: format!("Rate limit exceeded. Retry after {}s", info.reset_secs),
             retry_after_secs: info.reset_secs,
         });
+    }
+
+    // Per-key rate limit overrides from auth key config
+    if let Some(ref key) = api_key
+        && let Some(ctx) = request.extensions().get::<RequestContext>()
+        && let Some(ref auth_entry) = ctx.auth_key
+    {
+        // Check per-key rate limit overrides (rpm/tpm/cost_per_day_usd)
+        if let Some(ref rl) = auth_entry.rate_limit {
+            let key_info = state.rate_limiter.check_key_overrides(key, rl);
+            if !key_info.allowed {
+                return Err(ProxyError::RateLimited {
+                    message: format!(
+                        "Per-key rate limit exceeded. Retry after {}s",
+                        key_info.reset_secs
+                    ),
+                    retry_after_secs: key_info.reset_secs,
+                });
+            }
+        }
+        // Check per-key budget
+        if let Some(ref budget) = auth_entry.budget {
+            let budget_info = state.rate_limiter.check_budget(key, budget);
+            if !budget_info.allowed {
+                return Err(ProxyError::RateLimited {
+                    message: format!(
+                        "Budget limit exceeded. Retry after {}s",
+                        budget_info.reset_secs
+                    ),
+                    retry_after_secs: budget_info.reset_secs,
+                });
+            }
+        }
     }
 
     // Record the request (RPM dimension)

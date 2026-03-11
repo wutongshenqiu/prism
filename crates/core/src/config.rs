@@ -343,6 +343,12 @@ pub struct RoutingConfig {
     pub ewma_alpha: f64,
     /// Default region for geo-aware routing.
     pub default_region: Option<String>,
+    /// Per-model routing strategy overrides (glob patterns supported).
+    #[serde(default)]
+    pub model_strategies: HashMap<String, RoutingStrategy>,
+    /// Server-side model fallback chains.
+    #[serde(default)]
+    pub model_fallbacks: HashMap<String, Vec<String>>,
 }
 
 impl Default for RoutingConfig {
@@ -352,11 +358,31 @@ impl Default for RoutingConfig {
             fallback_enabled: true,
             ewma_alpha: 0.3,
             default_region: None,
+            model_strategies: HashMap::new(),
+            model_fallbacks: HashMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+impl RoutingConfig {
+    /// Resolve the routing strategy for a given model.
+    /// Priority: exact match → glob match → default strategy.
+    pub fn resolve_strategy(&self, model: &str) -> RoutingStrategy {
+        crate::glob::glob_lookup(&self.model_strategies, model)
+            .copied()
+            .unwrap_or(self.strategy)
+    }
+
+    /// Resolve server-side fallback models for a given model.
+    /// Priority: exact match → glob match. Returns empty vec if none.
+    pub fn resolve_fallbacks(&self, model: &str) -> Vec<String> {
+        crate::glob::glob_lookup(&self.model_fallbacks, model)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum RoutingStrategy {
     RoundRobin,
@@ -695,5 +721,70 @@ rate-limit:
         let yaml = r#"routing: { strategy: geo-aware }"#;
         let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(config.routing.strategy, RoutingStrategy::GeoAware);
+    }
+
+    #[test]
+    fn test_per_model_strategies() {
+        let yaml = r#"
+routing:
+  strategy: round-robin
+  model-strategies:
+    "claude-*": latency-aware
+    "gpt-4o": fill-first
+"#;
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.routing.model_strategies.len(), 2);
+
+        // Exact match
+        assert_eq!(
+            config.routing.resolve_strategy("gpt-4o"),
+            RoutingStrategy::FillFirst
+        );
+        // Glob match
+        assert_eq!(
+            config.routing.resolve_strategy("claude-sonnet-4-6"),
+            RoutingStrategy::LatencyAware
+        );
+        // Default fallback
+        assert_eq!(
+            config.routing.resolve_strategy("gemini-pro"),
+            RoutingStrategy::RoundRobin
+        );
+    }
+
+    #[test]
+    fn test_model_fallbacks() {
+        let yaml = r#"
+routing:
+  strategy: round-robin
+  model-fallbacks:
+    gpt-4o: [gpt-4o-mini, gpt-3.5-turbo]
+    "claude-*": [claude-haiku-4-5-20251001]
+"#;
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
+
+        // Exact match
+        let fb = config.routing.resolve_fallbacks("gpt-4o");
+        assert_eq!(fb, vec!["gpt-4o-mini", "gpt-3.5-turbo"]);
+
+        // Glob match
+        let fb = config.routing.resolve_fallbacks("claude-sonnet-4-6");
+        assert_eq!(fb, vec!["claude-haiku-4-5-20251001"]);
+
+        // No match
+        let fb = config.routing.resolve_fallbacks("gemini-pro");
+        assert!(fb.is_empty());
+    }
+
+    #[test]
+    fn test_auth_key_allowed_credentials() {
+        let yaml = r#"
+auth-keys:
+  - key: "test-key"
+    allowed-credentials: ["my-claude-*", "shared-*"]
+"#;
+        let config: Config = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.auth_keys[0].allowed_credentials.len(), 2);
+        assert_eq!(config.auth_keys[0].allowed_credentials[0], "my-claude-*");
     }
 }

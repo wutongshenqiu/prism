@@ -44,6 +44,8 @@ pub struct DispatchRequest {
     pub api_key_id: Option<String>,
     /// Tenant ID for logging.
     pub tenant_id: Option<String>,
+    /// Restrict to specific credentials by name (glob patterns).
+    pub allowed_credentials: Vec<String>,
 }
 
 /// Debug information collected during dispatch for x-debug response headers.
@@ -123,7 +125,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     }
 
     // Build the model fallback chain
-    let model_chain: Vec<String> = if let Some(ref models) = req.models {
+    let mut model_chain: Vec<String> = if let Some(ref models) = req.models {
         if models.is_empty() {
             vec![req.model.clone()]
         } else {
@@ -132,6 +134,16 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     } else {
         vec![req.model.clone()]
     };
+
+    // Append server-side fallbacks (if enabled and configured), deduplicated
+    if config.routing.fallback_enabled {
+        let server_fallbacks = config.routing.resolve_fallbacks(&req.model);
+        for fb in server_fallbacks {
+            if !model_chain.contains(&fb) {
+                model_chain.push(fb);
+            }
+        }
+    }
 
     let mut debug_info = DispatchDebug::default();
     let mut last_error: Option<ProxyError> = None;
@@ -182,6 +194,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                     current_model,
                     &tried,
                     req.client_region.as_deref(),
+                    &req.allowed_credentials,
                 ) {
                     Some(a) => a,
                     None => continue,
@@ -318,6 +331,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         request_logs: state.request_logs.clone(),
                                         cost_calculator: state.cost_calculator.clone(),
                                         metrics: state.metrics.clone(),
+                                        rate_limiter: state.rate_limiter.clone(),
+                                        api_key: req.api_key.clone(),
                                     },
                                 )
                             } else {
@@ -448,6 +463,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         &response.payload,
                                         &state.cost_calculator,
                                         &state.metrics,
+                                        &state.rate_limiter,
                                         &req,
                                         total_attempts,
                                     );
@@ -541,6 +557,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 &response.payload,
                                 &state.cost_calculator,
                                 &state.metrics,
+                                &state.rate_limiter,
                                 &req,
                                 total_attempts,
                             );
@@ -732,6 +749,7 @@ mod tests {
             request_id: None,
             api_key_id: None,
             tenant_id: None,
+            allowed_credentials: Vec::new(),
         };
 
         let chain: Vec<String> = if let Some(ref models) = req.models {

@@ -36,7 +36,16 @@ pub async fn responses(
 
     let auth = state
         .router
-        .pick(*target_format, &model, &[], ctx.client_region.as_deref())
+        .pick(
+            *target_format,
+            &model,
+            &[],
+            ctx.client_region.as_deref(),
+            ctx.auth_key
+                .as_ref()
+                .map(|e| e.allowed_credentials.as_slice())
+                .unwrap_or(&[]),
+        )
         .ok_or_else(|| ProxyError::NoCredentials {
             provider: target_format.as_str().into(),
             model: model.clone(),

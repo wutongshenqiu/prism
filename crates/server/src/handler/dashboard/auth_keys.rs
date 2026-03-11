@@ -16,6 +16,8 @@ pub struct CreateAuthKeyRequest {
     #[serde(default)]
     pub allowed_models: Vec<String>,
     #[serde(default)]
+    pub allowed_credentials: Vec<String>,
+    #[serde(default)]
     pub rate_limit: Option<prism_core::auth_key::KeyRateLimitConfig>,
     #[serde(default)]
     pub budget: Option<prism_core::auth_key::BudgetConfig>,
@@ -33,6 +35,8 @@ pub struct UpdateAuthKeyRequest {
     pub tenant_id: Option<Option<String>>,
     #[serde(default)]
     pub allowed_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub allowed_credentials: Option<Vec<String>>,
     #[serde(default)]
     pub rate_limit: Option<Option<prism_core::auth_key::KeyRateLimitConfig>>,
     #[serde(default)]
@@ -57,6 +61,7 @@ pub async fn list_auth_keys(State(state): State<AppState>) -> impl IntoResponse 
                 "name": entry.name,
                 "tenant_id": entry.tenant_id,
                 "allowed_models": entry.allowed_models,
+                "allowed_credentials": entry.allowed_credentials,
                 "rate_limit": entry.rate_limit,
                 "budget": entry.budget,
                 "expires_at": entry.expires_at,
@@ -83,6 +88,7 @@ pub async fn create_auth_key(
         name: body.name,
         tenant_id: body.tenant_id,
         allowed_models: body.allowed_models,
+        allowed_credentials: body.allowed_credentials,
         rate_limit: body.rate_limit,
         budget: body.budget,
         expires_at: body.expires_at,
@@ -126,6 +132,9 @@ pub async fn update_auth_key(
             }
             if let Some(allowed_models) = body.allowed_models {
                 entry.allowed_models = allowed_models;
+            }
+            if let Some(allowed_credentials) = body.allowed_credentials {
+                entry.allowed_credentials = allowed_credentials;
             }
             if let Some(rate_limit) = body.rate_limit {
                 entry.rate_limit = rate_limit;

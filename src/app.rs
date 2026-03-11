@@ -66,7 +66,7 @@ impl Application {
 
         // Build provider components
         let executors = prism_provider::build_registry(config.proxy_url.clone());
-        let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy.clone()));
+        let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy));
         credential_router.update_from_config(&config);
         let translators = Arc::new(prism_translator::build_registry());
         let executors = Arc::new(executors);

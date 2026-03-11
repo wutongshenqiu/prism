@@ -86,6 +86,60 @@ impl SlidingWindowLimiter {
             *p = per_key_limit;
         }
     }
+
+    /// Check a specific key against a custom limit (ignoring the configured per-key limit).
+    pub fn check_key_with_limit(&self, key: &str, limit: u64) -> RateLimitInfo {
+        if limit == 0 {
+            return RateLimitInfo {
+                allowed: true,
+                remaining: u32::MAX,
+                limit: 0,
+                reset_secs: self.window_secs,
+            };
+        }
+        let now = Instant::now();
+        let Ok(per_key) = self.per_key.read() else {
+            return RateLimitInfo {
+                allowed: true,
+                remaining: u32::MAX,
+                limit: 0,
+                reset_secs: self.window_secs,
+            };
+        };
+        if let Some(window) = per_key.get(key) {
+            let Ok(mut window) = window.lock() else {
+                return RateLimitInfo {
+                    allowed: true,
+                    remaining: u32::MAX,
+                    limit: 0,
+                    reset_secs: self.window_secs,
+                };
+            };
+            let count = window.count_and_prune(now, self.window_secs);
+            let remaining = limit.saturating_sub(count) as u32;
+            if count >= limit {
+                return RateLimitInfo {
+                    allowed: false,
+                    remaining: 0,
+                    limit: limit as u32,
+                    reset_secs: window.estimate_reset(now, self.window_secs),
+                };
+            }
+            RateLimitInfo {
+                allowed: true,
+                remaining,
+                limit: limit as u32,
+                reset_secs: self.window_secs,
+            }
+        } else {
+            RateLimitInfo {
+                allowed: true,
+                remaining: limit as u32,
+                limit: limit as u32,
+                reset_secs: self.window_secs,
+            }
+        }
+    }
 }
 
 impl RateLimitDimension for SlidingWindowLimiter {
@@ -164,7 +218,6 @@ impl RateLimitDimension for SlidingWindowLimiter {
     fn record(&self, key: Option<&str>, amount: u64) {
         let now = Instant::now();
         let global_limit = self.global_limit.read().map(|g| *g).unwrap_or(0);
-        let per_key_limit = self.per_key_limit.read().map(|p| *p).unwrap_or(0);
 
         if global_limit > 0
             && let Ok(mut global) = self.global.lock()
@@ -172,9 +225,9 @@ impl RateLimitDimension for SlidingWindowLimiter {
             global.record(now, amount);
         }
 
-        if per_key_limit > 0
-            && let Some(key) = key
-        {
+        // Always record per-key data when a key is provided, since per-key
+        // overrides from AuthKeyEntry may use it even if the global per-key limit is 0.
+        if let Some(key) = key {
             // Fast path: read lock
             {
                 if let Ok(per_key) = self.per_key.read()
@@ -231,15 +284,6 @@ impl CostLimiter {
 impl RateLimitDimension for CostLimiter {
     fn check(&self, key: Option<&str>) -> RateLimitInfo {
         let limit = self.per_key_daily_limit.read().map(|l| *l).unwrap_or(0.0);
-        if limit <= 0.0 {
-            return RateLimitInfo {
-                allowed: true,
-                remaining: u32::MAX,
-                limit: 0,
-                reset_secs: 0,
-            };
-        }
-
         let Some(key) = key else {
             return RateLimitInfo {
                 allowed: true,
@@ -248,11 +292,37 @@ impl RateLimitDimension for CostLimiter {
                 reset_secs: 0,
             };
         };
+        self.check_cost_within_window(key, limit, 86400)
+    }
 
+    fn record(&self, key: Option<&str>, _amount: u64) {
+        // Cost recording is done via record_cost() below
+        let _ = key;
+    }
+
+    fn dimension_name(&self) -> &str {
+        "cost"
+    }
+}
+
+impl CostLimiter {
+    /// Check a specific key against a cost limit within a sliding window.
+    pub fn check_cost_within_window(
+        &self,
+        key: &str,
+        limit: f64,
+        window_secs: u64,
+    ) -> RateLimitInfo {
+        if limit <= 0.0 {
+            return RateLimitInfo {
+                allowed: true,
+                remaining: u32::MAX,
+                limit: 0,
+                reset_secs: 0,
+            };
+        }
         let now = Instant::now();
-        let day_secs = 86400u64;
-        let cutoff = now - std::time::Duration::from_secs(day_secs);
-
+        let cutoff = now - std::time::Duration::from_secs(window_secs);
         let Ok(per_key) = self.per_key.read() else {
             return RateLimitInfo {
                 allowed: true,
@@ -276,34 +346,27 @@ impl RateLimitDimension for CostLimiter {
                 return RateLimitInfo {
                     allowed: false,
                     remaining: 0,
-                    limit: (limit * 100.0) as u32, // cents
+                    limit: (limit * 100.0) as u32,
                     reset_secs: entries
                         .first()
-                        .map(|&(t, _)| day_secs.saturating_sub(now.duration_since(t).as_secs()))
-                        .unwrap_or(day_secs),
+                        .map(|&(t, _)| window_secs.saturating_sub(now.duration_since(t).as_secs()))
+                        .unwrap_or(window_secs),
                 };
             }
         }
-
         RateLimitInfo {
             allowed: true,
             remaining: u32::MAX,
             limit: 0,
-            reset_secs: day_secs,
+            reset_secs: window_secs,
         }
     }
 
-    fn record(&self, key: Option<&str>, _amount: u64) {
-        // Cost recording is done via record_cost() below
-        let _ = key;
+    /// Check a specific key against a custom daily cost limit.
+    pub fn check_key_with_limit(&self, key: &str, limit: f64) -> RateLimitInfo {
+        self.check_cost_within_window(key, limit, 86400)
     }
 
-    fn dimension_name(&self) -> &str {
-        "cost"
-    }
-}
-
-impl CostLimiter {
     /// Record cost for a key (in USD).
     pub fn record_cost(&self, key: &str, cost: f64) {
         let now = Instant::now();
@@ -415,6 +478,48 @@ impl CompositeRateLimiter {
             return;
         }
         self.tpm.record(api_key, tokens);
+    }
+
+    /// Check per-key rate limit overrides from AuthKeyEntry config.
+    pub fn check_key_overrides(
+        &self,
+        key: &str,
+        rl: &crate::auth_key::KeyRateLimitConfig,
+    ) -> RateLimitInfo {
+        if let Some(rpm) = rl.rpm {
+            let info = self.rpm.check_key_with_limit(key, rpm as u64);
+            if !info.allowed {
+                return info;
+            }
+        }
+        if let Some(tpm) = rl.tpm {
+            let info = self.tpm.check_key_with_limit(key, tpm);
+            if !info.allowed {
+                return info;
+            }
+        }
+        if let Some(cost_limit) = rl.cost_per_day_usd {
+            let info = self.cost.check_key_with_limit(key, cost_limit);
+            if !info.allowed {
+                return info;
+            }
+        }
+        RateLimitInfo {
+            allowed: true,
+            remaining: u32::MAX,
+            limit: 0,
+            reset_secs: 0,
+        }
+    }
+
+    /// Check per-key budget limits from AuthKeyEntry config.
+    pub fn check_budget(&self, key: &str, budget: &crate::auth_key::BudgetConfig) -> RateLimitInfo {
+        let window_secs = match budget.period {
+            crate::auth_key::BudgetPeriod::Daily => 86400u64,
+            crate::auth_key::BudgetPeriod::Monthly => 30 * 86400u64,
+        };
+        self.cost
+            .check_cost_within_window(key, budget.total_usd, window_secs)
     }
 
     /// Record cost (Cost dimension). Call after response is received.
@@ -532,5 +637,110 @@ mod tests {
         });
 
         assert!(limiter.check(None).allowed);
+    }
+
+    #[test]
+    fn test_check_key_with_limit_rpm() {
+        let config = RateLimitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let limiter = CompositeRateLimiter::new(&config);
+
+        // Record some requests for key1
+        limiter.rpm.record(Some("key1"), 1);
+        limiter.rpm.record(Some("key1"), 1);
+
+        // Check with custom limit of 2 — should be at the limit
+        let info = limiter.rpm.check_key_with_limit("key1", 2);
+        assert!(!info.allowed);
+
+        // Check with custom limit of 5 — should be allowed
+        let info = limiter.rpm.check_key_with_limit("key1", 5);
+        assert!(info.allowed);
+
+        // key2 should be fine
+        let info = limiter.rpm.check_key_with_limit("key2", 2);
+        assert!(info.allowed);
+    }
+
+    #[test]
+    fn test_check_key_overrides() {
+        let config = RateLimitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let limiter = CompositeRateLimiter::new(&config);
+
+        // Record 3 requests for key1
+        for _ in 0..3 {
+            limiter.record_request(Some("key1"));
+        }
+
+        let rl = crate::auth_key::KeyRateLimitConfig {
+            rpm: Some(2),
+            tpm: None,
+            cost_per_day_usd: None,
+        };
+        let info = limiter.check_key_overrides("key1", &rl);
+        assert!(!info.allowed);
+
+        let rl_high = crate::auth_key::KeyRateLimitConfig {
+            rpm: Some(100),
+            tpm: None,
+            cost_per_day_usd: None,
+        };
+        let info = limiter.check_key_overrides("key1", &rl_high);
+        assert!(info.allowed);
+    }
+
+    #[test]
+    fn test_check_budget() {
+        let config = RateLimitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let limiter = CompositeRateLimiter::new(&config);
+
+        // Record $5 cost for key1
+        limiter.cost.record_cost("key1", 5.0);
+
+        let budget = crate::auth_key::BudgetConfig {
+            total_usd: 3.0,
+            period: crate::auth_key::BudgetPeriod::Daily,
+        };
+        let info = limiter.check_budget("key1", &budget);
+        assert!(!info.allowed);
+
+        let high_budget = crate::auth_key::BudgetConfig {
+            total_usd: 100.0,
+            period: crate::auth_key::BudgetPeriod::Monthly,
+        };
+        let info = limiter.check_budget("key1", &high_budget);
+        assert!(info.allowed);
+    }
+
+    #[test]
+    fn test_record_tokens_and_cost() {
+        let config = RateLimitConfig {
+            enabled: true,
+            global_tpm: 0,
+            per_key_tpm: 1000,
+            per_key_cost_per_day_usd: 10.0,
+            ..Default::default()
+        };
+        let limiter = CompositeRateLimiter::new(&config);
+
+        limiter.record_tokens(Some("key1"), 500);
+        limiter.record_cost(Some("key1"), 5.0);
+
+        // Within limits
+        let info = limiter.check(Some("key1"));
+        assert!(info.allowed);
+
+        // Record more to exceed
+        limiter.record_tokens(Some("key1"), 600);
+        let info = limiter.check(Some("key1"));
+        assert!(!info.allowed);
     }
 }

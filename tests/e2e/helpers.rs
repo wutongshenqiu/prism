@@ -36,7 +36,7 @@ impl TestServer {
     /// Start a new test server with the given config.
     pub async fn start(config: Config) -> Self {
         let request_log_capacity = config.dashboard.request_log_capacity;
-        let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy.clone()));
+        let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy));
         credential_router.update_from_config(&config);
 
         let executors = Arc::new(prism_provider::build_registry(config.proxy_url.clone()));

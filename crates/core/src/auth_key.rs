@@ -12,6 +12,10 @@ pub struct AuthKeyEntry {
     pub tenant_id: Option<String>,
     #[serde(default)]
     pub allowed_models: Vec<String>,
+    /// Restrict which provider credentials this key can use (glob patterns by credential name).
+    /// Empty = allow all credentials.
+    #[serde(default)]
+    pub allowed_credentials: Vec<String>,
     #[serde(default)]
     pub rate_limit: Option<KeyRateLimitConfig>,
     #[serde(default)]
@@ -131,6 +135,7 @@ mod tests {
                 name: Some("Team Alpha".to_string()),
                 tenant_id: Some("alpha".to_string()),
                 allowed_models: vec!["claude-*".to_string(), "gpt-4o*".to_string()],
+                allowed_credentials: vec![],
                 rate_limit: None,
                 budget: None,
                 expires_at: None,
@@ -141,6 +146,7 @@ mod tests {
                 name: Some("Team Beta".to_string()),
                 tenant_id: Some("beta".to_string()),
                 allowed_models: vec![],
+                allowed_credentials: vec![],
                 rate_limit: None,
                 budget: None,
                 expires_at: None,
@@ -161,6 +167,7 @@ mod tests {
             name: None,
             tenant_id: None,
             allowed_models: vec!["claude-*".to_string(), "gpt-4o".to_string()],
+            allowed_credentials: vec![],
             rate_limit: None,
             budget: None,
             expires_at: None,
@@ -178,6 +185,7 @@ mod tests {
             name: None,
             tenant_id: None,
             allowed_models: vec![],
+            allowed_credentials: vec![],
             rate_limit: None,
             budget: None,
             expires_at: None,
@@ -202,6 +210,7 @@ mod tests {
             name: None,
             tenant_id: None,
             allowed_models: vec![],
+            allowed_credentials: vec![],
             rate_limit: None,
             budget: None,
             expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
@@ -214,6 +223,7 @@ mod tests {
             name: None,
             tenant_id: None,
             allowed_models: vec![],
+            allowed_credentials: vec![],
             rate_limit: None,
             budget: None,
             expires_at: Some(Utc::now() - chrono::Duration::hours(1)),
@@ -226,6 +236,7 @@ mod tests {
             name: None,
             tenant_id: None,
             allowed_models: vec![],
+            allowed_credentials: vec![],
             rate_limit: None,
             budget: None,
             expires_at: None,

@@ -84,6 +84,12 @@ pub(crate) async fn dispatch_api_request(
 ) -> Result<Response, ProxyError> {
     let parsed = parse_request(headers, &body)?;
 
+    let allowed_credentials = ctx
+        .auth_key
+        .as_ref()
+        .map(|e| e.allowed_credentials.clone())
+        .unwrap_or_default();
+
     dispatch(
         state,
         DispatchRequest {
@@ -100,6 +106,7 @@ pub(crate) async fn dispatch_api_request(
             request_id: Some(ctx.request_id.clone()),
             api_key_id: ctx.api_key_id.clone(),
             tenant_id: ctx.tenant_id.clone(),
+            allowed_credentials,
         },
     )
     .await

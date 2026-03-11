@@ -19,6 +19,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-014 | Cost Tracking                                  | Completed | [completed/SPEC-014/](completed/SPEC-014/) |
 | SPEC-037 | Split dispatch.rs into Focused Modules         | Completed | [completed/SPEC-037/](completed/SPEC-037/) |
 | SPEC-038 | Unify Provider Request Building                | Completed | [completed/SPEC-038/](completed/SPEC-038/) |
+| SPEC-039 | Routing & Auth Key Enhancement                 | Completed | [completed/SPEC-039/](completed/SPEC-039/) |
 
 ## Active
 
