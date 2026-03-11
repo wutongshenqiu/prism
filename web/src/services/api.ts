@@ -7,6 +7,7 @@ import type {
   AuthKey,
   AuthKeyCreateRequest,
   AuthKeyCreateResponse,
+  AuthKeyUpdateRequest,
   RoutingConfig,
   RoutingUpdateRequest,
   RequestLog,
@@ -162,6 +163,7 @@ export const authKeysApi = {
             name: (item.name as string | null) ?? null,
             tenant_id: (item.tenant_id as string | null) ?? null,
             allowed_models: (item.allowed_models as string[]) || [],
+            allowed_credentials: (item.allowed_credentials as string[]) || [],
             rate_limit: (item.rate_limit as AuthKey['rate_limit']) ?? null,
             budget: (item.budget as AuthKey['budget']) ?? null,
             expires_at: (item.expires_at as string | null) ?? null,
@@ -174,21 +176,13 @@ export const authKeysApi = {
   create: (data: AuthKeyCreateRequest) =>
     api.post<AuthKeyCreateResponse>('/auth-keys', data),
 
+  update: (id: number | string, data: AuthKeyUpdateRequest) =>
+    api.patch(`/auth-keys/${id}`, data),
+
   delete: (id: number | string) => api.delete(`/auth-keys/${id}`),
 };
 
 // ── Routing ──
-
-// Map backend strategy names (kebab-case) to frontend (snake_case)
-const strategyMap: Record<string, string> = {
-  'round-robin': 'round_robin',
-  'fill-first': 'failover',
-  'random': 'random',
-  'least-latency': 'least_latency',
-};
-const reverseStrategyMap: Record<string, string> = Object.fromEntries(
-  Object.entries(strategyMap).map(([k, v]) => [v, k])
-);
 
 export const routingApi = {
   get: () =>
@@ -197,23 +191,18 @@ export const routingApi = {
       return {
         ...res,
         data: {
-          strategy: (strategyMap[raw.strategy] || raw.strategy) as RoutingConfig['strategy'],
+          strategy: raw.strategy ?? 'round-robin',
           fallback_enabled: raw.fallback_enabled ?? false,
-          retry_count: raw.retry_count ?? raw.request_retry ?? 3,
-          timeout_ms: raw.timeout_ms ?? (raw.max_retry_interval ? raw.max_retry_interval * 1000 : 30000),
-        },
+          request_retry: raw.request_retry ?? 3,
+          max_retry_interval: raw.max_retry_interval ?? 30,
+          model_strategies: raw.model_strategies ?? {},
+          model_fallbacks: raw.model_fallbacks ?? {},
+        } as RoutingConfig,
       };
     }) as Promise<{ data: RoutingConfig } & Record<string, unknown>>,
 
-  update: (data: RoutingUpdateRequest) => {
-    // Convert frontend fields back to backend format
-    const payload: Record<string, unknown> = {};
-    if (data.strategy) payload.strategy = reverseStrategyMap[data.strategy] || data.strategy;
-    if (data.fallback_enabled !== undefined) payload.fallback_enabled = data.fallback_enabled;
-    if (data.retry_count !== undefined) payload.request_retry = data.retry_count;
-    if (data.timeout_ms !== undefined) payload.max_retry_interval = Math.round(data.timeout_ms / 1000);
-    return api.patch<RoutingConfig>('/routing', payload);
-  },
+  update: (data: RoutingUpdateRequest) =>
+    api.patch('/routing', data),
 };
 
 // ── Logs ──

@@ -42,16 +42,13 @@ describe('API service', () => {
   });
 });
 
-describe('routingApi strategy mapping', () => {
-  // The mapping is internal to the module — we test the exported routingApi.update
-  // by verifying it sends the right backend format
-
-  it('maps round_robin to round-robin', async () => {
+describe('routingApi', () => {
+  it('sends strategy directly to backend', async () => {
     const mod = await import('../../services/api');
     const instance = vi.mocked(axios.create).mock.results[0]?.value;
     vi.mocked(instance.patch).mockResolvedValueOnce({ data: {} });
 
-    await mod.routingApi.update({ strategy: 'round_robin' });
+    await mod.routingApi.update({ strategy: 'round-robin' });
 
     expect(instance.patch).toHaveBeenCalledWith(
       '/routing',
@@ -59,12 +56,12 @@ describe('routingApi strategy mapping', () => {
     );
   });
 
-  it('maps failover to fill-first', async () => {
+  it('sends fill-first strategy', async () => {
     const mod = await import('../../services/api');
     const instance = vi.mocked(axios.create).mock.results[0]?.value;
     vi.mocked(instance.patch).mockResolvedValueOnce({ data: {} });
 
-    await mod.routingApi.update({ strategy: 'failover' });
+    await mod.routingApi.update({ strategy: 'fill-first' });
 
     expect(instance.patch).toHaveBeenCalledWith(
       '/routing',
@@ -72,42 +69,35 @@ describe('routingApi strategy mapping', () => {
     );
   });
 
-  it('maps least_latency to least-latency', async () => {
+  it('sends request_retry and max_retry_interval directly', async () => {
     const mod = await import('../../services/api');
     const instance = vi.mocked(axios.create).mock.results[0]?.value;
     vi.mocked(instance.patch).mockResolvedValueOnce({ data: {} });
 
-    await mod.routingApi.update({ strategy: 'least_latency' });
+    await mod.routingApi.update({ request_retry: 5, max_retry_interval: 30 });
 
     expect(instance.patch).toHaveBeenCalledWith(
       '/routing',
-      expect.objectContaining({ strategy: 'least-latency' })
+      expect.objectContaining({ request_retry: 5, max_retry_interval: 30 })
     );
   });
 
-  it('converts timeout_ms to max_retry_interval in seconds', async () => {
+  it('sends model_strategies and model_fallbacks', async () => {
     const mod = await import('../../services/api');
     const instance = vi.mocked(axios.create).mock.results[0]?.value;
     vi.mocked(instance.patch).mockResolvedValueOnce({ data: {} });
 
-    await mod.routingApi.update({ timeout_ms: 30000 });
+    await mod.routingApi.update({
+      model_strategies: { 'claude-*': 'latency-aware' },
+      model_fallbacks: { 'gpt-4o': ['gpt-4o-mini'] },
+    });
 
     expect(instance.patch).toHaveBeenCalledWith(
       '/routing',
-      expect.objectContaining({ max_retry_interval: 30 })
-    );
-  });
-
-  it('converts retry_count to request_retry', async () => {
-    const mod = await import('../../services/api');
-    const instance = vi.mocked(axios.create).mock.results[0]?.value;
-    vi.mocked(instance.patch).mockResolvedValueOnce({ data: {} });
-
-    await mod.routingApi.update({ retry_count: 5 });
-
-    expect(instance.patch).toHaveBeenCalledWith(
-      '/routing',
-      expect.objectContaining({ request_retry: 5 })
+      expect.objectContaining({
+        model_strategies: { 'claude-*': 'latency-aware' },
+        model_fallbacks: { 'gpt-4o': ['gpt-4o-mini'] },
+      })
     );
   });
 });

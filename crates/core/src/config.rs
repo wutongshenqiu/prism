@@ -368,34 +368,17 @@ impl RoutingConfig {
     /// Resolve the routing strategy for a given model.
     /// Priority: exact match → glob match → default strategy.
     pub fn resolve_strategy(&self, model: &str) -> RoutingStrategy {
-        // Exact match first
-        if let Some(s) = self.model_strategies.get(model) {
-            return *s;
-        }
-        // Glob match
-        for (pattern, strategy) in &self.model_strategies {
-            if crate::glob::glob_match(pattern, model) {
-                return *strategy;
-            }
-        }
-        // Default
-        self.strategy
+        crate::glob::glob_lookup(&self.model_strategies, model)
+            .copied()
+            .unwrap_or(self.strategy)
     }
 
     /// Resolve server-side fallback models for a given model.
     /// Priority: exact match → glob match. Returns empty vec if none.
     pub fn resolve_fallbacks(&self, model: &str) -> Vec<String> {
-        // Exact match first
-        if let Some(fallbacks) = self.model_fallbacks.get(model) {
-            return fallbacks.clone();
-        }
-        // Glob match
-        for (pattern, fallbacks) in &self.model_fallbacks {
-            if crate::glob::glob_match(pattern, model) {
-                return fallbacks.clone();
-            }
-        }
-        Vec::new()
+        crate::glob::glob_lookup(&self.model_fallbacks, model)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 

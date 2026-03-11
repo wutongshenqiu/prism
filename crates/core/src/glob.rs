@@ -42,6 +42,23 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     px == pattern.len()
 }
 
+/// Look up a value in a HashMap by key, trying exact match first, then glob patterns.
+/// Returns `None` if no match is found.
+pub fn glob_lookup<'a, V>(
+    map: &'a std::collections::HashMap<String, V>,
+    key: &str,
+) -> Option<&'a V> {
+    if let Some(v) = map.get(key) {
+        return Some(v);
+    }
+    for (pattern, v) in map {
+        if glob_match(pattern, key) {
+            return Some(v);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

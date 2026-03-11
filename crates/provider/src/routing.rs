@@ -99,18 +99,9 @@ impl CredentialRouter {
     /// Resolve routing strategy for a model: per-model override → default.
     fn resolve_strategy_for_model(&self, model: &str) -> Option<RoutingStrategy> {
         if let Ok(ms) = self.model_strategies.read()
-            && !ms.is_empty()
+            && let Some(s) = prism_core::glob::glob_lookup(&ms, model)
         {
-            // Exact match first
-            if let Some(s) = ms.get(model) {
-                return Some(*s);
-            }
-            // Glob match
-            for (pattern, strategy) in ms.iter() {
-                if prism_core::glob::glob_match(pattern, model) {
-                    return Some(*strategy);
-                }
-            }
+            return Some(*s);
         }
         self.strategy.read().ok().map(|s| *s)
     }
