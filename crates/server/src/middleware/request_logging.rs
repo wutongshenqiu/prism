@@ -72,8 +72,8 @@ pub async fn request_logging_middleware(
             } else {
                 None
             },
-            api_key_id: ctx.as_ref().and_then(|c| c.api_key_id.clone()),
-            tenant_id: ctx.as_ref().and_then(|c| c.tenant_id.clone()),
+            api_key_id: meta.as_ref().and_then(|m| m.api_key_id.clone()),
+            tenant_id: meta.as_ref().and_then(|m| m.tenant_id.clone()),
             client_ip: ctx.as_ref().and_then(|c| c.client_ip.clone()),
         };
         state.request_logs.push(record.clone());
