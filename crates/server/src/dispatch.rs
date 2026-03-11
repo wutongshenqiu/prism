@@ -50,13 +50,17 @@ struct DispatchDebug {
 
 /// Metadata about a dispatched request, stored in response extensions
 /// so the logging middleware can populate log entries.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DispatchMeta {
     pub provider: Option<String>,
     pub model: Option<String>,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
+    pub requested_model: Option<String>,
+    pub credential_name: Option<String>,
+    pub stream: bool,
+    pub retry_count: u32,
+    pub usage: Option<prism_core::request_record::TokenUsage>,
     pub cost: Option<f64>,
+    pub error_detail: Option<String>,
 }
 
 /// Unified dispatch: resolves providers, picks credentials, translates, executes, retries.
@@ -98,9 +102,9 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
             resp.extensions_mut().insert(DispatchMeta {
                 provider: Some(cached.provider),
                 model: Some(cached.model),
-                input_tokens: Some(cached.input_tokens),
-                output_tokens: Some(cached.output_tokens),
-                cost: None,
+                requested_model: Some(req.model.clone()),
+                stream: false,
+                ..Default::default()
             });
             return Ok(resp);
         }
@@ -120,6 +124,7 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
 
     let mut debug_info = DispatchDebug::default();
     let mut last_error: Option<ProxyError> = None;
+    let mut total_attempts: u32 = 0;
 
     // Outer loop: try each model in the fallback chain
     for current_model in &model_chain {
@@ -181,6 +186,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                 debug_info
                     .attempts
                     .push(format!("{}@{}", actual_model, target_format.as_str()));
+
+                total_attempts += 1;
 
                 // Record metrics
                 state
@@ -302,9 +309,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                     resp.extensions_mut().insert(DispatchMeta {
                                         provider: debug_info.provider.clone(),
                                         model: debug_info.model.clone(),
-                                        input_tokens: None,
-                                        output_tokens: None,
-                                        cost: None,
+                                        requested_model: Some(req.model.clone()),
+                                        credential_name: debug_info.credential_name.clone(),
+                                        stream: true,
+                                        retry_count: total_attempts.saturating_sub(1),
+                                        ..Default::default()
                                     });
                                     if req.debug {
                                         inject_debug_headers(&mut resp, &debug_info);
@@ -320,9 +329,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 resp.extensions_mut().insert(DispatchMeta {
                                     provider: debug_info.provider.clone(),
                                     model: debug_info.model.clone(),
-                                    input_tokens: None,
-                                    output_tokens: None,
-                                    cost: None,
+                                    requested_model: Some(req.model.clone()),
+                                    credential_name: debug_info.credential_name.clone(),
+                                    stream: true,
+                                    retry_count: total_attempts.saturating_sub(1),
+                                    ..Default::default()
                                 });
                                 if req.debug {
                                     inject_debug_headers(&mut resp, &debug_info);
@@ -344,9 +355,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                             resp.extensions_mut().insert(DispatchMeta {
                                 provider: debug_info.provider.clone(),
                                 model: debug_info.model.clone(),
-                                input_tokens: None,
-                                output_tokens: None,
-                                cost: None,
+                                requested_model: Some(req.model.clone()),
+                                credential_name: debug_info.credential_name.clone(),
+                                stream: true,
+                                retry_count: total_attempts.saturating_sub(1),
+                                ..Default::default()
                             });
                             if req.debug {
                                 inject_debug_headers(&mut resp, &debug_info);
@@ -412,6 +425,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         &translated,
                                         &state.cost_calculator,
                                         &state.metrics,
+                                        &req.model,
+                                        total_attempts,
                                     );
                                     if req.debug {
                                         inject_debug_headers(&mut resp, &debug_info);
@@ -503,6 +518,8 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 &translated,
                                 &state.cost_calculator,
                                 &state.metrics,
+                                &req.model,
+                                total_attempts,
                             );
                             if req.debug {
                                 inject_debug_headers(&mut resp, &debug_info);
@@ -549,49 +566,62 @@ mod tests {
     #[test]
     fn test_extract_usage_openai_format() {
         let payload = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20}}"#;
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, Some(10));
-        assert_eq!(output, Some(20));
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
     }
 
     #[test]
     fn test_extract_usage_claude_format() {
         let payload = r#"{"usage":{"input_tokens":15,"output_tokens":25}}"#;
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, Some(15));
-        assert_eq!(output, Some(25));
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 15);
+        assert_eq!(usage.output_tokens, 25);
+    }
+
+    #[test]
+    fn test_extract_usage_claude_with_cache() {
+        let payload = r#"{"usage":{"input_tokens":15,"output_tokens":25,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}"#;
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 15);
+        assert_eq!(usage.output_tokens, 25);
+        assert_eq!(usage.cache_read_tokens, 100);
+        assert_eq!(usage.cache_creation_tokens, 50);
+    }
+
+    #[test]
+    fn test_extract_usage_openai_with_cached_tokens() {
+        let payload = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":5}}}"#;
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
+        assert_eq!(usage.cache_read_tokens, 5);
     }
 
     #[test]
     fn test_extract_usage_gemini_format() {
         let payload = r#"{"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":8}}"#;
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, Some(12));
-        assert_eq!(output, Some(8));
+        let usage = extract_usage(payload).unwrap();
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 8);
     }
 
     #[test]
     fn test_extract_usage_no_usage() {
         let payload = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, None);
-        assert_eq!(output, None);
+        assert!(extract_usage(payload).is_none());
     }
 
     #[test]
     fn test_extract_usage_invalid_json() {
         let payload = "not json";
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, None);
-        assert_eq!(output, None);
+        assert!(extract_usage(payload).is_none());
     }
 
     #[test]
     fn test_extract_usage_empty_usage() {
         let payload = r#"{"usage":{}}"#;
-        let (input, output) = extract_usage(payload);
-        assert_eq!(input, None);
-        assert_eq!(output, None);
+        assert!(extract_usage(payload).is_none());
     }
 
     // === inject_debug_headers ===

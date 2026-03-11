@@ -113,11 +113,13 @@ streaming:
 
 # ─── Cost Tracking ─────────────────────────────────────────────────────────
 # Custom model price overrides (USD per 1M tokens).
-# Built-in prices are included for major models. Override here if needed.
+# Built-in prices include cache token pricing for Claude/OpenAI/Gemini.
 # model-prices:
 #   my-custom-model:
 #     input: 1.0             # USD per 1M input tokens
 #     output: 2.0            # USD per 1M output tokens
+#     cache-read: 0.5        # USD per 1M cache-read tokens (optional, defaults to input)
+#     cache-write: 1.25      # USD per 1M cache-creation tokens (optional, defaults to input)
 #   gpt-4o:
 #     input: 2.50            # Override built-in price
 #     output: 10.0

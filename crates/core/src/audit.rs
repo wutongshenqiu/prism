@@ -1,34 +1,17 @@
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 use tokio::sync::Mutex;
 
+use crate::request_record::RequestRecord;
+
 /// Trait: pluggable audit backend (file/database/remote service etc.).
 #[async_trait]
 pub trait AuditBackend: Send + Sync {
-    async fn write(&self, entry: &AuditEntry);
+    async fn write(&self, entry: &RequestRecord);
     async fn flush(&self);
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AuditEntry {
-    pub timestamp: DateTime<Utc>,
-    pub request_id: String,
-    pub method: String,
-    pub path: String,
-    pub status: u16,
-    pub latency_ms: u64,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub cost: Option<f64>,
-    pub error: Option<String>,
-    pub api_key_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub client_ip: Option<String>,
 }
 
 /// Default implementation: JSONL file with daily rotation.
@@ -108,7 +91,7 @@ impl FileAuditBackend {
 
 #[async_trait]
 impl AuditBackend for FileAuditBackend {
-    async fn write(&self, entry: &AuditEntry) {
+    async fn write(&self, entry: &RequestRecord) {
         self.rotate_if_needed().await;
         match serde_json::to_string(entry) {
             Ok(json) => {
@@ -138,7 +121,7 @@ pub struct NoopAuditBackend;
 
 #[async_trait]
 impl AuditBackend for NoopAuditBackend {
-    async fn write(&self, _entry: &AuditEntry) {}
+    async fn write(&self, _entry: &RequestRecord) {}
     async fn flush(&self) {}
 }
 
@@ -163,28 +146,40 @@ impl Default for AuditConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request_record::TokenUsage;
+
+    fn make_test_record() -> RequestRecord {
+        RequestRecord {
+            request_id: "test-456".to_string(),
+            timestamp: Utc::now(),
+            method: "POST".to_string(),
+            path: "/v1/messages".to_string(),
+            stream: false,
+            requested_model: Some("claude-3-opus".to_string()),
+            provider: Some("claude".to_string()),
+            model: Some("claude-3-opus".to_string()),
+            credential_name: Some("prod-key".to_string()),
+            retry_count: 0,
+            status: 200,
+            latency_ms: 250,
+            usage: Some(TokenUsage {
+                input_tokens: 100,
+                output_tokens: 200,
+                cache_read_tokens: 50,
+                cache_creation_tokens: 0,
+            }),
+            cost: Some(0.01),
+            error: None,
+            api_key_id: Some("sk-p****1234".to_string()),
+            tenant_id: Some("alpha".to_string()),
+            client_ip: Some("1.2.3.4".to_string()),
+        }
+    }
 
     #[tokio::test]
     async fn test_noop_backend() {
         let backend = NoopAuditBackend;
-        let entry = AuditEntry {
-            timestamp: Utc::now(),
-            request_id: "test-123".to_string(),
-            method: "POST".to_string(),
-            path: "/v1/chat/completions".to_string(),
-            status: 200,
-            latency_ms: 100,
-            provider: Some("openai".to_string()),
-            model: Some("gpt-4".to_string()),
-            input_tokens: Some(10),
-            output_tokens: Some(20),
-            cost: Some(0.001),
-            error: None,
-            api_key_id: None,
-            tenant_id: None,
-            client_ip: None,
-        };
-        backend.write(&entry).await;
+        backend.write(&make_test_record()).await;
         backend.flush().await;
     }
 
@@ -198,27 +193,9 @@ mod tests {
         };
         let backend = FileAuditBackend::new(config).unwrap();
 
-        let entry = AuditEntry {
-            timestamp: Utc::now(),
-            request_id: "test-456".to_string(),
-            method: "POST".to_string(),
-            path: "/v1/messages".to_string(),
-            status: 200,
-            latency_ms: 250,
-            provider: Some("claude".to_string()),
-            model: Some("claude-3-opus".to_string()),
-            input_tokens: Some(100),
-            output_tokens: Some(200),
-            cost: Some(0.01),
-            error: None,
-            api_key_id: Some("sk-p****1234".to_string()),
-            tenant_id: Some("alpha".to_string()),
-            client_ip: Some("1.2.3.4".to_string()),
-        };
-        backend.write(&entry).await;
+        backend.write(&make_test_record()).await;
         backend.flush().await;
 
-        // Check that the file was created
         let today = Utc::now().date_naive();
         let filename = format!("audit-{}.jsonl", today.format("%Y-%m-%d"));
         let path = dir.path().join(filename);
@@ -226,5 +203,6 @@ mod tests {
 
         let content = std::fs::read_to_string(path).unwrap();
         assert!(content.contains("test-456"));
+        assert!(content.contains("cache_read_tokens"));
     }
 }

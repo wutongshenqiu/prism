@@ -1,17 +1,16 @@
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use prism_core::error::ProxyError;
+use prism_core::request_record::TokenUsage;
 
 use super::DispatchDebug;
 use super::DispatchMeta;
 
-/// Extract token usage from a response payload (any format).
-pub(super) fn extract_usage(payload: &str) -> (Option<u64>, Option<u64>) {
-    let val: serde_json::Value = match serde_json::from_str(payload) {
-        Ok(v) => v,
-        Err(_) => return (None, None),
-    };
-    // OpenAI/Claude format: usage.prompt_tokens / usage.input_tokens
+/// Extract token usage from a response payload (any format), including cache tokens.
+pub(super) fn extract_usage(payload: &str) -> Option<TokenUsage> {
+    let val: serde_json::Value = serde_json::from_str(payload).ok()?;
+
+    // OpenAI format: usage.prompt_tokens / usage.completion_tokens
     if let Some(usage) = val.get("usage") {
         let input = usage
             .get("prompt_tokens")
@@ -21,15 +20,59 @@ pub(super) fn extract_usage(payload: &str) -> (Option<u64>, Option<u64>) {
             .get("completion_tokens")
             .and_then(|v| v.as_u64())
             .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()));
-        return (input, output);
+
+        if input.is_none() && output.is_none() {
+            return None;
+        }
+
+        // Cache tokens: Claude uses top-level fields, OpenAI nests under prompt_tokens_details
+        let cache_read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                usage
+                    .get("prompt_tokens_details")
+                    .and_then(|d| d.get("cached_tokens"))
+                    .and_then(|v| v.as_u64())
+            })
+            .unwrap_or(0);
+
+        let cache_creation = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        return Some(TokenUsage {
+            input_tokens: input.unwrap_or(0),
+            output_tokens: output.unwrap_or(0),
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+        });
     }
+
     // Gemini format: usageMetadata
     if let Some(usage) = val.get("usageMetadata") {
         let input = usage.get("promptTokenCount").and_then(|v| v.as_u64());
         let output = usage.get("candidatesTokenCount").and_then(|v| v.as_u64());
-        return (input, output);
+
+        if input.is_none() && output.is_none() {
+            return None;
+        }
+
+        let cache_read = usage
+            .get("cachedContentTokenCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        return Some(TokenUsage {
+            input_tokens: input.unwrap_or(0),
+            output_tokens: output.unwrap_or(0),
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: 0,
+        });
     }
-    (None, None)
+
+    None
 }
 
 /// Inject dispatch metadata into response extensions for request logging.
@@ -39,16 +82,18 @@ pub(super) fn inject_dispatch_meta(
     translated_payload: &str,
     cost_calculator: &prism_core::cost::CostCalculator,
     metrics: &prism_core::metrics::Metrics,
+    requested_model: &str,
+    total_attempts: u32,
 ) {
-    let (input_tokens, output_tokens) = extract_usage(translated_payload);
+    let usage = extract_usage(translated_payload);
     let model = debug.model.as_deref();
-    let cost = match (model, input_tokens, output_tokens) {
-        (Some(m), Some(inp), Some(out)) => cost_calculator.calculate(m, inp, out),
+    let cost = match (model, &usage) {
+        (Some(m), Some(u)) => cost_calculator.calculate(m, u),
         _ => None,
     };
     // Record tokens and cost in global metrics
-    if let (Some(inp), Some(out)) = (input_tokens, output_tokens) {
-        metrics.record_tokens(inp, out);
+    if let Some(ref u) = usage {
+        metrics.record_tokens(u.total_input(), u.output_tokens);
     }
     if let (Some(m), Some(c)) = (model, cost) {
         metrics.record_cost(m, c);
@@ -56,9 +101,13 @@ pub(super) fn inject_dispatch_meta(
     response.extensions_mut().insert(DispatchMeta {
         provider: debug.provider.clone(),
         model: debug.model.clone(),
-        input_tokens,
-        output_tokens,
+        requested_model: Some(requested_model.to_string()),
+        credential_name: debug.credential_name.clone(),
+        stream: false,
+        retry_count: total_attempts.saturating_sub(1),
+        usage,
         cost,
+        error_detail: None,
     });
 }
 

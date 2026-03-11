@@ -797,19 +797,26 @@ async fn test_log_stats_with_entries() {
     harness
         .state
         .request_logs
-        .push(prism_core::request_log::RequestLogEntry {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+        .push(prism_core::request_record::RequestRecord {
             request_id: "req-1".to_string(),
+            timestamp: chrono::Utc::now(),
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
-            status: 200,
-            latency_ms: 150,
+            stream: false,
+            requested_model: Some("gpt-4".to_string()),
             provider: Some("openai".to_string()),
             model: Some("gpt-4".to_string()),
-            input_tokens: Some(100),
-            output_tokens: Some(50),
-            error: None,
+            credential_name: None,
+            retry_count: 0,
+            status: 200,
+            latency_ms: 150,
+            usage: Some(prism_core::request_record::TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                ..Default::default()
+            }),
             cost: None,
+            error: None,
             api_key_id: None,
             tenant_id: None,
             client_ip: None,
@@ -817,19 +824,22 @@ async fn test_log_stats_with_entries() {
     harness
         .state
         .request_logs
-        .push(prism_core::request_log::RequestLogEntry {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+        .push(prism_core::request_record::RequestRecord {
             request_id: "req-2".to_string(),
+            timestamp: chrono::Utc::now(),
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
-            status: 500,
-            latency_ms: 50,
+            stream: false,
+            requested_model: Some("claude-3".to_string()),
             provider: Some("claude".to_string()),
             model: Some("claude-3".to_string()),
-            input_tokens: None,
-            output_tokens: None,
-            error: Some("Internal Server Error".to_string()),
+            credential_name: None,
+            retry_count: 0,
+            status: 500,
+            latency_ms: 50,
+            usage: None,
             cost: None,
+            error: Some("Internal Server Error".to_string()),
             api_key_id: None,
             tenant_id: None,
             client_ip: None,
@@ -853,23 +863,30 @@ async fn test_query_logs_with_entries() {
         harness
             .state
             .request_logs
-            .push(prism_core::request_log::RequestLogEntry {
-                timestamp: chrono::Utc::now().timestamp_millis(),
+            .push(prism_core::request_record::RequestRecord {
                 request_id: format!("req-{i}"),
+                timestamp: chrono::Utc::now(),
                 method: "POST".to_string(),
                 path: "/v1/chat/completions".to_string(),
-                status: if i % 2 == 0 { 200 } else { 429 },
-                latency_ms: 100,
+                stream: false,
+                requested_model: Some("gpt-4".to_string()),
                 provider: Some("openai".to_string()),
                 model: Some("gpt-4".to_string()),
-                input_tokens: Some(10),
-                output_tokens: Some(20),
+                credential_name: None,
+                retry_count: 0,
+                status: if i % 2 == 0 { 200 } else { 429 },
+                latency_ms: 100,
+                usage: Some(prism_core::request_record::TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 20,
+                    ..Default::default()
+                }),
+                cost: None,
                 error: if i % 2 != 0 {
                     Some("rate limited".to_string())
                 } else {
                     None
                 },
-                cost: None,
                 api_key_id: None,
                 tenant_id: None,
                 client_ip: None,
