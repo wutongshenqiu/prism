@@ -150,8 +150,9 @@ pub(super) struct StreamDoneContext {
 /// Wrap an upstream `StreamChunk` stream to capture token usage from SSE events.
 ///
 /// Each chunk's `data` is inspected for usage fields (supports OpenAI, Claude, and Gemini
-/// response formats). When the stream ends, the captured usage is written back to the
-/// request log entry and recorded in global metrics.
+/// response formats). When the stream is dropped (either after natural completion or due to
+/// client disconnect), the captured usage is written back to the request log entry and
+/// recorded in global metrics via the `Drop` implementation on the internal state.
 pub(super) fn with_usage_capture(
     stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
@@ -163,13 +164,33 @@ pub(super) fn with_usage_capture(
             Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
         >,
         usage: Option<TokenUsage>,
-        ctx: StreamDoneContext,
+        ctx: Option<StreamDoneContext>,
+    }
+
+    impl Drop for State {
+        fn drop(&mut self) {
+            if let Some(ctx) = self.ctx.take()
+                && let Some(ref usage) = self.usage
+            {
+                let cost = ctx
+                    .model
+                    .as_deref()
+                    .and_then(|m| ctx.cost_calculator.calculate(m, usage));
+                ctx.metrics
+                    .record_tokens(usage.total_input(), usage.output_tokens);
+                if let (Some(m), Some(c)) = (ctx.model.as_deref(), cost) {
+                    ctx.metrics.record_cost(m, c);
+                }
+                ctx.request_logs
+                    .update_usage(&ctx.request_id, usage.clone(), cost);
+            }
+        }
     }
 
     let state = State {
         inner: stream,
         usage: None,
-        ctx,
+        ctx: Some(ctx),
     };
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
@@ -187,25 +208,8 @@ pub(super) fn with_usage_capture(
                 Some((result, state))
             }
             None => {
-                // Stream ended — update log entry with captured usage
-                if let Some(ref usage) = state.usage {
-                    let cost = state
-                        .ctx
-                        .model
-                        .as_deref()
-                        .and_then(|m| state.ctx.cost_calculator.calculate(m, usage));
-                    state
-                        .ctx
-                        .metrics
-                        .record_tokens(usage.total_input(), usage.output_tokens);
-                    if let (Some(m), Some(c)) = (state.ctx.model.as_deref(), cost) {
-                        state.ctx.metrics.record_cost(m, c);
-                    }
-                    state
-                        .ctx
-                        .request_logs
-                        .update_usage(&state.ctx.request_id, usage.clone(), cost);
-                }
+                // Stream ended naturally. State will be dropped here,
+                // and Drop impl handles the cleanup.
                 None
             }
         }
