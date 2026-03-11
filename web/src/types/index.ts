@@ -139,23 +139,32 @@ export interface LatencyBucket {
 
 // ── Request Logs ──
 
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
 export interface RequestLog {
   request_id: string;
-  timestamp: number;
+  timestamp: string;
   method: string;
   path: string;
+  stream: boolean;
+  requested_model: string | null;
   provider: string | null;
   model: string | null;
+  credential_name: string | null;
+  retry_count: number;
   status: number;
   latency_ms: number;
-  input_tokens: number | null;
-  output_tokens: number | null;
+  usage: TokenUsage | null;
   cost: number | null;
   error?: string | null;
   api_key_id: string | null;
   tenant_id: string | null;
   client_ip: string | null;
-  [key: string]: unknown;
 }
 
 export interface RequestLogFilter {

@@ -244,13 +244,6 @@ export const logsApi = {
           data: items.map((item: Record<string, unknown>) => ({
             ...item,
             id: item.request_id || item.id || '',
-            input_tokens: item.input_tokens ?? 0,
-            output_tokens: item.output_tokens ?? 0,
-            provider: item.provider || '-',
-            model: item.model || '-',
-            timestamp: typeof item.timestamp === 'number'
-              ? new Date(item.timestamp).toISOString()
-              : item.timestamp,
           })),
           total,
           total_pages: Math.ceil(total / pageSize),

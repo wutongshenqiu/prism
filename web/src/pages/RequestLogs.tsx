@@ -56,6 +56,12 @@ export default function RequestLogs() {
     return `$${cost.toFixed(4)}`;
   };
 
+  const formatTokens = (log: typeof logs[0]): string => {
+    if (!log.usage) return '-';
+    const { input_tokens, output_tokens } = log.usage;
+    return `${input_tokens} / ${output_tokens}`;
+  };
+
   const toggleExpand = (id: string) => {
     setExpandedId(expandedId === id ? null : id);
   };
@@ -183,6 +189,7 @@ export default function RequestLogs() {
                       <td>
                         <div>
                           {log.provider && <span className="type-badge" style={{ marginRight: 4 }}>{log.provider}</span>}
+                          {log.stream && <span className="type-badge" style={{ marginRight: 4, opacity: 0.7 }}>stream</span>}
                           <span className="text-mono" style={{ fontSize: '0.85rem' }}>{log.model || '-'}</span>
                         </div>
                       </td>
@@ -193,9 +200,7 @@ export default function RequestLogs() {
                       </td>
                       <td className="text-nowrap">{log.latency_ms}ms</td>
                       <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
-                        {log.input_tokens != null || log.output_tokens != null
-                          ? `${log.input_tokens ?? 0} / ${log.output_tokens ?? 0}`
-                          : '-'}
+                        {formatTokens(log)}
                       </td>
                       <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
                         {formatCost(log.cost)}
@@ -229,6 +234,10 @@ export default function RequestLogs() {
                                 </span>
                               </div>
                               <div className="log-detail-item">
+                                <span className="log-detail-label">Stream</span>
+                                <span className="log-detail-value">{log.stream ? 'Yes' : 'No'}</span>
+                              </div>
+                              <div className="log-detail-item">
                                 <span className="log-detail-label">Client IP</span>
                                 <span className="log-detail-value text-mono">{log.client_ip || '-'}</span>
                               </div>
@@ -245,7 +254,15 @@ export default function RequestLogs() {
                                 <span className="log-detail-value">{log.provider || '-'}</span>
                               </div>
                               <div className="log-detail-item">
-                                <span className="log-detail-label">Model</span>
+                                <span className="log-detail-label">Credential</span>
+                                <span className="log-detail-value text-mono">{log.credential_name || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Requested Model</span>
+                                <span className="log-detail-value text-mono">{log.requested_model || '-'}</span>
+                              </div>
+                              <div className="log-detail-item">
+                                <span className="log-detail-label">Actual Model</span>
                                 <span className="log-detail-value text-mono">{log.model || '-'}</span>
                               </div>
                               <div className="log-detail-item">
@@ -258,14 +275,32 @@ export default function RequestLogs() {
                                 <span className="log-detail-label">Latency</span>
                                 <span className="log-detail-value">{log.latency_ms}ms</span>
                               </div>
+                              {log.retry_count > 0 && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Retries</span>
+                                  <span className="log-detail-value">{log.retry_count}</span>
+                                </div>
+                              )}
                               <div className="log-detail-item">
                                 <span className="log-detail-label">Input Tokens</span>
-                                <span className="log-detail-value">{log.input_tokens ?? '-'}</span>
+                                <span className="log-detail-value">{log.usage?.input_tokens ?? '-'}</span>
                               </div>
                               <div className="log-detail-item">
                                 <span className="log-detail-label">Output Tokens</span>
-                                <span className="log-detail-value">{log.output_tokens ?? '-'}</span>
+                                <span className="log-detail-value">{log.usage?.output_tokens ?? '-'}</span>
                               </div>
+                              {(log.usage?.cache_read_tokens ?? 0) > 0 && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Cache Read Tokens</span>
+                                  <span className="log-detail-value">{log.usage?.cache_read_tokens}</span>
+                                </div>
+                              )}
+                              {(log.usage?.cache_creation_tokens ?? 0) > 0 && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Cache Creation Tokens</span>
+                                  <span className="log-detail-value">{log.usage?.cache_creation_tokens}</span>
+                                </div>
+                              )}
                               <div className="log-detail-item">
                                 <span className="log-detail-label">Cost</span>
                                 <span className="log-detail-value">{formatCost(log.cost)}</span>

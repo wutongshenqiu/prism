@@ -1,27 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::VecDeque;
 use std::sync::RwLock;
 use tokio::sync::broadcast;
 
-/// A single request log entry for proxy requests.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestLogEntry {
-    pub timestamp: i64,
-    pub request_id: String,
-    pub method: String,
-    pub path: String,
-    pub status: u16,
-    pub latency_ms: u64,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub cost: Option<f64>,
-    pub error: Option<String>,
-    pub api_key_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub client_ip: Option<String>,
-}
+use crate::request_record::RequestRecord;
 
 /// Query parameters for filtering request logs.
 #[derive(Debug, Default, Deserialize)]
@@ -36,9 +18,9 @@ pub struct LogQuery {
 }
 
 /// Paged response for log queries.
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct LogPage {
-    pub items: Vec<RequestLogEntry>,
+    pub items: Vec<RequestRecord>,
     pub total: usize,
     pub page: usize,
     pub page_size: usize,
@@ -46,9 +28,9 @@ pub struct LogPage {
 
 /// In-memory ring buffer for request logs with broadcast notification.
 pub struct RequestLogStore {
-    entries: RwLock<VecDeque<RequestLogEntry>>,
+    entries: RwLock<VecDeque<RequestRecord>>,
     capacity: usize,
-    tx: broadcast::Sender<RequestLogEntry>,
+    tx: broadcast::Sender<RequestRecord>,
 }
 
 impl RequestLogStore {
@@ -62,7 +44,7 @@ impl RequestLogStore {
     }
 
     /// Push a new log entry. Evicts the oldest if at capacity.
-    pub fn push(&self, entry: RequestLogEntry) {
+    pub fn push(&self, entry: RequestRecord) {
         let _ = self.tx.send(entry.clone());
         if let Ok(mut entries) = self.entries.write() {
             if entries.len() >= self.capacity {
@@ -73,7 +55,7 @@ impl RequestLogStore {
     }
 
     /// Subscribe to new log entries.
-    pub fn subscribe(&self) -> broadcast::Receiver<RequestLogEntry> {
+    pub fn subscribe(&self) -> broadcast::Receiver<RequestRecord> {
         self.tx.subscribe()
     }
 
@@ -83,7 +65,7 @@ impl RequestLogStore {
         let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
 
         let entries = self.entries.read().unwrap();
-        let filtered: Vec<&RequestLogEntry> = entries
+        let filtered: Vec<&RequestRecord> = entries
             .iter()
             .rev() // newest first
             .filter(|e| {
@@ -114,13 +96,14 @@ impl RequestLogStore {
                         return false;
                     }
                 }
+                let ts = e.timestamp.timestamp_millis();
                 if let Some(from) = q.from
-                    && e.timestamp < from
+                    && ts < from
                 {
                     return false;
                 }
                 if let Some(to) = q.to
-                    && e.timestamp > to
+                    && ts > to
                 {
                     return false;
                 }
@@ -130,7 +113,7 @@ impl RequestLogStore {
 
         let total = filtered.len();
         let start = (page - 1) * page_size;
-        let items: Vec<RequestLogEntry> = filtered
+        let items: Vec<RequestRecord> = filtered
             .into_iter()
             .skip(start)
             .take(page_size)
@@ -167,19 +150,27 @@ impl RequestLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
-    fn make_entry(status: u16, provider: &str, model: &str) -> RequestLogEntry {
-        RequestLogEntry {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+    fn make_entry(status: u16, provider: &str, model: &str) -> RequestRecord {
+        RequestRecord {
             request_id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Utc::now(),
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
-            status,
-            latency_ms: 100,
+            stream: false,
+            requested_model: Some(model.to_string()),
             provider: Some(provider.to_string()),
             model: Some(model.to_string()),
-            input_tokens: Some(10),
-            output_tokens: Some(20),
+            credential_name: None,
+            retry_count: 0,
+            status,
+            latency_ms: 100,
+            usage: Some(crate::request_record::TokenUsage {
+                input_tokens: 10,
+                output_tokens: 20,
+                ..Default::default()
+            }),
             cost: None,
             error: if status >= 400 {
                 Some("error".to_string())
