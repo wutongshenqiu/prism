@@ -96,7 +96,7 @@ pub(super) fn inject_dispatch_meta(
     upstream_payload: &[u8],
     cost_calculator: &prism_core::cost::CostCalculator,
     metrics: &prism_core::metrics::Metrics,
-    requested_model: &str,
+    req: &super::DispatchRequest,
     total_attempts: u32,
 ) {
     let upstream_str = std::str::from_utf8(upstream_payload).unwrap_or("");
@@ -116,13 +116,15 @@ pub(super) fn inject_dispatch_meta(
     response.extensions_mut().insert(DispatchMeta {
         provider: debug.provider.clone(),
         model: debug.model.clone(),
-        requested_model: Some(requested_model.to_string()),
+        requested_model: Some(req.model.clone()),
         credential_name: debug.credential_name.clone(),
         stream: false,
         retry_count: total_attempts.saturating_sub(1),
         usage,
         cost,
         error_detail: None,
+        api_key_id: req.api_key_id.clone(),
+        tenant_id: req.tenant_id.clone(),
     });
 }
 
