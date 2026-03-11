@@ -26,3 +26,16 @@ export function formatNumber(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
+
+export function getStatusClass(status: number): string {
+  if (status >= 200 && status < 300) return 'status-2xx';
+  if (status >= 400 && status < 500) return 'status-4xx';
+  if (status >= 500) return 'status-5xx';
+  return '';
+}
+
+export function formatCost(cost: number | null): string {
+  if (cost == null || cost === 0) return '-';
+  if (cost < 0.01) return `$${cost.toFixed(6)}`;
+  return `$${cost.toFixed(4)}`;
+}

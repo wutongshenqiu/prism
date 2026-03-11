@@ -8,7 +8,6 @@ import type { MetricsSnapshot, RequestLog, WsMessage } from '../types';
 export function useWebSocket(): void {
   const token = useAuthStore((s) => s.token);
   const setSnapshot = useMetricsStore((s) => s.setSnapshot);
-  const addTimeSeriesPoint = useMetricsStore((s) => s.addTimeSeriesPoint);
   const addLog = useLogsStore((s) => s.addLog);
   const connectedRef = useRef(false);
 
@@ -25,15 +24,7 @@ export function useWebSocket(): void {
     const unsubscribe = manager.subscribe((message: WsMessage) => {
       switch (message.type) {
         case 'metrics': {
-          const metrics = message.data as MetricsSnapshot;
-          setSnapshot(metrics);
-          addTimeSeriesPoint({
-            timestamp: new Date().toISOString(),
-            requests: metrics.requests_per_minute,
-            errors: Math.round(metrics.error_rate * metrics.requests_per_minute),
-            tokens: metrics.total_tokens,
-            latency_ms: metrics.avg_latency_ms,
-          });
+          setSnapshot(message.data as MetricsSnapshot);
           break;
         }
         case 'request_log': {
@@ -46,7 +37,7 @@ export function useWebSocket(): void {
     return () => {
       unsubscribe();
     };
-  }, [token, setSnapshot, addTimeSeriesPoint, addLog]);
+  }, [token, setSnapshot, addLog]);
 
   useEffect(() => {
     return () => {

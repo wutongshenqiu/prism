@@ -1,10 +1,10 @@
 use arc_swap::ArcSwap;
-use prism_core::audit::NoopAuditBackend;
 use prism_core::config::{Config, ProviderKeyEntry};
 use prism_core::cost::CostCalculator;
+use prism_core::memory_log_store::InMemoryLogStore;
 use prism_core::metrics::Metrics;
 use prism_core::rate_limit::CompositeRateLimiter;
-use prism_core::request_log::RequestLogStore;
+use prism_core::request_log::LogStore;
 use prism_provider::routing::CredentialRouter;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -35,7 +35,6 @@ pub struct TestServer {
 impl TestServer {
     /// Start a new test server with the given config.
     pub async fn start(config: Config) -> Self {
-        let request_log_capacity = config.dashboard.request_log_capacity;
         let credential_router = Arc::new(CredentialRouter::new(config.routing.strategy));
         credential_router.update_from_config(&config);
 
@@ -44,8 +43,8 @@ impl TestServer {
         let rate_limiter = Arc::new(CompositeRateLimiter::new(&config.rate_limit));
         let cost_calculator = Arc::new(CostCalculator::new(&config.model_prices));
         let metrics = Arc::new(Metrics::new());
-        let request_logs = Arc::new(RequestLogStore::new(request_log_capacity));
-        let audit: Arc<dyn prism_core::audit::AuditBackend> = Arc::new(NoopAuditBackend);
+        let log_store: Arc<dyn LogStore> =
+            Arc::new(InMemoryLogStore::new(config.log_store.capacity, None));
 
         let config = Arc::new(ArcSwap::from_pointee(config));
 
@@ -55,12 +54,11 @@ impl TestServer {
             executors,
             translators,
             metrics,
-            request_logs,
+            log_store,
             config_path: Arc::new(Mutex::new(String::new())),
             rate_limiter,
             cost_calculator,
             response_cache: None,
-            audit,
             start_time: Instant::now(),
         };
 

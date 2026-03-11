@@ -74,7 +74,7 @@ pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
             "enabled": config.dashboard.enabled,
             "username": config.dashboard.username,
             "jwt_ttl_secs": config.dashboard.jwt_ttl_secs,
-            "request_log_capacity": config.dashboard.request_log_capacity,
+            "log_store_capacity": config.log_store.capacity,
         },
         "providers": {
             "claude": config.claude_api_key.len(),

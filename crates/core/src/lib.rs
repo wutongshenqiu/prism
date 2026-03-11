@@ -1,4 +1,3 @@
-pub mod audit;
 pub mod auth_key;
 pub mod cache;
 pub mod circuit_breaker;
@@ -7,8 +6,10 @@ pub mod config;
 pub mod context;
 pub mod cost;
 pub mod error;
+pub mod file_audit;
 pub mod glob;
 pub mod lifecycle;
+pub mod memory_log_store;
 pub mod metrics;
 pub mod payload;
 pub mod prometheus;

@@ -3,9 +3,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use prism_core::config::{Config, DashboardConfig, RoutingStrategy};
 use prism_core::cost::CostCalculator;
+use prism_core::memory_log_store::InMemoryLogStore;
 use prism_core::metrics::Metrics;
 use prism_core::rate_limit::CompositeRateLimiter;
-use prism_core::request_log::RequestLogStore;
+use prism_core::request_log::LogStore;
 use prism_provider::build_registry;
 use prism_provider::routing::CredentialRouter;
 use prism_server::{AppState, build_router};
@@ -36,7 +37,6 @@ fn create_test_harness() -> TestHarness {
             password_hash,
             jwt_secret: Some("test-secret".to_string()),
             jwt_ttl_secs: 3600,
-            request_log_capacity: 1000,
         },
         ..Config::default()
     };
@@ -52,7 +52,7 @@ fn create_test_harness() -> TestHarness {
     let executors = Arc::new(build_registry(None));
     let translators = Arc::new(prism_translator::build_registry());
     let metrics = Arc::new(Metrics::new());
-    let request_logs = Arc::new(RequestLogStore::new(1000));
+    let log_store: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(1000, None));
 
     let state = AppState {
         config: config_arc,
@@ -60,12 +60,11 @@ fn create_test_harness() -> TestHarness {
         executors,
         translators,
         metrics,
-        request_logs,
+        log_store,
         config_path: Arc::new(Mutex::new(config_path.to_str().unwrap().to_string())),
         rate_limiter: Arc::new(CompositeRateLimiter::new(&config.rate_limit)),
         cost_calculator: Arc::new(CostCalculator::new(&config.model_prices)),
         response_cache: None,
-        audit: Arc::new(prism_core::audit::NoopAuditBackend),
         start_time: Instant::now(),
     };
 
@@ -796,7 +795,7 @@ async fn test_log_stats_with_entries() {
     // Push some log entries directly
     harness
         .state
-        .request_logs
+        .log_store
         .push(prism_core::request_record::RequestRecord {
             request_id: "req-1".to_string(),
             timestamp: chrono::Utc::now(),
@@ -827,10 +826,11 @@ async fn test_log_stats_with_entries() {
             client_ip: None,
             client_region: None,
             attempts: vec![],
-        });
+        })
+        .await;
     harness
         .state
-        .request_logs
+        .log_store
         .push(prism_core::request_record::RequestRecord {
             request_id: "req-2".to_string(),
             timestamp: chrono::Utc::now(),
@@ -857,14 +857,14 @@ async fn test_log_stats_with_entries() {
             client_ip: None,
             client_region: None,
             attempts: vec![],
-        });
+        })
+        .await;
 
     let req = authed_get("/api/dashboard/logs/stats", &token);
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total_entries"], 2);
     assert_eq!(body["error_count"], 1);
-    assert_eq!(body["capacity"], 1000);
 }
 
 #[tokio::test]
@@ -876,7 +876,7 @@ async fn test_query_logs_with_entries() {
     for i in 0..5 {
         harness
             .state
-            .request_logs
+            .log_store
             .push(prism_core::request_record::RequestRecord {
                 request_id: format!("req-{i}"),
                 timestamp: chrono::Utc::now(),
@@ -911,7 +911,8 @@ async fn test_query_logs_with_entries() {
                 client_ip: None,
                 client_region: None,
                 attempts: vec![],
-            });
+            })
+            .await;
     }
 
     let req = authed_get("/api/dashboard/logs", &token);

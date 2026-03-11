@@ -32,25 +32,24 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
     let to_file = args.daemon || config.logging_to_file;
     let log_dir = config.log_dir.clone();
 
-    // Create request_logs and audit backend before logging init so they can be
-    // shared with both the GatewayLogLayer and the Application.
-    let request_logs = std::sync::Arc::new(prism_core::request_log::RequestLogStore::new(
-        config.dashboard.request_log_capacity,
-    ));
-    let audit: std::sync::Arc<dyn prism_core::audit::AuditBackend> = if config.audit.enabled {
-        match prism_core::audit::FileAuditBackend::new(config.audit.clone()) {
-            Ok(backend) => std::sync::Arc::new(backend),
+    // Create log store before logging init so it can be shared with both
+    // the GatewayLogLayer and the Application.
+    let file_writer = if config.log_store.file_audit.enabled {
+        match prism_core::file_audit::FileAuditWriter::new(&config.log_store.file_audit) {
+            Ok(w) => Some(w),
             Err(e) => {
-                eprintln!("Failed to initialize audit backend: {e}, audit disabled");
-                std::sync::Arc::new(prism_core::audit::NoopAuditBackend)
+                eprintln!("Failed to initialize file audit writer: {e}, file audit disabled");
+                None
             }
         }
     } else {
-        std::sync::Arc::new(prism_core::audit::NoopAuditBackend)
+        None
     };
+    let log_store: std::sync::Arc<dyn prism_core::request_log::LogStore> = std::sync::Arc::new(
+        prism_core::memory_log_store::InMemoryLogStore::new(config.log_store.capacity, file_writer),
+    );
 
-    let gateway_layer =
-        prism_server::telemetry::GatewayLogLayer::new(request_logs.clone(), audit.clone());
+    let gateway_layer = prism_server::telemetry::GatewayLogLayer::new(log_store.clone());
 
     let _guard = prism_core::lifecycle::logging::init_logging_with_layer(
         &args.log_level,
@@ -65,11 +64,14 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
         .build()?;
 
     runtime.block_on(async {
-        // Spawn audit cleanup task inside the tokio runtime
-        if config.audit.enabled {
-            prism_core::audit::FileAuditBackend::spawn_cleanup_task(config.audit.clone());
+        // Spawn file audit cleanup task inside the tokio runtime
+        if config.log_store.file_audit.enabled {
+            prism_core::file_audit::FileAuditWriter::spawn_cleanup_static(
+                config.log_store.file_audit.dir.clone(),
+                config.log_store.file_audit.retention_days,
+            );
         }
-        let application = app::Application::build(&args, request_logs, audit)?;
+        let application = app::Application::build(&args, log_store)?;
         application.serve().await
     })
 }

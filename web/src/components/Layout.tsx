@@ -3,7 +3,6 @@ import { useAuthStore } from '../stores/authStore';
 import { useWebSocket } from '../hooks/useWebSocket';
 import {
   LayoutDashboard,
-  BarChart3,
   FileText,
   Server,
   Key,
@@ -17,8 +16,7 @@ import {
 import { useState } from 'react';
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Overview' },
-  { to: '/metrics', icon: BarChart3, label: 'Metrics' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/request-logs', icon: FileText, label: 'Request Logs' },
   { to: '/providers', icon: Server, label: 'Providers' },
   { to: '/auth-keys', icon: Key, label: 'Auth Keys' },

@@ -28,13 +28,12 @@ impl Application {
     /// Build the application from CLI args: load config, build executors,
     /// router, translators, metrics, and acquire PID file.
     ///
-    /// `request_logs` and `audit` are created externally so they can be shared
-    /// with the `GatewayLogLayer` (which must be registered before the
-    /// application is built).
+    /// `log_store` is created externally so it can be shared with the
+    /// `GatewayLogLayer` (which must be registered before the application
+    /// is built).
     pub fn build(
         args: &RunArgs,
-        request_logs: Arc<prism_core::request_log::RequestLogStore>,
-        audit: Arc<dyn prism_core::audit::AuditBackend>,
+        log_store: Arc<dyn prism_core::request_log::LogStore>,
     ) -> anyhow::Result<Self> {
         // Load config
         let mut config = Config::load(&args.config).unwrap_or_else(|e| {
@@ -111,12 +110,11 @@ impl Application {
             executors,
             translators,
             metrics,
-            request_logs,
+            log_store,
             config_path: Arc::new(Mutex::new(args.config.clone())),
             rate_limiter: rate_limiter.clone(),
             cost_calculator: cost_calculator.clone(),
             response_cache,
-            audit,
             start_time: Instant::now(),
         };
         let app_router = prism_server::build_router(state);

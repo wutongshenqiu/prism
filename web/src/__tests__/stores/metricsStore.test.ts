@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useMetricsStore } from '../../stores/metricsStore';
-import type { MetricsTimeSeries } from '../../types';
 
 // Mock the API
 vi.mock('../../services/api', () => ({
@@ -11,21 +10,20 @@ vi.mock('../../services/api', () => ({
 
 describe('metricsStore', () => {
   beforeEach(() => {
-    // Reset store state
     useMetricsStore.setState({
       snapshot: null,
-      timeSeries: [],
-      providerDistribution: [],
-      latencyBuckets: [],
+      stats: null,
+      timeRange: '1h',
+      isLoading: false,
     });
   });
 
-  it('should initialize with null snapshot', () => {
+  it('should initialize with null snapshot and stats', () => {
     const state = useMetricsStore.getState();
     expect(state.snapshot).toBeNull();
-    expect(state.timeSeries).toEqual([]);
-    expect(state.providerDistribution).toEqual([]);
-    expect(state.latencyBuckets).toEqual([]);
+    expect(state.stats).toBeNull();
+    expect(state.timeRange).toBe('1h');
+    expect(state.isLoading).toBe(false);
   });
 
   it('should set snapshot', () => {
@@ -43,75 +41,30 @@ describe('metricsStore', () => {
     expect(useMetricsStore.getState().snapshot).toEqual(snapshot);
   });
 
-  it('should add time series point', () => {
-    const point: MetricsTimeSeries = {
-      timestamp: '2025-01-01T00:00:00Z',
-      requests: 10,
-      errors: 1,
-      tokens: 500,
-      latency_ms: 200,
-    };
-    useMetricsStore.getState().addTimeSeriesPoint(point);
-    expect(useMetricsStore.getState().timeSeries).toHaveLength(1);
-    expect(useMetricsStore.getState().timeSeries[0]).toEqual(point);
-  });
-
-  it('should cap time series at 60 points', () => {
-    const { addTimeSeriesPoint } = useMetricsStore.getState();
-
-    // Add 65 points
-    for (let i = 0; i < 65; i++) {
-      addTimeSeriesPoint({
-        timestamp: `2025-01-01T00:${String(i).padStart(2, '0')}:00Z`,
-        requests: i,
-        errors: 0,
-        tokens: 0,
-        latency_ms: 0,
-      });
-    }
-
-    const series = useMetricsStore.getState().timeSeries;
-    expect(series).toHaveLength(60);
-    // First point should be index 5 (oldest 5 were shifted out)
-    expect(series[0].requests).toBe(5);
-    expect(series[59].requests).toBe(64);
-  });
-
-  it('should set provider distribution', () => {
-    const data = [
-      { provider: 'openai', requests: 50, percentage: 0.5 },
-      { provider: 'claude', requests: 30, percentage: 0.3 },
-    ];
-    useMetricsStore.getState().setProviderDistribution(data);
-    expect(useMetricsStore.getState().providerDistribution).toEqual(data);
-  });
-
-  it('should set latency buckets', () => {
-    const data = [
-      { range: '0-100ms', count: 20 },
-      { range: '100-500ms', count: 50 },
-    ];
-    useMetricsStore.getState().setLatencyBuckets(data);
-    expect(useMetricsStore.getState().latencyBuckets).toEqual(data);
-  });
-
-  it('should fetch stats and populate all fields', async () => {
+  it('should fetch stats and populate stats field', async () => {
     const { logsApi } = await import('../../services/api');
-    const mockData = {
-      snapshot: { total_requests: 42, total_errors: 2, total_tokens: 1000, active_providers: 2, requests_per_minute: 5, avg_latency_ms: 150, error_rate: 0.05, uptime_seconds: 1000 },
-      time_series: [{ timestamp: 'ts1', requests: 1, errors: 0, tokens: 10, latency_ms: 50 }],
-      provider_distribution: [{ provider: 'openai', requests: 42, percentage: 1.0 }],
-      latency_buckets: [{ range: '0-100ms', count: 42 }],
+    const mockStats = {
+      total_entries: 42,
+      error_count: 2,
+      avg_latency_ms: 150,
+      p50_latency_ms: 120,
+      p95_latency_ms: 400,
+      p99_latency_ms: 800,
+      total_cost: 1.5,
+      total_tokens: 10000,
+      time_series: [{ timestamp: 'ts1', requests: 1, errors: 0, avg_latency_ms: 100, tokens: 10, cost: 0.01 }],
+      top_models: [],
+      top_errors: [],
+      provider_distribution: [{ provider: 'openai', requests: 42, percentage: 100.0 }],
+      status_distribution: { success: 40, client_error: 1, server_error: 1 },
     };
-    vi.mocked(logsApi.stats).mockResolvedValueOnce({ data: mockData } as never);
+    vi.mocked(logsApi.stats).mockResolvedValueOnce({ data: mockStats } as never);
 
     await useMetricsStore.getState().fetchStats();
 
     const state = useMetricsStore.getState();
-    expect(state.snapshot?.total_requests).toBe(42);
-    expect(state.timeSeries).toHaveLength(1);
-    expect(state.providerDistribution).toHaveLength(1);
-    expect(state.latencyBuckets).toHaveLength(1);
+    expect(state.stats).toEqual(mockStats);
+    expect(state.isLoading).toBe(false);
   });
 
   it('should handle fetchStats failure gracefully', async () => {
@@ -122,7 +75,16 @@ describe('metricsStore', () => {
     await useMetricsStore.getState().fetchStats();
 
     expect(consoleSpy).toHaveBeenCalled();
-    expect(useMetricsStore.getState().snapshot).toBeNull();
+    expect(useMetricsStore.getState().stats).toBeNull();
+    expect(useMetricsStore.getState().isLoading).toBe(false);
     consoleSpy.mockRestore();
+  });
+
+  it('should update timeRange and trigger fetchStats', async () => {
+    const { logsApi } = await import('../../services/api');
+    vi.mocked(logsApi.stats).mockResolvedValue({ data: {} } as never);
+
+    useMetricsStore.getState().setTimeRange('5m');
+    expect(useMetricsStore.getState().timeRange).toBe('5m');
   });
 });

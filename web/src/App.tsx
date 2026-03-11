@@ -4,8 +4,7 @@ import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
-import Overview from './pages/Overview';
-import Metrics from './pages/Metrics';
+import Dashboard from './pages/Dashboard';
 import RequestLogs from './pages/RequestLogs';
 import Providers from './pages/Providers';
 import AuthKeys from './pages/AuthKeys';
@@ -33,8 +32,7 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Overview />} />
-          <Route path="metrics" element={<Metrics />} />
+          <Route index element={<Dashboard />} />
           <Route path="request-logs" element={<RequestLogs />} />
           <Route path="providers" element={<Providers />} />
           <Route path="auth-keys" element={<AuthKeys />} />

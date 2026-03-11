@@ -1,7 +1,6 @@
 use super::span_data::RequestSpanData;
 use super::visitors::{AttemptSpanVisitor, RequestSpanVisitor};
-use prism_core::audit::AuditBackend;
-use prism_core::request_log::RequestLogStore;
+use prism_core::request_log::LogStore;
 use prism_core::request_record::AttemptSummary;
 use std::sync::Arc;
 use tracing::Subscriber;
@@ -14,17 +13,19 @@ const REQUEST_SPAN_NAME: &str = "gateway.request";
 const ATTEMPT_SPAN_NAME: &str = "gateway.attempt";
 
 /// Custom tracing Layer that collects data from `gateway.request` and `gateway.attempt`
-/// spans, assembles `RequestRecord`s, and writes them to the ring buffer + audit backend.
+/// spans, assembles `RequestRecord`s, and writes them to the log store.
 pub struct GatewayLogLayer {
-    request_logs: Arc<RequestLogStore>,
-    audit: Arc<dyn AuditBackend>,
+    log_store: Arc<dyn LogStore>,
+    /// Cached tokio runtime handle to avoid per-request TLS lookup.
+    runtime_handle: Option<tokio::runtime::Handle>,
 }
 
 impl GatewayLogLayer {
-    pub fn new(request_logs: Arc<RequestLogStore>, audit: Arc<dyn AuditBackend>) -> Self {
+    pub fn new(log_store: Arc<dyn LogStore>) -> Self {
+        let runtime_handle = tokio::runtime::Handle::try_current().ok();
         Self {
-            request_logs,
-            audit,
+            log_store,
+            runtime_handle,
         }
     }
 }
@@ -89,13 +90,16 @@ where
             let data = span.extensions_mut().remove::<RequestSpanData>();
             if let Some(data) = data {
                 let record = data.into_request_record();
-                self.request_logs.push(record.clone());
-                let audit = self.audit.clone();
-                // Use try_current to avoid panicking if called outside a Tokio runtime
-                // (e.g., during shutdown or from a non-async context).
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let store = self.log_store.clone();
+                // Use cached handle; fall back to try_current for robustness
+                let handle = self
+                    .runtime_handle
+                    .as_ref()
+                    .cloned()
+                    .or_else(|| tokio::runtime::Handle::try_current().ok());
+                if let Some(handle) = handle {
                     handle.spawn(async move {
-                        audit.write(&record).await;
+                        store.push(record).await;
                     });
                 }
             }
@@ -106,21 +110,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_core::audit::NoopAuditBackend;
+    use prism_core::memory_log_store::InMemoryLogStore;
     use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn test_gateway_log_layer_creation() {
-        let logs = Arc::new(RequestLogStore::new(100));
-        let audit: Arc<dyn AuditBackend> = Arc::new(NoopAuditBackend);
-        let _layer = GatewayLogLayer::new(logs, audit);
+        let logs: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(100, None));
+        let _layer = GatewayLogLayer::new(logs);
     }
 
     #[tokio::test]
     async fn test_request_span_writes_to_store() {
-        let logs = Arc::new(RequestLogStore::new(100));
-        let audit: Arc<dyn AuditBackend> = Arc::new(NoopAuditBackend);
-        let layer = GatewayLogLayer::new(logs.clone(), audit);
+        let logs: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(100, None));
+        let layer = GatewayLogLayer::new(logs.clone());
 
         let subscriber = tracing_subscriber::registry().with(layer);
         let _guard = tracing::subscriber::set_default(subscriber);
@@ -166,10 +168,12 @@ mod tests {
             span.record("usage_output", 50u64);
         }
 
-        // Allow the async audit write to complete
+        // Allow the async push to complete
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let page = logs.query(&prism_core::request_log::LogQuery::default());
+        let page = logs
+            .query(&prism_core::request_log::LogQuery::default())
+            .await;
         assert_eq!(page.total, 1);
         let record = &page.data[0];
         assert_eq!(record.request_id, "test-req-1");
@@ -186,9 +190,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_attempt_spans_collected_into_request() {
-        let logs = Arc::new(RequestLogStore::new(100));
-        let audit: Arc<dyn AuditBackend> = Arc::new(NoopAuditBackend);
-        let layer = GatewayLogLayer::new(logs.clone(), audit);
+        let logs: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(100, None));
+        let layer = GatewayLogLayer::new(logs.clone());
 
         let subscriber = tracing_subscriber::registry().with(layer);
         let _guard = tracing::subscriber::set_default(subscriber);
@@ -265,7 +268,9 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let page = logs.query(&prism_core::request_log::LogQuery::default());
+        let page = logs
+            .query(&prism_core::request_log::LogQuery::default())
+            .await;
         assert_eq!(page.total, 1);
         let record = &page.data[0];
         assert_eq!(record.request_id, "test-req-2");

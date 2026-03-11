@@ -7,13 +7,12 @@ pub mod telemetry;
 
 use arc_swap::ArcSwap;
 use axum::{Router, middleware as axum_mw};
-use prism_core::audit::AuditBackend;
 use prism_core::cache::ResponseCacheBackend;
 use prism_core::config::Config;
 use prism_core::cost::CostCalculator;
 use prism_core::metrics::Metrics;
 use prism_core::rate_limit::CompositeRateLimiter;
-use prism_core::request_log::RequestLogStore;
+use prism_core::request_log::LogStore;
 use prism_provider::ExecutorRegistry;
 use prism_provider::routing::CredentialRouter;
 use prism_translator::TranslatorRegistry;
@@ -30,12 +29,11 @@ pub struct AppState {
     pub executors: Arc<ExecutorRegistry>,
     pub translators: Arc<TranslatorRegistry>,
     pub metrics: Arc<Metrics>,
-    pub request_logs: Arc<RequestLogStore>,
+    pub log_store: Arc<dyn LogStore>,
     pub config_path: Arc<Mutex<String>>,
     pub rate_limiter: Arc<CompositeRateLimiter>,
     pub cost_calculator: Arc<CostCalculator>,
     pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,
-    pub audit: Arc<dyn AuditBackend>,
     pub start_time: Instant,
 }
 
@@ -156,14 +154,22 @@ pub fn build_router(state: AppState) -> Router {
             "/api/dashboard/config/current",
             axum::routing::get(handler::dashboard::config_ops::get_config),
         )
-        // Request logs
-        .route(
-            "/api/dashboard/logs",
-            axum::routing::get(handler::dashboard::logs::query_logs),
-        )
+        // Request logs — filters before {id} to avoid capture
         .route(
             "/api/dashboard/logs/stats",
             axum::routing::get(handler::dashboard::logs::log_stats),
+        )
+        .route(
+            "/api/dashboard/logs/filters",
+            axum::routing::get(handler::dashboard::logs::filter_options),
+        )
+        .route(
+            "/api/dashboard/logs/{id}",
+            axum::routing::get(handler::dashboard::logs::get_log),
+        )
+        .route(
+            "/api/dashboard/logs",
+            axum::routing::get(handler::dashboard::logs::query_logs),
         )
         // System
         .route(
