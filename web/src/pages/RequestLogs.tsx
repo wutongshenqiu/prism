@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useLogsStore } from '../stores/logsStore';
 import type { RequestLogFilter } from '../types';
 import { formatNumber } from '../utils/format';
@@ -57,20 +57,10 @@ export default function RequestLogs() {
     return `$${cost.toFixed(4)}`;
   };
 
-  const formatTotalTokens = (log: typeof logs[0]): string => {
+  const formatTokens = (log: typeof logs[0]): string => {
     if (!log.usage) return '-';
-    const { input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } = log.usage;
-    const total = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens;
-    return formatNumber(total);
-  };
-
-  const tokenTooltip = (log: typeof logs[0]): string => {
-    if (!log.usage) return '';
-    const { input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens } = log.usage;
-    const parts = [`Input: ${input_tokens.toLocaleString()}`, `Output: ${output_tokens.toLocaleString()}`];
-    if (cache_read_tokens > 0) parts.push(`Cache Read: ${cache_read_tokens.toLocaleString()}`);
-    if (cache_creation_tokens > 0) parts.push(`Cache Write: ${cache_creation_tokens.toLocaleString()}`);
-    return parts.join('\n');
+    const { input_tokens, output_tokens } = log.usage;
+    return `${formatNumber(input_tokens)} / ${formatNumber(output_tokens)}`;
   };
 
   const toggleExpand = (id: string) => {
@@ -156,7 +146,7 @@ export default function RequestLogs() {
                 <th>Provider / Model</th>
                 <th>Status</th>
                 <th>Latency</th>
-                <th>Tokens</th>
+                <th>Tokens (in/out)</th>
                 <th>Cost</th>
                 <th>API Key</th>
               </tr>
@@ -179,9 +169,8 @@ export default function RequestLogs() {
                 </tr>
               ) : (
                 logs.map((log) => (
-                  <>
+                  <Fragment key={log.request_id}>
                     <tr
-                      key={log.request_id}
                       className={`log-row ${expandedId === log.request_id ? 'log-row-expanded' : ''}`}
                       onClick={() => toggleExpand(log.request_id)}
                       style={{ cursor: 'pointer' }}
@@ -210,12 +199,8 @@ export default function RequestLogs() {
                         </span>
                       </td>
                       <td className="text-nowrap">{log.latency_ms}ms</td>
-                      <td
-                        className="text-nowrap"
-                        style={{ fontSize: '0.85rem', cursor: log.usage ? 'help' : 'default' }}
-                        title={tokenTooltip(log)}
-                      >
-                        {formatTotalTokens(log)}
+                      <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
+                        {formatTokens(log)}
                       </td>
                       <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>
                         {formatCost(log.cost)}
@@ -248,62 +233,30 @@ export default function RequestLogs() {
                                   {log.method} {log.path}
                                 </span>
                               </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Stream</span>
-                                <span className="log-detail-value">{log.stream ? 'Yes' : 'No'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Client IP</span>
-                                <span className="log-detail-value text-mono">{log.client_ip || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Tenant</span>
-                                <span className="log-detail-value">{log.tenant_id || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">API Key</span>
-                                <span className="log-detail-value text-mono">{log.api_key_id || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Provider</span>
-                                <span className="log-detail-value">{log.provider || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Credential</span>
-                                <span className="log-detail-value text-mono">{log.credential_name || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Requested Model</span>
-                                <span className="log-detail-value text-mono">{log.requested_model || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Actual Model</span>
-                                <span className="log-detail-value text-mono">{log.model || '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Status</span>
-                                <span className="log-detail-value">
-                                  <span className={`status-code ${getStatusClass(log.status)}`}>{log.status}</span>
-                                </span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Latency</span>
-                                <span className="log-detail-value">{log.latency_ms}ms</span>
-                              </div>
+                              {log.tenant_id && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Tenant</span>
+                                  <span className="log-detail-value">{log.tenant_id}</span>
+                                </div>
+                              )}
+                              {log.credential_name && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Credential</span>
+                                  <span className="log-detail-value text-mono">{log.credential_name}</span>
+                                </div>
+                              )}
+                              {log.requested_model && log.requested_model !== log.model && (
+                                <div className="log-detail-item">
+                                  <span className="log-detail-label">Requested Model</span>
+                                  <span className="log-detail-value text-mono">{log.requested_model}</span>
+                                </div>
+                              )}
                               {log.retry_count > 0 && (
                                 <div className="log-detail-item">
                                   <span className="log-detail-label">Retries</span>
                                   <span className="log-detail-value">{log.retry_count}</span>
                                 </div>
                               )}
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Input Tokens</span>
-                                <span className="log-detail-value">{log.usage?.input_tokens?.toLocaleString() ?? '-'}</span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Output Tokens</span>
-                                <span className="log-detail-value">{log.usage?.output_tokens?.toLocaleString() ?? '-'}</span>
-                              </div>
                               {(log.usage?.cache_read_tokens ?? 0) > 0 && (
                                 <div className="log-detail-item">
                                   <span className="log-detail-label">Cache Read Tokens</span>
@@ -316,10 +269,6 @@ export default function RequestLogs() {
                                   <span className="log-detail-value">{log.usage?.cache_creation_tokens?.toLocaleString()}</span>
                                 </div>
                               )}
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Cost</span>
-                                <span className="log-detail-value">{formatCost(log.cost)}</span>
-                              </div>
                             </div>
                             {log.error && (
                               <div className="log-detail-error">
@@ -331,7 +280,7 @@ export default function RequestLogs() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))
               )}
             </tbody>
