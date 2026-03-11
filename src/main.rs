@@ -25,18 +25,39 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
         prism_core::lifecycle::daemon::daemonize()?;
     }
 
+    // Load config early for logging decisions and pre-building shared deps
+    let config = prism_core::config::Config::load(&args.config).unwrap_or_default();
+
     // Init logging — force file logging when running as daemon
-    let to_file = args.daemon || {
-        // Peek at config to check logging_to_file
-        prism_core::config::Config::load(&args.config)
-            .map(|c| c.logging_to_file)
-            .unwrap_or(false)
+    let to_file = args.daemon || config.logging_to_file;
+    let log_dir = config.log_dir.clone();
+
+    // Create request_logs and audit backend before logging init so they can be
+    // shared with both the GatewayLogLayer and the Application.
+    let request_logs = std::sync::Arc::new(prism_core::request_log::RequestLogStore::new(
+        config.dashboard.request_log_capacity,
+    ));
+    let audit: std::sync::Arc<dyn prism_core::audit::AuditBackend> = if config.audit.enabled {
+        match prism_core::audit::FileAuditBackend::new(config.audit.clone()) {
+            Ok(backend) => std::sync::Arc::new(backend),
+            Err(e) => {
+                eprintln!("Failed to initialize audit backend: {e}, audit disabled");
+                std::sync::Arc::new(prism_core::audit::NoopAuditBackend)
+            }
+        }
+    } else {
+        std::sync::Arc::new(prism_core::audit::NoopAuditBackend)
     };
-    let log_dir = prism_core::config::Config::load(&args.config)
-        .ok()
-        .and_then(|c| c.log_dir.clone());
-    let _guard =
-        prism_core::lifecycle::logging::init_logging(&args.log_level, to_file, log_dir.as_deref());
+
+    let gateway_layer =
+        prism_server::telemetry::GatewayLogLayer::new(request_logs.clone(), audit.clone());
+
+    let _guard = prism_core::lifecycle::logging::init_logging_with_layer(
+        &args.log_level,
+        to_file,
+        log_dir.as_deref(),
+        Box::new(gateway_layer),
+    );
 
     // Build and run on a multi-thread runtime
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -44,7 +65,11 @@ fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
         .build()?;
 
     runtime.block_on(async {
-        let application = app::Application::build(&args)?;
+        // Spawn audit cleanup task inside the tokio runtime
+        if config.audit.enabled {
+            prism_core::audit::FileAuditBackend::spawn_cleanup_task(config.audit.clone());
+        }
+        let application = app::Application::build(&args, request_logs, audit)?;
         application.serve().await
     })
 }

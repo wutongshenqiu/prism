@@ -8,6 +8,9 @@ use std::time::Duration;
 
 use super::helpers::extract_usage;
 
+/// Maximum characters to capture for stream content preview.
+const STREAM_PREVIEW_MAX_CHARS: usize = 500;
+
 type ProviderResult = Result<ProviderResponse, ProxyError>;
 
 /// Translate a stream of provider-specific chunks into the target format.
@@ -138,11 +141,9 @@ pub(super) fn keepalive_error_json(msg: &str) -> String {
     .to_string()
 }
 
-/// Callback context for updating request logs after a stream completes.
+/// Callback context for updating metrics after a stream completes.
 pub(super) struct StreamDoneContext {
-    pub request_id: String,
     pub model: Option<String>,
-    pub request_logs: Arc<prism_core::request_log::RequestLogStore>,
     pub cost_calculator: Arc<prism_core::cost::CostCalculator>,
     pub metrics: Arc<prism_core::metrics::Metrics>,
     pub rate_limiter: Arc<prism_core::rate_limit::CompositeRateLimiter>,
@@ -153,13 +154,14 @@ pub(super) struct StreamDoneContext {
 ///
 /// Each chunk's `data` is inspected for usage fields (supports OpenAI, Claude, and Gemini
 /// response formats). When the stream is dropped (either after natural completion or due to
-/// client disconnect), the captured usage is written back to the request log entry and
-/// recorded in global metrics via the `Drop` implementation on the internal state.
+/// client disconnect), the captured usage is recorded on the `request_span` and written
+/// back to metrics. The span's delayed close triggers GatewayLogLayer::on_close.
 pub(super) fn with_usage_capture(
     stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>,
     >,
     ctx: StreamDoneContext,
+    request_span: tracing::Span,
 ) -> std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>> {
     struct State {
         inner: std::pin::Pin<
@@ -167,31 +169,38 @@ pub(super) fn with_usage_capture(
         >,
         usage: Option<TokenUsage>,
         ctx: Option<StreamDoneContext>,
+        request_span: tracing::Span,
+        content_preview: String,
     }
 
     impl Drop for State {
         fn drop(&mut self) {
-            if let Some(ctx) = self.ctx.take()
-                && let Some(ref usage) = self.usage
-            {
-                let cost = ctx
-                    .model
-                    .as_deref()
-                    .and_then(|m| ctx.cost_calculator.calculate(m, usage));
-                ctx.metrics
-                    .record_tokens(usage.total_input(), usage.output_tokens);
-                if let (Some(m), Some(c)) = (ctx.model.as_deref(), cost) {
-                    ctx.metrics.record_cost(m, c);
+            if let Some(ctx) = self.ctx.take() {
+                if let Some(ref usage) = self.usage {
+                    let cost = ctx
+                        .model
+                        .as_deref()
+                        .and_then(|m| ctx.cost_calculator.calculate(m, usage));
+                    ctx.metrics
+                        .record_tokens(usage.total_input(), usage.output_tokens);
+                    if let (Some(m), Some(c)) = (ctx.model.as_deref(), cost) {
+                        ctx.metrics.record_cost(m, c);
+                    }
+                    // Record tokens and cost in rate limiter
+                    let total_tokens = usage.total_input() + usage.output_tokens;
+                    ctx.rate_limiter
+                        .record_tokens(ctx.api_key.as_deref(), total_tokens);
+                    if let Some(c) = cost {
+                        ctx.rate_limiter.record_cost(ctx.api_key.as_deref(), c);
+                    }
+                    // Record usage on the request span (for GatewayLogLayer)
+                    super::record_usage_on_span(&self.request_span, Some(usage), cost);
                 }
-                // Record tokens and cost in rate limiter
-                let total_tokens = usage.total_input() + usage.output_tokens;
-                ctx.rate_limiter
-                    .record_tokens(ctx.api_key.as_deref(), total_tokens);
-                if let Some(c) = cost {
-                    ctx.rate_limiter.record_cost(ctx.api_key.as_deref(), c);
+                if !self.content_preview.is_empty() {
+                    self.request_span
+                        .record("stream_content_preview", self.content_preview.as_str());
                 }
-                ctx.request_logs
-                    .update_usage(&ctx.request_id, usage.clone(), cost);
+                // Span drops here → GatewayLogLayer::on_close fires
             }
         }
     }
@@ -200,18 +209,28 @@ pub(super) fn with_usage_capture(
         inner: stream,
         usage: None,
         ctx: Some(ctx),
+        request_span,
+        content_preview: String::with_capacity(STREAM_PREVIEW_MAX_CHARS),
     };
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
         use tokio_stream::StreamExt;
         match state.inner.next().await {
             Some(result) => {
-                if let Ok(ref chunk) = result
-                    && let Some(u) = extract_usage(&chunk.data)
-                {
-                    match state.usage.as_mut() {
-                        Some(existing) => existing.merge(&u),
-                        None => state.usage = Some(u),
+                if let Ok(ref chunk) = result {
+                    if let Some(u) = extract_usage(&chunk.data) {
+                        match state.usage.as_mut() {
+                            Some(existing) => existing.merge(&u),
+                            None => state.usage = Some(u),
+                        }
+                    }
+                    // Capture content preview from SSE data (reuse parsed JSON if possible)
+                    if state.content_preview.len() < STREAM_PREVIEW_MAX_CHARS
+                        && let Some(text) = extract_content_text(&chunk.data)
+                    {
+                        let remaining = STREAM_PREVIEW_MAX_CHARS - state.content_preview.len();
+                        let truncated = prism_core::request_record::truncate_body(&text, remaining);
+                        state.content_preview.push_str(&truncated);
                     }
                 }
                 Some((result, state))
@@ -223,4 +242,32 @@ pub(super) fn with_usage_capture(
             }
         }
     }))
+}
+
+/// Extract content text from an SSE chunk data string.
+/// Supports OpenAI (choices[0].delta.content) and Claude (delta.text) formats.
+fn extract_content_text(data: &str) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    // OpenAI format: choices[0].delta.content
+    if let Some(content) = val
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("delta"))
+        .and_then(|d| d.get("content"))
+        .and_then(|c| c.as_str())
+    {
+        return Some(content.to_string());
+    }
+
+    // Claude format: delta.text
+    if let Some(text) = val
+        .get("delta")
+        .and_then(|d| d.get("text"))
+        .and_then(|t| t.as_str())
+    {
+        return Some(text.to_string());
+    }
+
+    None
 }

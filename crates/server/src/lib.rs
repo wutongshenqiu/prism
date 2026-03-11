@@ -3,6 +3,7 @@ pub mod dispatch;
 pub mod handler;
 pub mod middleware;
 pub mod streaming;
+pub mod telemetry;
 
 use arc_swap::ArcSwap;
 use axum::{Router, middleware as axum_mw};
@@ -201,8 +202,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(dashboard_auth_routes)
         .merge(dashboard_protected_routes)
         .merge(ws_routes)
-        .layer(axum_mw::from_fn_with_state(
-            state.clone(),
+        .layer(axum_mw::from_fn(
             middleware::request_logging::request_logging_middleware,
         ))
         .layer(axum_mw::from_fn(

@@ -174,15 +174,33 @@ export interface RequestLog {
   provider: string | null;
   model: string | null;
   credential_name: string | null;
-  retry_count: number;
+  total_attempts: number;
   status: number;
   latency_ms: number;
+  request_body?: string | null;
+  upstream_request_body?: string | null;
+  response_body?: string | null;
+  stream_content_preview?: string | null;
   usage: TokenUsage | null;
   cost: number | null;
   error?: string | null;
+  error_type?: string | null;
   api_key_id: string | null;
   tenant_id: string | null;
   client_ip: string | null;
+  client_region?: string | null;
+  attempts?: AttemptSummary[];
+}
+
+export interface AttemptSummary {
+  attempt_index: number;
+  provider: string;
+  model: string;
+  credential_name: string | null;
+  status: number | null;
+  latency_ms: number;
+  error: string | null;
+  error_type: string | null;
 }
 
 export interface RequestLogFilter {

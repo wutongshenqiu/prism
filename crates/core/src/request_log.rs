@@ -20,10 +20,11 @@ pub struct LogQuery {
 /// Paged response for log queries.
 #[derive(Debug, serde::Serialize)]
 pub struct LogPage {
-    pub items: Vec<RequestRecord>,
+    pub data: Vec<RequestRecord>,
     pub total: usize,
     pub page: usize,
     pub page_size: usize,
+    pub total_pages: usize,
 }
 
 /// In-memory ring buffer for request logs with broadcast notification.
@@ -112,8 +113,9 @@ impl RequestLogStore {
             .collect();
 
         let total = filtered.len();
+        let total_pages = (total + page_size - 1) / page_size.max(1);
         let start = (page - 1) * page_size;
-        let items: Vec<RequestRecord> = filtered
+        let data: Vec<RequestRecord> = filtered
             .into_iter()
             .skip(start)
             .take(page_size)
@@ -121,10 +123,11 @@ impl RequestLogStore {
             .collect();
 
         LogPage {
-            items,
+            data,
             total,
             page,
             page_size,
+            total_pages,
         }
     }
 
@@ -175,12 +178,16 @@ mod tests {
             path: "/v1/chat/completions".to_string(),
             stream: false,
             requested_model: Some(model.to_string()),
+            request_body: None,
+            upstream_request_body: None,
             provider: Some(provider.to_string()),
             model: Some(model.to_string()),
             credential_name: None,
-            retry_count: 0,
+            total_attempts: 1,
             status,
             latency_ms: 100,
+            response_body: None,
+            stream_content_preview: None,
             usage: Some(crate::request_record::TokenUsage {
                 input_tokens: 10,
                 output_tokens: 20,
@@ -192,9 +199,12 @@ mod tests {
             } else {
                 None
             },
+            error_type: None,
             api_key_id: None,
             tenant_id: None,
             client_ip: None,
+            client_region: None,
+            attempts: vec![],
         }
     }
 
@@ -268,7 +278,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(page.total, 25);
-        assert_eq!(page.items.len(), 10);
+        assert_eq!(page.data.len(), 10);
         assert_eq!(page.page, 2);
     }
 

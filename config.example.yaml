@@ -89,6 +89,8 @@ logging-to-file: false
 #   enabled: true
 #   dir: "./logs/audit"
 #   retention-days: 30
+#   detail-level: metadata       # metadata | standard | full
+#   max-body-bytes: 16384        # max bytes per body field (request/response)
 
 # ─── Routing Strategy ───────────────────────────────────────────────────────
 routing:

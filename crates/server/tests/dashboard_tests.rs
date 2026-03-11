@@ -772,7 +772,7 @@ async fn test_query_logs_empty() {
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 0);
-    assert!(body["items"].as_array().unwrap().is_empty());
+    assert!(body["data"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -804,12 +804,16 @@ async fn test_log_stats_with_entries() {
             path: "/v1/chat/completions".to_string(),
             stream: false,
             requested_model: Some("gpt-4".to_string()),
+            request_body: None,
+            upstream_request_body: None,
             provider: Some("openai".to_string()),
             model: Some("gpt-4".to_string()),
             credential_name: None,
-            retry_count: 0,
+            total_attempts: 1,
             status: 200,
             latency_ms: 150,
+            response_body: None,
+            stream_content_preview: None,
             usage: Some(prism_core::request_record::TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
@@ -817,9 +821,12 @@ async fn test_log_stats_with_entries() {
             }),
             cost: None,
             error: None,
+            error_type: None,
             api_key_id: None,
             tenant_id: None,
             client_ip: None,
+            client_region: None,
+            attempts: vec![],
         });
     harness
         .state
@@ -831,18 +838,25 @@ async fn test_log_stats_with_entries() {
             path: "/v1/chat/completions".to_string(),
             stream: false,
             requested_model: Some("claude-3".to_string()),
+            request_body: None,
+            upstream_request_body: None,
             provider: Some("claude".to_string()),
             model: Some("claude-3".to_string()),
             credential_name: None,
-            retry_count: 0,
+            total_attempts: 1,
             status: 500,
             latency_ms: 50,
+            response_body: None,
+            stream_content_preview: None,
             usage: None,
             cost: None,
             error: Some("Internal Server Error".to_string()),
+            error_type: None,
             api_key_id: None,
             tenant_id: None,
             client_ip: None,
+            client_region: None,
+            attempts: vec![],
         });
 
     let req = authed_get("/api/dashboard/logs/stats", &token);
@@ -870,12 +884,16 @@ async fn test_query_logs_with_entries() {
                 path: "/v1/chat/completions".to_string(),
                 stream: false,
                 requested_model: Some("gpt-4".to_string()),
+                request_body: None,
+                upstream_request_body: None,
                 provider: Some("openai".to_string()),
                 model: Some("gpt-4".to_string()),
                 credential_name: None,
-                retry_count: 0,
+                total_attempts: 1,
                 status: if i % 2 == 0 { 200 } else { 429 },
                 latency_ms: 100,
+                response_body: None,
+                stream_content_preview: None,
                 usage: Some(prism_core::request_record::TokenUsage {
                     input_tokens: 10,
                     output_tokens: 20,
@@ -887,9 +905,12 @@ async fn test_query_logs_with_entries() {
                 } else {
                     None
                 },
+                error_type: None,
                 api_key_id: None,
                 tenant_id: None,
                 client_ip: None,
+                client_region: None,
+                attempts: vec![],
             });
     }
 
@@ -897,7 +918,7 @@ async fn test_query_logs_with_entries() {
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 5);
-    let items = body["items"].as_array().unwrap();
+    let items = body["data"].as_array().unwrap();
     assert_eq!(items.len(), 5);
 }
 

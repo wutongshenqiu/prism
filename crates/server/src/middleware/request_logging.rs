@@ -1,18 +1,15 @@
-use crate::AppState;
-use crate::dispatch::DispatchMeta;
-use axum::extract::State;
-use axum::{extract::Request, middleware::Next, response::Response};
+use axum::extract::Request;
+use axum::middleware::Next;
+use axum::response::Response;
 use prism_core::context::RequestContext;
-use prism_core::request_record::RequestRecord;
 
 /// Middleware that logs request/response with request context info.
-/// Also captures proxy requests (/v1/*) into the request log ring buffer
-/// and writes audit entries.
-pub async fn request_logging_middleware(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
+///
+/// Structured request records (RequestRecord) are now handled by GatewayLogLayer
+/// which collects data from gateway.request/gateway.attempt tracing spans created
+/// by the dispatch function. This middleware only emits tracing log lines for
+/// observability.
+pub async fn request_logging_middleware(request: Request, next: Next) -> Response {
     let method = request.method().clone();
     let uri = request.uri().path().to_string();
 
@@ -45,45 +42,6 @@ pub async fn request_logging_middleware(
         elapsed_ms = elapsed,
         "Request completed"
     );
-
-    // Capture proxy requests into the ring buffer
-    if uri.starts_with("/v1/") {
-        let meta = response.extensions().get::<DispatchMeta>().cloned();
-
-        let record = RequestRecord {
-            request_id: request_id.clone(),
-            timestamp: chrono::Utc::now(),
-            method: method.to_string(),
-            path: uri,
-            stream: meta.as_ref().is_some_and(|m| m.stream),
-            requested_model: meta.as_ref().and_then(|m| m.requested_model.clone()),
-            provider: meta.as_ref().and_then(|m| m.provider.clone()),
-            model: meta.as_ref().and_then(|m| m.model.clone()),
-            credential_name: meta.as_ref().and_then(|m| m.credential_name.clone()),
-            retry_count: meta.as_ref().map(|m| m.retry_count).unwrap_or(0),
-            status,
-            latency_ms: elapsed as u64,
-            usage: meta.as_ref().and_then(|m| m.usage.clone()),
-            cost: meta.as_ref().and_then(|m| m.cost),
-            error: if status >= 400 {
-                meta.as_ref()
-                    .and_then(|m| m.error_detail.clone())
-                    .or_else(|| Some(format!("HTTP {status}")))
-            } else {
-                None
-            },
-            api_key_id: meta.as_ref().and_then(|m| m.api_key_id.clone()),
-            tenant_id: meta.as_ref().and_then(|m| m.tenant_id.clone()),
-            client_ip: ctx.as_ref().and_then(|c| c.client_ip.clone()),
-        };
-        state.request_logs.push(record.clone());
-
-        // Write audit entry
-        let audit = state.audit.clone();
-        tokio::spawn(async move {
-            audit.write(&record).await;
-        });
-    }
 
     response
 }

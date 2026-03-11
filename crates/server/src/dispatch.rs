@@ -7,11 +7,12 @@ use crate::streaming::build_sse_response;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use helpers::{
-    build_json_response, inject_debug_headers, inject_dispatch_meta, inject_stream_usage_option,
+    build_json_response, extract_usage, inject_debug_headers, inject_stream_usage_option,
     rewrite_model_in_body,
 };
 use prism_core::error::ProxyError;
 use prism_core::provider::{Format, ProviderRequest, ProviderResponse};
+use prism_core::request_record::{LogDetailLevel, classify_error, truncate_body};
 use retry::handle_retry_error;
 use std::time::{Duration, Instant};
 use streaming::{StreamDoneContext, build_keepalive_body, translate_stream, with_usage_capture};
@@ -57,24 +58,10 @@ struct DispatchDebug {
     attempts: Vec<String>,
 }
 
-/// Metadata about a dispatched request, stored in response extensions
-/// so the logging middleware can populate log entries.
-#[derive(Clone, Debug, Default)]
-pub struct DispatchMeta {
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub requested_model: Option<String>,
-    pub credential_name: Option<String>,
-    pub stream: bool,
-    pub retry_count: u32,
-    pub usage: Option<prism_core::request_record::TokenUsage>,
-    pub cost: Option<f64>,
-    pub error_detail: Option<String>,
-    pub api_key_id: Option<String>,
-    pub tenant_id: Option<String>,
-}
-
 /// Unified dispatch: resolves providers, picks credentials, translates, executes, retries.
+///
+/// Creates `gateway.request` and `gateway.attempt` tracing spans that are collected by
+/// `GatewayLogLayer` to produce structured request records.
 ///
 /// Supports model fallback chains via `req.models` and debug mode via `req.debug`.
 /// The retry loop iterates across all provider formats on each attempt, ensuring that
@@ -82,6 +69,51 @@ pub struct DispatchMeta {
 pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response, ProxyError> {
     let start = Instant::now();
     let config = state.config.load();
+    let detail_level = config.audit.detail_level;
+    let max_body_bytes = config.audit.max_body_bytes;
+
+    let request_id = req.request_id.clone().unwrap_or_else(|| "-".to_string());
+
+    // Create the gateway.request span — GatewayLogLayer collects this on close
+    let request_span = tracing::info_span!(
+        "gateway.request",
+        request_id = %request_id,
+        method = "POST",
+        path = tracing::field::Empty,
+        stream = req.stream,
+        requested_model = %req.model,
+        request_body = tracing::field::Empty,
+        upstream_request_body = tracing::field::Empty,
+        provider = tracing::field::Empty,
+        model = tracing::field::Empty,
+        credential_name = tracing::field::Empty,
+        total_attempts = tracing::field::Empty,
+        status = tracing::field::Empty,
+        latency_ms = tracing::field::Empty,
+        response_body = tracing::field::Empty,
+        stream_content_preview = tracing::field::Empty,
+        usage_input = tracing::field::Empty,
+        usage_output = tracing::field::Empty,
+        usage_cache_read = tracing::field::Empty,
+        usage_cache_creation = tracing::field::Empty,
+        cost = tracing::field::Empty,
+        error = tracing::field::Empty,
+        error_type = tracing::field::Empty,
+        api_key_id = req.api_key_id.as_deref().unwrap_or(""),
+        tenant_id = req.tenant_id.as_deref().unwrap_or(""),
+        client_ip = tracing::field::Empty,
+        client_region = req.client_region.as_deref().unwrap_or(""),
+    );
+
+    // Record client request body if detail level allows
+    if detail_level >= LogDetailLevel::Standard
+        && let Ok(body_str) = std::str::from_utf8(&req.body)
+    {
+        request_span.record(
+            "request_body",
+            truncate_body(body_str, max_body_bytes).as_ref(),
+        );
+    }
 
     // ── Model ACL check ──
     if let Some(ctx) = req
@@ -104,21 +136,17 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     {
         if let Some(cached) = cache.get(&cache_key).await {
             state.metrics.record_cache_hit();
-            let mut resp = axum::http::Response::builder()
+            request_span.record("provider", cached.provider.as_str());
+            request_span.record("model", cached.model.as_str());
+            request_span.record("status", 200u64);
+            request_span.record("latency_ms", start.elapsed().as_millis() as u64);
+            request_span.record("total_attempts", 0u64);
+            let resp = axum::http::Response::builder()
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .header("x-cache", "HIT")
                 .body(axum::body::Body::from(cached.payload))
                 .map_err(|e| ProxyError::Internal(format!("failed to build response: {e}")))?
                 .into_response();
-            resp.extensions_mut().insert(DispatchMeta {
-                provider: Some(cached.provider),
-                model: Some(cached.model),
-                requested_model: Some(req.model.clone()),
-                stream: false,
-                api_key_id: req.api_key_id.clone(),
-                tenant_id: req.tenant_id.clone(),
-                ..Default::default()
-            });
             return Ok(resp);
         }
         state.metrics.record_cache_miss();
@@ -212,6 +240,21 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                     .push(format!("{}@{}", actual_model, target_format.as_str()));
 
                 total_attempts += 1;
+                let attempt_start = Instant::now();
+
+                // Create attempt span as child of request span
+                let attempt_span = tracing::info_span!(
+                    parent: &request_span,
+                    "gateway.attempt",
+                    attempt_index = total_attempts.saturating_sub(1) as u64,
+                    provider = target_format.as_str(),
+                    model = actual_model.as_str(),
+                    credential_name = auth.name().unwrap_or("-"),
+                    status = tracing::field::Empty,
+                    latency_ms = tracing::field::Empty,
+                    error = tracing::field::Empty,
+                    error_type = tracing::field::Empty,
+                );
 
                 // Record metrics
                 state
@@ -280,6 +323,16 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                     }
                 }
 
+                // Record upstream request body on span if detail level allows
+                if detail_level >= LogDetailLevel::Standard
+                    && let Ok(upstream_str) = std::str::from_utf8(&translated_payload)
+                {
+                    request_span.record(
+                        "upstream_request_body",
+                        truncate_body(upstream_str, max_body_bytes).as_ref(),
+                    );
+                }
+
                 // Inject stream_options.include_usage for OpenAI-format streaming
                 // so that usage data is included in the final SSE chunk.
                 let translated_payload = if req.stream
@@ -313,6 +366,19 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                             state.router.record_success(&auth.id);
                             state.router.record_latency(&auth.id, latency_ms as f64);
 
+                            record_attempt_success(
+                                attempt_span,
+                                attempt_start.elapsed().as_millis() as u64,
+                            );
+
+                            // Record request-level fields (usage will be filled on stream close)
+                            request_span.record("provider", target_format.as_str());
+                            request_span.record("model", actual_model.as_str());
+                            request_span.record("credential_name", auth.name().unwrap_or("-"));
+                            request_span.record("total_attempts", total_attempts as u64);
+                            request_span.record("status", 200u64);
+                            request_span.record("latency_ms", latency_ms as u64);
+
                             let need_translate = state
                                 .translators
                                 .has_response_translator(req.source_format, target_format);
@@ -320,36 +386,18 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                             let keepalive = config.streaming.keepalive_seconds;
 
                             // Wrap upstream stream to capture token usage from SSE events.
-                            // When the stream ends, captured usage is written back to the
-                            // request log entry created by the logging middleware.
-                            let captured_stream = if let Some(ref rid) = req.request_id {
-                                with_usage_capture(
-                                    stream_result.stream,
-                                    StreamDoneContext {
-                                        request_id: rid.clone(),
-                                        model: debug_info.model.clone(),
-                                        request_logs: state.request_logs.clone(),
-                                        cost_calculator: state.cost_calculator.clone(),
-                                        metrics: state.metrics.clone(),
-                                        rate_limiter: state.rate_limiter.clone(),
-                                        api_key: req.api_key.clone(),
-                                    },
-                                )
-                            } else {
-                                stream_result.stream
-                            };
-
-                            let dispatch_meta = DispatchMeta {
-                                provider: debug_info.provider.clone(),
-                                model: debug_info.model.clone(),
-                                requested_model: Some(req.model.clone()),
-                                credential_name: debug_info.credential_name.clone(),
-                                stream: true,
-                                retry_count: total_attempts.saturating_sub(1),
-                                api_key_id: req.api_key_id.clone(),
-                                tenant_id: req.tenant_id.clone(),
-                                ..Default::default()
-                            };
+                            // The request_span is passed in so it stays alive until stream ends.
+                            let captured_stream = with_usage_capture(
+                                stream_result.stream,
+                                StreamDoneContext {
+                                    model: debug_info.model.clone(),
+                                    cost_calculator: state.cost_calculator.clone(),
+                                    metrics: state.metrics.clone(),
+                                    rate_limiter: state.rate_limiter.clone(),
+                                    api_key: req.api_key.clone(),
+                                },
+                                request_span,
+                            );
 
                             if !need_translate {
                                 if req.source_format == Format::Claude {
@@ -368,7 +416,6 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         });
                                     let mut resp =
                                         build_sse_response(data_stream, keepalive).into_response();
-                                    resp.extensions_mut().insert(dispatch_meta);
                                     if req.debug {
                                         inject_debug_headers(&mut resp, &debug_info);
                                     }
@@ -380,7 +427,6 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                     });
                                 let mut resp =
                                     build_sse_response(data_stream, keepalive).into_response();
-                                resp.extensions_mut().insert(dispatch_meta);
                                 if req.debug {
                                     inject_debug_headers(&mut resp, &debug_info);
                                 }
@@ -398,13 +444,19 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
 
                             let mut resp =
                                 build_sse_response(translated_stream, keepalive).into_response();
-                            resp.extensions_mut().insert(dispatch_meta);
                             if req.debug {
                                 inject_debug_headers(&mut resp, &debug_info);
                             }
                             return Ok(resp);
                         }
                         Err(e) => {
+                            record_attempt_failure(
+                                &attempt_span,
+                                &e,
+                                attempt_start.elapsed().as_millis() as u64,
+                            );
+                            drop(attempt_span);
+
                             bootstrap_attempts += 1;
                             tried.push(auth.id.clone());
                             handle_retry_error(state, &auth.id, &e, retry_cfg);
@@ -452,32 +504,42 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                         &response.payload,
                                     )?;
 
+                                    record_attempt_success(attempt_span, attempt_start.elapsed().as_millis() as u64);
+
+                                    record_success_on_span(
+                                        &request_span, &debug_info, &response.payload,
+                                        &state.cost_calculator, &state.metrics, &state.rate_limiter,
+                                        &req, total_attempts, start,
+                                    );
+
+                                    if detail_level >= LogDetailLevel::Standard {
+                                        request_span.record("response_body",
+                                            truncate_body(&translated, max_body_bytes).as_ref());
+                                    }
+
                                     let mut resp = build_json_response(
                                         &translated,
                                         &config.passthrough_headers,
                                         &response.headers,
                                     )?;
-                                    inject_dispatch_meta(
-                                        &mut resp,
-                                        &debug_info,
-                                        &response.payload,
-                                        &state.cost_calculator,
-                                        &state.metrics,
-                                        &state.rate_limiter,
-                                        &req,
-                                        total_attempts,
-                                    );
                                     if req.debug {
                                         inject_debug_headers(&mut resp, &debug_info);
                                     }
                                     return Ok(resp);
                                 }
                                 Ok(Err(e)) => {
+                                    record_attempt_failure(&attempt_span, &e, attempt_start.elapsed().as_millis() as u64);
+                                    drop(attempt_span);
+
                                     tried.push(auth.id.clone());
                                     handle_retry_error(state, &auth.id, &e, retry_cfg);
                                     last_error = Some(e);
                                 }
                                 Err(_) => {
+                                    let join_err = ProxyError::Internal("upstream execute task failed".into());
+                                    record_attempt_failure(&attempt_span, &join_err, attempt_start.elapsed().as_millis() as u64);
+                                    drop(attempt_span);
+
                                     tried.push(auth.id.clone());
                                     last_error = Some(ProxyError::Internal(
                                         "upstream execute task failed".into(),
@@ -490,6 +552,11 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 "Non-stream request exceeded {keepalive_secs}s, enabling keepalive"
                             );
                             state.metrics.record_latency_ms(start.elapsed().as_millis());
+
+                            // Record partial info on span (keepalive doesn't know final status)
+                            request_span.record("provider", target_format.as_str());
+                            request_span.record("model", actual_model.as_str());
+                            request_span.record("total_attempts", total_attempts as u64);
 
                             let keepalive_body = build_keepalive_body(
                                 result_rx,
@@ -546,13 +613,13 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 cache.insert(cache_key, cached).await;
                             }
 
-                            let mut resp = build_json_response(
-                                &translated,
-                                &config.passthrough_headers,
-                                &response.headers,
-                            )?;
-                            inject_dispatch_meta(
-                                &mut resp,
+                            record_attempt_success(
+                                attempt_span,
+                                attempt_start.elapsed().as_millis() as u64,
+                            );
+
+                            record_success_on_span(
+                                &request_span,
                                 &debug_info,
                                 &response.payload,
                                 &state.cost_calculator,
@@ -560,13 +627,34 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                 &state.rate_limiter,
                                 &req,
                                 total_attempts,
+                                start,
                             );
+
+                            if detail_level >= LogDetailLevel::Standard {
+                                request_span.record(
+                                    "response_body",
+                                    truncate_body(&translated, max_body_bytes).as_ref(),
+                                );
+                            }
+
+                            let mut resp = build_json_response(
+                                &translated,
+                                &config.passthrough_headers,
+                                &response.headers,
+                            )?;
                             if req.debug {
                                 inject_debug_headers(&mut resp, &debug_info);
                             }
                             return Ok(resp);
                         }
                         Err(e) => {
+                            record_attempt_failure(
+                                &attempt_span,
+                                &e,
+                                attempt_start.elapsed().as_millis() as u64,
+                            );
+                            drop(attempt_span);
+
                             tried.push(auth.id.clone());
                             handle_retry_error(state, &auth.id, &e, retry_cfg);
                             last_error = Some(e);
@@ -589,17 +677,104 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
     state.metrics.record_error();
     state.metrics.record_latency_ms(start.elapsed().as_millis());
 
-    Err(last_error.unwrap_or_else(|| ProxyError::NoCredentials {
+    let err = last_error.unwrap_or_else(|| ProxyError::NoCredentials {
         provider: "all".to_string(),
         model: model_chain.join(","),
-    }))
+    });
+
+    // Record error on request span
+    request_span.record("total_attempts", total_attempts as u64);
+    request_span.record("status", err.status_code().as_u16() as u64);
+    request_span.record("latency_ms", start.elapsed().as_millis() as u64);
+    request_span.record("error", err.to_string());
+    request_span.record("error_type", classify_error(&err));
+
+    Err(err)
+}
+
+/// Record attempt success fields on an attempt span, then drop it.
+fn record_attempt_success(attempt_span: tracing::Span, latency_ms: u64) {
+    attempt_span.record("status", 200u64);
+    attempt_span.record("latency_ms", latency_ms);
+    // drop closes the span, triggering on_close in GatewayLogLayer
+}
+
+/// Record attempt failure fields on an attempt span.
+fn record_attempt_failure(attempt_span: &tracing::Span, error: &ProxyError, latency_ms: u64) {
+    attempt_span.record("latency_ms", latency_ms);
+    // Extract HTTP status from upstream errors when available
+    if let ProxyError::Upstream { status, .. } = error {
+        attempt_span.record("status", *status as u64);
+    }
+    attempt_span.record("error", error.to_string());
+    attempt_span.record("error_type", classify_error(error));
+}
+
+/// Record usage and cost fields on a span.
+pub(super) fn record_usage_on_span(
+    span: &tracing::Span,
+    usage: Option<&prism_core::request_record::TokenUsage>,
+    cost: Option<f64>,
+) {
+    if let Some(u) = usage {
+        span.record("usage_input", u.input_tokens);
+        span.record("usage_output", u.output_tokens);
+        span.record("usage_cache_read", u.cache_read_tokens);
+        span.record("usage_cache_creation", u.cache_creation_tokens);
+    }
+    if let Some(c) = cost {
+        span.record("cost", c);
+    }
+}
+
+/// Record successful response data on the request span and update metrics.
+#[allow(clippy::too_many_arguments)]
+fn record_success_on_span(
+    request_span: &tracing::Span,
+    debug_info: &DispatchDebug,
+    upstream_payload: &[u8],
+    cost_calculator: &prism_core::cost::CostCalculator,
+    metrics: &prism_core::metrics::Metrics,
+    rate_limiter: &prism_core::rate_limit::CompositeRateLimiter,
+    req: &DispatchRequest,
+    total_attempts: u32,
+    start: Instant,
+) {
+    let upstream_str = std::str::from_utf8(upstream_payload).unwrap_or("");
+    let usage = extract_usage(upstream_str);
+    let model = debug_info.model.as_deref();
+    let cost = match (model, &usage) {
+        (Some(m), Some(u)) => cost_calculator.calculate(m, u),
+        _ => None,
+    };
+
+    // Record tokens and cost in global metrics
+    if let Some(ref u) = usage {
+        metrics.record_tokens(u.total_input(), u.output_tokens);
+        rate_limiter.record_tokens(req.api_key.as_deref(), u.total_input() + u.output_tokens);
+    }
+    if let (Some(m), Some(c)) = (model, cost) {
+        metrics.record_cost(m, c);
+        rate_limiter.record_cost(req.api_key.as_deref(), c);
+    }
+
+    // Record on span
+    request_span.record("provider", debug_info.provider.as_deref().unwrap_or(""));
+    request_span.record("model", debug_info.model.as_deref().unwrap_or(""));
+    request_span.record(
+        "credential_name",
+        debug_info.credential_name.as_deref().unwrap_or(""),
+    );
+    request_span.record("total_attempts", total_attempts as u64);
+    request_span.record("status", 200u64);
+    request_span.record("latency_ms", start.elapsed().as_millis() as u64);
+    record_usage_on_span(request_span, usage.as_ref(), cost);
 }
 
 #[cfg(test)]
 mod tests {
+    use super::streaming::keepalive_error_json;
     use super::*;
-    use helpers::*;
-    use streaming::keepalive_error_json;
 
     // === extract_usage ===
 

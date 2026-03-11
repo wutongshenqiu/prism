@@ -2,7 +2,6 @@
 
 use crate::cli::RunArgs;
 use arc_swap::ArcSwap;
-use prism_core::audit::{AuditBackend, FileAuditBackend, NoopAuditBackend};
 use prism_core::cache::{MokaCache, ResponseCacheBackend};
 use prism_core::config::{Config, ConfigWatcher};
 use prism_core::lifecycle::signal::SignalHandler;
@@ -28,7 +27,15 @@ pub struct Application {
 impl Application {
     /// Build the application from CLI args: load config, build executors,
     /// router, translators, metrics, and acquire PID file.
-    pub fn build(args: &RunArgs) -> anyhow::Result<Self> {
+    ///
+    /// `request_logs` and `audit` are created externally so they can be shared
+    /// with the `GatewayLogLayer` (which must be registered before the
+    /// application is built).
+    pub fn build(
+        args: &RunArgs,
+        request_logs: Arc<prism_core::request_log::RequestLogStore>,
+        audit: Arc<dyn prism_core::audit::AuditBackend>,
+    ) -> anyhow::Result<Self> {
         // Load config
         let mut config = Config::load(&args.config).unwrap_or_else(|e| {
             tracing::warn!(
@@ -79,7 +86,6 @@ impl Application {
             config.openai_compatibility.len(),
         );
 
-        let request_log_capacity = config.dashboard.request_log_capacity;
         let rate_limiter = Arc::new(CompositeRateLimiter::new(&config.rate_limit));
         let cost_calculator = Arc::new(prism_core::cost::CostCalculator::new(&config.model_prices));
 
@@ -95,28 +101,8 @@ impl Application {
             None
         };
 
-        // Initialize audit backend
-        let audit: Arc<dyn AuditBackend> = if config.audit.enabled {
-            match FileAuditBackend::new(config.audit.clone()) {
-                Ok(backend) => {
-                    tracing::info!("Audit logging enabled (dir={})", config.audit.dir);
-                    FileAuditBackend::spawn_cleanup_task(config.audit.clone());
-                    Arc::new(backend)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize audit backend: {e}, audit disabled");
-                    Arc::new(NoopAuditBackend)
-                }
-            }
-        } else {
-            Arc::new(NoopAuditBackend)
-        };
-
         let config = Arc::new(ArcSwap::from_pointee(config));
         let metrics = Arc::new(prism_core::metrics::Metrics::new());
-        let request_logs = Arc::new(prism_core::request_log::RequestLogStore::new(
-            request_log_capacity,
-        ));
 
         // Build AppState and router
         let state = prism_server::AppState {

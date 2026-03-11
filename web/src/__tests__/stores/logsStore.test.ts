@@ -18,7 +18,7 @@ const makeLog = (overrides: Partial<RequestLog> = {}): RequestLog => ({
   provider: 'openai',
   model: 'gpt-4',
   credential_name: null,
-  retry_count: 0,
+  total_attempts: 1,
   status: 200,
   latency_ms: 150,
   usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },

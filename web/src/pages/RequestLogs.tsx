@@ -1,8 +1,235 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLogsStore } from '../stores/logsStore';
-import type { RequestLogFilter } from '../types';
+import type { RequestLog, RequestLogFilter } from '../types';
 import { formatNumber } from '../utils/format';
-import { FileText, ChevronLeft, ChevronRight, Search, X, ChevronDown, ChevronUp, Copy } from 'lucide-react';
+import { FileText, ChevronLeft, ChevronRight, Search, X, ChevronDown, ChevronUp, Copy, Code, MessageSquare, RotateCcw } from 'lucide-react';
+
+const getStatusClass = (status: number): string => {
+  if (status >= 200 && status < 300) return 'status-2xx';
+  if (status >= 400 && status < 500) return 'status-4xx';
+  if (status >= 500) return 'status-5xx';
+  return '';
+};
+
+function CollapsibleBody({
+  label,
+  icon,
+  sectionKey,
+  content,
+  openSections,
+  toggleSection,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  sectionKey: string;
+  content: string;
+  openSections: Record<string, boolean>;
+  toggleSection: (key: string) => void;
+}) {
+  const isOpen = !!openSections[sectionKey];
+
+  const formatted = useMemo(() => {
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      return content;
+    }
+  }, [content]);
+
+  return (
+    <div className="log-body-section">
+      <button
+        className="log-body-toggle"
+        onClick={(e) => { e.stopPropagation(); toggleSection(sectionKey); }}
+      >
+        {icon}
+        <span>{label}</span>
+        {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+      {isOpen && (
+        <pre className="log-body-pre">{formatted}</pre>
+      )}
+    </div>
+  );
+}
+
+function LogDetail({
+  log,
+  openSections,
+  toggleSection,
+}: {
+  log: RequestLog;
+  openSections: Record<string, boolean>;
+  toggleSection: (key: string) => void;
+}) {
+  return (
+    <div className="log-detail">
+      {/* Metadata grid */}
+      <div className="log-detail-grid">
+        <div className="log-detail-item">
+          <span className="log-detail-label">Request ID</span>
+          <span className="log-detail-value text-mono">
+            {log.request_id}
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.request_id); }}
+              style={{ padding: '0 4px', marginLeft: 4 }}
+            >
+              <Copy size={12} />
+            </button>
+          </span>
+        </div>
+        <div className="log-detail-item">
+          <span className="log-detail-label">Method & Path</span>
+          <span className="log-detail-value text-mono">
+            {log.method} {log.path}
+          </span>
+        </div>
+        {log.tenant_id && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Tenant</span>
+            <span className="log-detail-value">{log.tenant_id}</span>
+          </div>
+        )}
+        {log.credential_name && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Credential</span>
+            <span className="log-detail-value text-mono">{log.credential_name}</span>
+          </div>
+        )}
+        {log.requested_model && log.requested_model !== log.model && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Requested Model</span>
+            <span className="log-detail-value text-mono">{log.requested_model}</span>
+          </div>
+        )}
+        {log.client_region && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Client Region</span>
+            <span className="log-detail-value">{log.client_region}</span>
+          </div>
+        )}
+        {log.total_attempts > 1 && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Total Attempts</span>
+            <span className="log-detail-value">{log.total_attempts}</span>
+          </div>
+        )}
+        {(log.usage?.cache_read_tokens ?? 0) > 0 && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Cache Read Tokens</span>
+            <span className="log-detail-value">{log.usage?.cache_read_tokens?.toLocaleString()}</span>
+          </div>
+        )}
+        {(log.usage?.cache_creation_tokens ?? 0) > 0 && (
+          <div className="log-detail-item">
+            <span className="log-detail-label">Cache Write Tokens</span>
+            <span className="log-detail-value">{log.usage?.cache_creation_tokens?.toLocaleString()}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Error with error_type */}
+      {log.error && (
+        <div className="log-detail-error">
+          <span className="log-detail-label">
+            Error
+            {log.error_type && (
+              <span className="log-error-type-badge">{log.error_type}</span>
+            )}
+          </span>
+          <pre className="log-error-pre">{log.error}</pre>
+        </div>
+      )}
+
+      {/* Retry attempts timeline */}
+      {log.attempts && log.attempts.length > 1 && (
+        <div className="log-attempts-section">
+          <div className="log-detail-label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RotateCcw size={12} />
+            Retry Attempts ({log.attempts.length})
+          </div>
+          <div className="log-attempts-timeline">
+            {log.attempts.map((attempt) => (
+              <div key={attempt.attempt_index} className="log-attempt-item">
+                <div className="log-attempt-index">#{attempt.attempt_index + 1}</div>
+                <div className="log-attempt-details">
+                  <span className="type-badge" style={{ marginRight: 4 }}>{attempt.provider}</span>
+                  <span className="text-mono" style={{ fontSize: '0.8rem', marginRight: 8 }}>{attempt.model}</span>
+                  {attempt.credential_name && (
+                    <span className="text-mono" style={{ fontSize: '0.75rem', opacity: 0.6, marginRight: 8 }}>
+                      {attempt.credential_name}
+                    </span>
+                  )}
+                  {attempt.status != null && (
+                    <span className={`status-code ${getStatusClass(attempt.status)}`} style={{ marginRight: 8 }}>
+                      {attempt.status}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>{attempt.latency_ms}ms</span>
+                </div>
+                {attempt.error && (
+                  <div className="log-attempt-error">
+                    {attempt.error_type && <span className="log-error-type-badge">{attempt.error_type}</span>}
+                    <span>{attempt.error}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stream content preview */}
+      {log.stream && log.stream_content_preview && (
+        <CollapsibleBody
+          label="Stream Content Preview"
+          icon={<MessageSquare size={14} />}
+          sectionKey={`${log.request_id}-stream-preview`}
+          content={log.stream_content_preview}
+          openSections={openSections}
+          toggleSection={toggleSection}
+        />
+      )}
+
+      {/* Request body */}
+      {log.request_body && (
+        <CollapsibleBody
+          label="Request Body"
+          icon={<Code size={14} />}
+          sectionKey={`${log.request_id}-req-body`}
+          content={log.request_body}
+          openSections={openSections}
+          toggleSection={toggleSection}
+        />
+      )}
+
+      {/* Upstream request body (translated) */}
+      {log.upstream_request_body && (
+        <CollapsibleBody
+          label="Upstream Request Body (translated)"
+          icon={<Code size={14} />}
+          sectionKey={`${log.request_id}-upstream-body`}
+          content={log.upstream_request_body}
+          openSections={openSections}
+          toggleSection={toggleSection}
+        />
+      )}
+
+      {/* Response body (non-streaming) */}
+      {!log.stream && log.response_body && (
+        <CollapsibleBody
+          label="Response Body"
+          icon={<MessageSquare size={14} />}
+          sectionKey={`${log.request_id}-resp-body`}
+          content={log.response_body}
+          openSections={openSections}
+          toggleSection={toggleSection}
+        />
+      )}
+    </div>
+  );
+}
 
 export default function RequestLogs() {
   const logs = useLogsStore((s) => s.logs);
@@ -44,13 +271,6 @@ export default function RequestLogs() {
     setFilters({});
   };
 
-  const getStatusClass = (status: number): string => {
-    if (status >= 200 && status < 300) return 'status-2xx';
-    if (status >= 400 && status < 500) return 'status-4xx';
-    if (status >= 500) return 'status-5xx';
-    return '';
-  };
-
   const formatCost = (cost: number | null): string => {
     if (cost == null || cost === 0) return '-';
     if (cost < 0.01) return `$${cost.toFixed(6)}`;
@@ -65,6 +285,13 @@ export default function RequestLogs() {
 
   const toggleExpand = (id: string) => {
     setExpandedId(expandedId === id ? null : id);
+    setOpenSections({}); // Reset collapsible state when switching rows
+  };
+
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+
+  const toggleSection = (key: string) => {
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const COL_COUNT = 9;
@@ -212,71 +439,11 @@ export default function RequestLogs() {
                     {expandedId === log.request_id && (
                       <tr key={`${log.request_id}-detail`} className="log-detail-row">
                         <td colSpan={COL_COUNT}>
-                          <div className="log-detail">
-                            <div className="log-detail-grid">
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Request ID</span>
-                                <span className="log-detail-value text-mono">
-                                  {log.request_id}
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.request_id); }}
-                                    style={{ padding: '0 4px', marginLeft: 4 }}
-                                  >
-                                    <Copy size={12} />
-                                  </button>
-                                </span>
-                              </div>
-                              <div className="log-detail-item">
-                                <span className="log-detail-label">Method & Path</span>
-                                <span className="log-detail-value text-mono">
-                                  {log.method} {log.path}
-                                </span>
-                              </div>
-                              {log.tenant_id && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Tenant</span>
-                                  <span className="log-detail-value">{log.tenant_id}</span>
-                                </div>
-                              )}
-                              {log.credential_name && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Credential</span>
-                                  <span className="log-detail-value text-mono">{log.credential_name}</span>
-                                </div>
-                              )}
-                              {log.requested_model && log.requested_model !== log.model && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Requested Model</span>
-                                  <span className="log-detail-value text-mono">{log.requested_model}</span>
-                                </div>
-                              )}
-                              {log.retry_count > 0 && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Retries</span>
-                                  <span className="log-detail-value">{log.retry_count}</span>
-                                </div>
-                              )}
-                              {(log.usage?.cache_read_tokens ?? 0) > 0 && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Cache Read Tokens</span>
-                                  <span className="log-detail-value">{log.usage?.cache_read_tokens?.toLocaleString()}</span>
-                                </div>
-                              )}
-                              {(log.usage?.cache_creation_tokens ?? 0) > 0 && (
-                                <div className="log-detail-item">
-                                  <span className="log-detail-label">Cache Write Tokens</span>
-                                  <span className="log-detail-value">{log.usage?.cache_creation_tokens?.toLocaleString()}</span>
-                                </div>
-                              )}
-                            </div>
-                            {log.error && (
-                              <div className="log-detail-error">
-                                <span className="log-detail-label">Error</span>
-                                <pre className="log-error-pre">{log.error}</pre>
-                              </div>
-                            )}
-                          </div>
+                          <LogDetail
+                            log={log}
+                            openSections={openSections}
+                            toggleSection={toggleSection}
+                          />
                         </td>
                       </tr>
                     )}

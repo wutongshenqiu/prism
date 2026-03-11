@@ -131,6 +131,10 @@ pub struct AuditConfig {
     pub enabled: bool,
     pub dir: String,
     pub retention_days: u32,
+    /// Controls how much request/response body content is captured.
+    pub detail_level: crate::request_record::LogDetailLevel,
+    /// Maximum bytes of body content to capture per field (request_body, response_body, etc.).
+    pub max_body_bytes: usize,
 }
 
 impl Default for AuditConfig {
@@ -139,6 +143,8 @@ impl Default for AuditConfig {
             enabled: false,
             dir: "./logs/audit".to_string(),
             retention_days: 30,
+            detail_level: crate::request_record::LogDetailLevel::Metadata,
+            max_body_bytes: 16384,
         }
     }
 }
@@ -156,12 +162,16 @@ mod tests {
             path: "/v1/messages".to_string(),
             stream: false,
             requested_model: Some("claude-3-opus".to_string()),
+            request_body: None,
+            upstream_request_body: None,
             provider: Some("claude".to_string()),
             model: Some("claude-3-opus".to_string()),
             credential_name: Some("prod-key".to_string()),
-            retry_count: 0,
+            total_attempts: 1,
             status: 200,
             latency_ms: 250,
+            response_body: None,
+            stream_content_preview: None,
             usage: Some(TokenUsage {
                 input_tokens: 100,
                 output_tokens: 200,
@@ -170,9 +180,12 @@ mod tests {
             }),
             cost: Some(0.01),
             error: None,
+            error_type: None,
             api_key_id: Some("sk-p****1234".to_string()),
             tenant_id: Some("alpha".to_string()),
             client_ip: Some("1.2.3.4".to_string()),
+            client_region: None,
+            attempts: vec![],
         }
     }
 
@@ -190,6 +203,7 @@ mod tests {
             enabled: true,
             dir: dir.path().to_string_lossy().to_string(),
             retention_days: 30,
+            ..Default::default()
         };
         let backend = FileAuditBackend::new(config).unwrap();
 

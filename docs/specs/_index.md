@@ -34,6 +34,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-034 | Translator & Server Refactoring                | Active    | [active/SPEC-034/](active/SPEC-034/) |
 | SPEC-035 | Frontend Code Cleanup                          | Active    | [active/SPEC-035/](active/SPEC-035/) |
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
+| SPEC-040 | Request Log & Full-Chain Tracing              | Completed | [completed/SPEC-040/](completed/SPEC-040/) |
 
 ## How to Create a New Spec
 
