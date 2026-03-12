@@ -395,10 +395,10 @@ pub async fn dispatch(state: &AppState, req: DispatchRequest) -> Result<Response
                                     metrics: state.metrics.clone(),
                                     rate_limiter: state.rate_limiter.clone(),
                                     api_key: req.api_key.clone(),
-                                    detail_level,
-                                    max_body_bytes,
                                 },
                                 request_span,
+                                detail_level,
+                                max_body_bytes,
                             );
 
                             if !need_translate {

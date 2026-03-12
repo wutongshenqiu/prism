@@ -148,8 +148,6 @@ pub(super) struct StreamDoneContext {
     pub metrics: Arc<prism_core::metrics::Metrics>,
     pub rate_limiter: Arc<prism_core::rate_limit::CompositeRateLimiter>,
     pub api_key: Option<String>,
-    pub detail_level: LogDetailLevel,
-    pub max_body_bytes: usize,
 }
 
 /// Wrap an upstream `StreamChunk` stream to capture token usage from SSE events.
@@ -164,6 +162,8 @@ pub(super) fn with_usage_capture(
     >,
     ctx: StreamDoneContext,
     request_span: tracing::Span,
+    detail_level: LogDetailLevel,
+    max_body_bytes: usize,
 ) -> std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<StreamChunk, ProxyError>> + Send>> {
     struct State {
         inner: std::pin::Pin<
@@ -176,13 +176,12 @@ pub(super) fn with_usage_capture(
         /// Accumulated raw SSE data for full response body logging.
         /// `None` when detail_level < Full.
         response_body: Option<String>,
+        max_body_bytes: usize,
     }
 
     impl Drop for State {
         fn drop(&mut self) {
             if let Some(ctx) = self.ctx.take() {
-                let max_body_bytes = ctx.max_body_bytes;
-
                 if let Some(ref usage) = self.usage {
                     let cost = ctx
                         .model
@@ -213,7 +212,7 @@ pub(super) fn with_usage_capture(
                 {
                     self.request_span.record(
                         "response_body",
-                        truncate_body(body, max_body_bytes).as_ref(),
+                        truncate_body(body, self.max_body_bytes).as_ref(),
                     );
                 }
                 // Span drops here → GatewayLogLayer::on_close fires
@@ -221,7 +220,7 @@ pub(super) fn with_usage_capture(
         }
     }
 
-    let capture_body = ctx.detail_level >= LogDetailLevel::Full;
+    let capture_body = detail_level >= LogDetailLevel::Full;
     let state = State {
         inner: stream,
         usage: None,
@@ -233,6 +232,7 @@ pub(super) fn with_usage_capture(
         } else {
             None
         },
+        max_body_bytes,
     };
 
     Box::pin(futures::stream::unfold(state, |mut state| async move {
@@ -255,11 +255,20 @@ pub(super) fn with_usage_capture(
                         state.content_preview.push_str(&truncated);
                     }
                     // Accumulate raw SSE data for full response body logging
-                    if let Some(ref mut body) = state.response_body {
+                    // Cap at max_body_bytes to avoid unbounded memory growth
+                    if let Some(ref mut body) = state.response_body
+                        && body.len() < state.max_body_bytes
+                    {
                         if !body.is_empty() {
                             body.push('\n');
                         }
-                        body.push_str(&chunk.data);
+                        let remaining = state.max_body_bytes.saturating_sub(body.len());
+                        if chunk.data.len() <= remaining {
+                            body.push_str(&chunk.data);
+                        } else {
+                            let end = truncate_body(&chunk.data, remaining);
+                            body.push_str(&end);
+                        }
                     }
                 }
                 Some((result, state))
