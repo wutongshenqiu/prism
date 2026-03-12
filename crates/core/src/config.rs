@@ -289,7 +289,7 @@ pub struct LogStoreConfig {
     pub capacity: usize,
     /// How much request/response body content to capture.
     pub detail_level: LogDetailLevel,
-    /// Maximum bytes of body content per field.
+    /// Maximum bytes of body content per field. 0 = unlimited.
     pub max_body_bytes: usize,
     /// Optional file audit (JSONL persistence).
     pub file_audit: FileAuditConfig,
@@ -299,9 +299,9 @@ impl Default for LogStoreConfig {
     fn default() -> Self {
         Self {
             backend: LogStoreBackend::Memory,
-            capacity: 10_000,
+            capacity: 1_000,
             detail_level: LogDetailLevel::Full,
-            max_body_bytes: 32768,
+            max_body_bytes: 1_048_576,
             file_audit: FileAuditConfig::default(),
         }
     }

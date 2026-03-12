@@ -228,7 +228,7 @@ pub(super) fn with_usage_capture(
         request_span,
         content_preview: String::with_capacity(STREAM_PREVIEW_MAX_CHARS),
         response_body: if capture_body {
-            Some(String::new())
+            Some(String::with_capacity(max_body_bytes.min(64 * 1024)))
         } else {
             None
         },
@@ -254,21 +254,17 @@ pub(super) fn with_usage_capture(
                         let truncated = truncate_body(&text, remaining);
                         state.content_preview.push_str(&truncated);
                     }
-                    // Accumulate raw SSE data for full response body logging
-                    // Cap at max_body_bytes to avoid unbounded memory growth
+                    // Accumulate raw SSE data for full response body logging.
+                    // max_body_bytes 0 = unlimited (truncate_body treats 0 as no-op).
+                    let limit = state.max_body_bytes;
                     if let Some(ref mut body) = state.response_body
-                        && body.len() < state.max_body_bytes
+                        && (limit == 0 || body.len() < limit)
                     {
                         if !body.is_empty() {
                             body.push('\n');
                         }
-                        let remaining = state.max_body_bytes.saturating_sub(body.len());
-                        if chunk.data.len() <= remaining {
-                            body.push_str(&chunk.data);
-                        } else {
-                            let end = truncate_body(&chunk.data, remaining);
-                            body.push_str(&end);
-                        }
+                        let remaining = if limit == 0 { 0 } else { limit.saturating_sub(body.len()) };
+                        body.push_str(&truncate_body(&chunk.data, remaining));
                     }
                 }
                 Some((result, state))
