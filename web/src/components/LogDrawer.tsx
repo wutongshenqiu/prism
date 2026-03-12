@@ -211,16 +211,16 @@ export default function LogDrawer() {
                   <JsonViewer data={log.upstream_request_body} />
                 </section>
               )}
-              {log.stream && log.stream_content_preview && (
-                <section className="drawer-section">
-                  <h4 className="drawer-section-title"><MessageSquare size={14} /> Stream Content Preview</h4>
-                  <JsonViewer data={log.stream_content_preview} />
-                </section>
-              )}
-              {!log.stream && log.response_body && (
+              {log.response_body && (
                 <section className="drawer-section">
                   <h4 className="drawer-section-title"><MessageSquare size={14} /> Response Body</h4>
                   <JsonViewer data={log.response_body} />
+                </section>
+              )}
+              {log.stream && !log.response_body && log.stream_content_preview && (
+                <section className="drawer-section">
+                  <h4 className="drawer-section-title"><MessageSquare size={14} /> Stream Content Preview</h4>
+                  <JsonViewer data={log.stream_content_preview} />
                 </section>
               )}
             </>
