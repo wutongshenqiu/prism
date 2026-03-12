@@ -263,7 +263,11 @@ pub(super) fn with_usage_capture(
                         if !body.is_empty() {
                             body.push('\n');
                         }
-                        let remaining = if limit == 0 { 0 } else { limit.saturating_sub(body.len()) };
+                        let remaining = if limit == 0 {
+                            0
+                        } else {
+                            limit.saturating_sub(body.len())
+                        };
                         body.push_str(&truncate_body(&chunk.data, remaining));
                     }
                 }
