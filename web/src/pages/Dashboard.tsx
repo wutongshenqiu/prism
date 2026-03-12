@@ -28,6 +28,21 @@ import {
 } from 'recharts';
 
 const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
+
+const RADIAN = Math.PI / 180;
+const renderPieLabel = (props: any, formatter: (props: any) => string) => {
+  const { cx, cy, midAngle, outerRadius } = props;
+  const radius = outerRadius + 25;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text x={x} y={y} fill="var(--color-text)" fontSize={12}
+      textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central">
+      {formatter(props)}
+    </text>
+  );
+};
+
 const STATUS_COLORS: Record<keyof StatusDistribution, string> = { success: '#10b981', client_error: '#f59e0b', server_error: '#ef4444' };
 
 const TOOLTIP_STYLE = {
@@ -184,17 +199,17 @@ export default function Dashboard() {
           <div className="card-header"><h3>Status Distribution</h3></div>
           <div className="card-body">
             {statusPieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
+              <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
                     data={statusPieData}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
-                    outerRadius={95}
+                    outerRadius={85}
                     dataKey="value"
                     nameKey="name"
-                    label={({ name, value }: { name: string; value: number }) => `${name} (${formatNumber(value)})`}
+                    label={(props: any) => renderPieLabel(props, (p) => `${p.name} (${formatNumber(p.value)})`)}
                     labelLine
                   >
                     {statusPieData.map((entry, index) => (
@@ -223,18 +238,16 @@ export default function Dashboard() {
           <div className="card-header"><h3>Provider Distribution</h3></div>
           <div className="card-body">
             {stats && stats.provider_distribution.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
+              <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
                     data={stats.provider_distribution}
                     cx="50%"
                     cy="50%"
-                    outerRadius={95}
+                    outerRadius={85}
                     dataKey="requests"
                     nameKey="provider"
-                    label={({ provider, percentage }: { provider: string; percentage: number }) =>
-                      `${provider} (${percentage.toFixed(1)}%)`
-                    }
+                    label={(props: any) => renderPieLabel(props, (p) => `${p.provider} (${p.percentage.toFixed(1)}%)`)}
                     labelLine
                   >
                     {stats.provider_distribution.map((_, index) => (
