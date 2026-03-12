@@ -112,18 +112,21 @@ export const providersApi = {
       return { ...res, data };
     }) as Promise<{ data: Provider[] } & Record<string, unknown>>,
 
-  get: (id: string) => api.get<Provider>(`/providers/${id}`).then((res) => ({
-    ...res,
-    data: {
-      ...res.data,
-      provider_type: providerTypeToFrontend(res.data.provider_type),
-      enabled: res.data.disabled !== undefined ? !res.data.disabled : true,
-      models: Array.isArray(res.data.models)
-        ? res.data.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
-        : [],
-      headers: res.data.headers || {},
-    },
-  })),
+  get: (id: string) => api.get<Record<string, unknown>>(`/providers/${id}`).then((res) => {
+    const raw = res.data;
+    return {
+      ...res,
+      data: {
+        ...raw,
+        provider_type: providerTypeToFrontend((raw.provider_type as string) || ''),
+        enabled: raw.disabled !== undefined ? !(raw.disabled as boolean) : true,
+        models: Array.isArray(raw.models)
+          ? raw.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
+          : [],
+        headers: (raw.headers as Record<string, string>) || {},
+      } as Provider,
+    };
+  }),
 
   create: (data: ProviderCreateRequest) =>
     api.post<Provider>('/providers', {

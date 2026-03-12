@@ -20,7 +20,6 @@ export interface Provider {
   api_key_masked: string;
   api_key?: string;
   enabled: boolean;
-  disabled: boolean;
   models: string[];
   models_count: number;
   headers?: Record<string, string>;

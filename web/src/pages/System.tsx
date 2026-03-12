@@ -175,9 +175,11 @@ export default function System() {
                         <td>
                           <StatusBadge status={provider.status} />
                         </td>
-                        <td>{provider.latency_ms ? `${provider.latency_ms}ms` : '-'}</td>
-                        <td>
-                          {provider.last_check ? new Date(provider.last_check).toLocaleString() : '-'}
+                        <td>{provider.latency_ms > 0 ? `${provider.latency_ms}ms` : '-'}</td>
+                        <td className="text-muted">
+                          {provider.last_check
+                            ? new Date(provider.last_check).toLocaleString()
+                            : 'No checks yet'}
                         </td>
                       </tr>
                     ))

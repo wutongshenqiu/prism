@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { authKeysApi } from '../services/api';
 import type { AuthKey, AuthKeyCreateRequest, AuthKeyUpdateRequest, KeyRateLimitConfig, BudgetConfig } from '../types';
 import { Key, Plus, Pencil, Trash2, X, Copy, Check } from 'lucide-react';
+import TagList from '../components/TagList';
 
 interface FormState {
   name: string;
@@ -218,10 +219,10 @@ export default function AuthKeys() {
               <tr>
                 <th>Name</th>
                 <th>Key</th>
-                <th>Tenant</th>
+                <th className="hide-mobile">Tenant</th>
                 <th>Models</th>
-                <th>Credentials</th>
-                <th>Limits</th>
+                <th className="hide-mobile">Credentials</th>
+                <th className="hide-mobile">Limits</th>
                 <th>Expires</th>
                 <th>Actions</th>
               </tr>
@@ -249,32 +250,14 @@ export default function AuthKeys() {
                   <tr key={key.id}>
                     <td className="text-bold">{key.name ?? '-'}</td>
                     <td className="text-mono">{key.key_masked || '-'}</td>
-                    <td>{key.tenant_id ?? '-'}</td>
+                    <td className="hide-mobile">{key.tenant_id ?? '-'}</td>
                     <td>
-                      <div className="tag-list">
-                        {key.allowed_models.length > 0
-                          ? key.allowed_models.slice(0, 2).map((m) => (
-                              <span key={m} className="tag">{m}</span>
-                            ))
-                          : <span className="text-muted">All</span>}
-                        {key.allowed_models.length > 2 && (
-                          <span className="tag tag-more">+{key.allowed_models.length - 2}</span>
-                        )}
-                      </div>
+                      <TagList items={key.allowed_models} maxVisible={2} />
                     </td>
-                    <td>
-                      <div className="tag-list">
-                        {key.allowed_credentials.length > 0
-                          ? key.allowed_credentials.slice(0, 2).map((c) => (
-                              <span key={c} className="tag">{c}</span>
-                            ))
-                          : <span className="text-muted">All</span>}
-                        {key.allowed_credentials.length > 2 && (
-                          <span className="tag tag-more">+{key.allowed_credentials.length - 2}</span>
-                        )}
-                      </div>
+                    <td className="hide-mobile">
+                      <TagList items={key.allowed_credentials} maxVisible={2} />
                     </td>
-                    <td className="text-muted">{renderLimits(key)}</td>
+                    <td className="text-muted hide-mobile">{renderLimits(key)}</td>
                     <td className="text-nowrap">
                       {key.expires_at
                         ? new Date(key.expires_at).toLocaleDateString()

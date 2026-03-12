@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { providersApi } from '../services/api';
 import type { Provider, ProviderCreateRequest, ProviderType } from '../types';
 import StatusBadge from '../components/StatusBadge';
+import TagList from '../components/TagList';
 import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse, PlusCircle, MinusCircle, Copy } from 'lucide-react';
 
 const PROVIDER_TYPES: { value: ProviderType; label: string }[] = [
@@ -281,19 +282,15 @@ export default function Providers() {
                       </div>
                     </td>
                     <td>
-                      <div className="tag-list">
-                        {(provider.models || []).slice(0, 3).map((m) => (
-                          <span key={m} className="tag">{m}</span>
-                        ))}
-                        {(provider.models || []).length > 3 && (
-                          <span className="tag tag-more">
-                            +{provider.models.length - 3}
-                          </span>
-                        )}
-                        {!provider.models && provider.models_count != null && (
+                      {(provider.models || []).length > 0 ? (
+                        <TagList items={provider.models} maxVisible={3} />
+                      ) : provider.models_count != null ? (
+                        <div className="tag-list">
                           <span className="tag">{provider.models_count} models</span>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted">-</span>
+                      )}
                     </td>
                     <td>
                       {healthResults[provider.id] ? (
@@ -307,7 +304,7 @@ export default function Providers() {
                         </span>
                       ) : (
                         <StatusBadge
-                          status={(provider.enabled ?? !provider.disabled) ? 'active' : 'inactive'}
+                          status={provider.enabled ? 'active' : 'inactive'}
                         />
                       )}
                     </td>

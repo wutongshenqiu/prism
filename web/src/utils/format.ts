@@ -34,8 +34,22 @@ export function getStatusClass(status: number): string {
   return '';
 }
 
+/**
+ * Format a rate (0-1) as a human-readable percentage.
+ * Examples: 0 → "0%", 0.00005 → "<0.01%", 0.005 → "0.50%", 0.125 → "12.5%"
+ */
+export function formatRate(rate: number): string {
+  const pct = rate * 100;
+  if (pct === 0) return '0%';
+  if (pct < 0.01) return '<0.01%';
+  if (pct < 1) return `${pct.toFixed(2)}%`;
+  return `${pct.toFixed(1)}%`;
+}
+
 export function formatCost(cost: number | null): string {
   if (cost == null || cost === 0) return '-';
-  if (cost < 0.01) return `$${cost.toFixed(6)}`;
-  return `$${cost.toFixed(4)}`;
+  if (cost < 0.001) return '<$0.001';
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  if (cost < 1) return `$${cost.toFixed(3)}`;
+  return `$${cost.toFixed(2)}`;
 }

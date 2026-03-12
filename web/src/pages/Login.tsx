@@ -36,7 +36,7 @@ export default function Login() {
           <div className="login-logo">
             <Activity size={32} />
           </div>
-          <h1>AI Proxy Gateway</h1>
+          <h1>Prism Gateway</h1>
           <p>Sign in to your dashboard</p>
         </div>
 

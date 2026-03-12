@@ -53,7 +53,7 @@ export default function Layout() {
         <div className="sidebar-header">
           <div className="sidebar-logo">
             <Activity size={24} />
-            <span>AI Proxy</span>
+            <span>Prism</span>
           </div>
           <button
             className="sidebar-close"
@@ -97,7 +97,7 @@ export default function Layout() {
           >
             <Menu size={20} />
           </button>
-          <h1 className="main-header-title">AI Proxy Gateway</h1>
+          <h1 className="main-header-title">Prism Gateway</h1>
         </header>
         <div className="main-body">
           <Outlet />

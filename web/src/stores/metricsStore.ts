@@ -26,7 +26,18 @@ export const useMetricsStore = create<MetricsState>((set, get) => ({
   timeRange: '1h',
   isLoading: false,
 
-  setSnapshot: (snapshot) => set({ snapshot }),
+  setSnapshot: (snapshot) => {
+    const prev = get().snapshot;
+    if (prev &&
+      prev.total_requests === snapshot.total_requests &&
+      prev.total_errors === snapshot.total_errors &&
+      prev.total_tokens === snapshot.total_tokens &&
+      prev.active_providers === snapshot.active_providers &&
+      prev.avg_latency_ms === snapshot.avg_latency_ms &&
+      prev.error_rate === snapshot.error_rate
+    ) return;
+    set({ snapshot });
+  },
 
   setTimeRange: (range) => {
     set({ timeRange: range });

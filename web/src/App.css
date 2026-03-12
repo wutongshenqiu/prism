@@ -301,6 +301,9 @@
 .metric-card-subtitle {
   font-size: 0.8125rem;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ══════════════════════════════════════════
@@ -1646,5 +1649,10 @@
 
   .log-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Hide less important table columns on mobile */
+  .table .hide-mobile {
+    display: none;
   }
 }

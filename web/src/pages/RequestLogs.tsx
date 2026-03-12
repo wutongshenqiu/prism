@@ -210,7 +210,9 @@ export default function RequestLogs() {
                     <td className="text-nowrap">{log.latency_ms}ms</td>
                     <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>{formatTokens(log)}</td>
                     <td className="text-nowrap" style={{ fontSize: '0.85rem' }}>{formatCost(log.cost)}</td>
-                    <td className="text-mono" style={{ fontSize: '0.8rem' }}>{log.api_key_id || '-'}</td>
+                    <td className="text-mono text-ellipsis" style={{ fontSize: '0.8rem', maxWidth: 140 }} title={log.api_key_id || undefined}>
+                      {log.api_key_id || '-'}
+                    </td>
                   </tr>
                 ))
               )}
