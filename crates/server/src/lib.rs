@@ -80,8 +80,16 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::messages::messages),
         )
         .route(
+            "/v1/completions",
+            axum::routing::post(handler::completions::completions),
+        )
+        .route(
             "/v1/responses",
             axum::routing::post(handler::responses::responses),
+        )
+        .route(
+            "/v1/messages/count_tokens",
+            axum::routing::post(handler::count_tokens::count_tokens),
         )
         .layer(RequestBodyLimitLayer::new(body_limit_bytes))
         .layer(axum_mw::from_fn_with_state(

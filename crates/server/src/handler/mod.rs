@@ -1,5 +1,7 @@
 pub mod admin;
 pub mod chat_completions;
+pub mod completions;
+pub mod count_tokens;
 pub mod dashboard;
 pub mod health;
 pub mod messages;

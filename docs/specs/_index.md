@@ -31,6 +31,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
 | SPEC-042 | Crate Structure Refactoring                    | Draft     | [active/SPEC-042/](active/SPEC-042/) |
 | SPEC-043 | Dashboard Config Workspace                     | Active    | [active/SPEC-043/](active/SPEC-043/) |
+| SPEC-044 | Coding Agent Compatibility Endpoints            | Active    | [active/SPEC-044/](active/SPEC-044/) |
 
 ## Retroactively Completed
 
