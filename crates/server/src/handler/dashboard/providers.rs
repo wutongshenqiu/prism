@@ -25,6 +25,8 @@ pub struct CreateProviderRequest {
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub prefix: Option<String>,
@@ -36,6 +38,16 @@ pub struct CreateProviderRequest {
     pub headers: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub disabled: bool,
+    #[serde(default)]
+    pub wire_api: Option<String>,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+fn default_weight() -> u32 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +56,8 @@ pub struct UpdateProviderRequest {
     pub api_key: Option<String>,
     #[serde(default)]
     pub base_url: Option<Option<String>>,
+    #[serde(default)]
+    pub proxy_url: Option<Option<String>>,
     #[serde(default)]
     pub name: Option<Option<String>>,
     #[serde(default)]
@@ -56,6 +70,12 @@ pub struct UpdateProviderRequest {
     pub headers: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     pub disabled: Option<bool>,
+    #[serde(default)]
+    pub wire_api: Option<String>,
+    #[serde(default)]
+    pub weight: Option<u32>,
+    #[serde(default)]
+    pub region: Option<Option<String>>,
 }
 
 fn mask_key(key: &str) -> String {
@@ -142,11 +162,15 @@ pub async fn get_provider(
                 "name": entry.name,
                 "api_key_masked": mask_key(&entry.api_key),
                 "base_url": entry.base_url,
+                "proxy_url": entry.proxy_url,
                 "prefix": entry.prefix,
                 "models": entry.models,
                 "excluded_models": entry.excluded_models,
                 "headers": entry.headers,
                 "disabled": entry.disabled,
+                "wire_api": entry.wire_api,
+                "weight": entry.weight,
+                "region": entry.region,
             });
             (StatusCode::OK, Json(detail))
         }
@@ -183,10 +207,15 @@ pub async fn create_provider(
         .map(|id| prism_core::config::ModelMapping { id, alias: None })
         .collect();
 
+    let wire_api = match body.wire_api.as_deref() {
+        Some("responses") => prism_core::provider::WireApi::Responses,
+        _ => prism_core::provider::WireApi::Chat,
+    };
+
     let new_entry = prism_core::config::ProviderKeyEntry {
         api_key: body.api_key,
         base_url: body.base_url,
-        proxy_url: None,
+        proxy_url: body.proxy_url,
         prefix: body.prefix,
         models,
         excluded_models: body.excluded_models,
@@ -194,9 +223,9 @@ pub async fn create_provider(
         disabled: body.disabled,
         name: body.name,
         cloak: Default::default(),
-        wire_api: Default::default(),
-        weight: 1,
-        region: None,
+        wire_api,
+        weight: body.weight,
+        region: body.region,
     };
 
     match update_config_file(&state, |config| match body.provider_type.as_str() {
@@ -251,6 +280,9 @@ pub async fn update_provider(
             if let Some(ref url) = body.base_url {
                 entry.base_url = url.clone();
             }
+            if let Some(ref url) = body.proxy_url {
+                entry.proxy_url = url.clone();
+            }
             if let Some(ref name) = body.name {
                 entry.name = name.clone();
             }
@@ -274,6 +306,18 @@ pub async fn update_provider(
             }
             if let Some(disabled) = body.disabled {
                 entry.disabled = disabled;
+            }
+            if let Some(ref wire_api) = body.wire_api {
+                entry.wire_api = match wire_api.as_str() {
+                    "responses" => prism_core::provider::WireApi::Responses,
+                    _ => prism_core::provider::WireApi::Chat,
+                };
+            }
+            if let Some(weight) = body.weight {
+                entry.weight = weight;
+            }
+            if let Some(ref region) = body.region {
+                entry.region = region.clone();
             }
         }
     })

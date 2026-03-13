@@ -84,71 +84,27 @@ export const authApi = {
 
 // ── Providers ──
 
-// Map provider_type between frontend (underscore) and backend (hyphen)
-const providerTypeToBackend = (type: string): string =>
-  type === 'openai_compat' ? 'openai-compat' : type;
-const providerTypeToFrontend = (type: string): string =>
-  type === 'openai-compat' ? 'openai_compat' : type;
-
 export const providersApi = {
   list: () =>
     api.get('/providers').then((res) => {
-      // Backend returns {providers: [...]}; normalize to Provider[]
       const raw = res.data.providers || res.data;
-      const data = Array.isArray(raw)
-        ? raw.map((item: Record<string, unknown>) => ({
-            ...item,
-            provider_type: providerTypeToFrontend((item.provider_type as string) || ''),
-            name: (item.name as string) || '',
-            base_url: (item.base_url as string) || '',
-            enabled: item.disabled !== undefined ? !(item.disabled as boolean) : true,
-            models: Array.isArray(item.models)
-              ? item.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
-              : [],
-            headers: (item.headers as Record<string, string>) || {},
-            models_count: item.models_count,
-          }))
-        : [];
+      const data = Array.isArray(raw) ? raw as Provider[] : [];
       return { ...res, data };
     }) as Promise<{ data: Provider[] } & Record<string, unknown>>,
 
-  get: (id: string) => api.get<Record<string, unknown>>(`/providers/${id}`).then((res) => {
-    const raw = res.data;
-    return {
-      ...res,
-      data: {
-        ...raw,
-        provider_type: providerTypeToFrontend((raw.provider_type as string) || ''),
-        enabled: raw.disabled !== undefined ? !(raw.disabled as boolean) : true,
-        models: Array.isArray(raw.models)
-          ? raw.models.map((m: unknown) => typeof m === 'string' ? m : (m as Record<string, unknown>)?.id ?? m)
-          : [],
-        headers: (raw.headers as Record<string, string>) || {},
-      } as Provider,
-    };
-  }),
+  get: (id: string) => api.get<Provider>(`/providers/${id}`),
 
   create: (data: ProviderCreateRequest) =>
-    api.post<Provider>('/providers', {
-      ...data,
-      provider_type: providerTypeToBackend(data.provider_type),
-      disabled: !data.enabled,
-    }),
+    api.post<Provider>('/providers', data),
 
   update: (id: string, data: ProviderUpdateRequest) =>
-    api.patch<Provider>(`/providers/${id}`, {
-      ...data,
-      disabled: data.enabled !== undefined ? !data.enabled : undefined,
-      enabled: undefined,
-    }),
+    api.patch<Provider>(`/providers/${id}`, data),
 
   delete: (id: string) => api.delete(`/providers/${id}`),
 
   fetchModels: (data: { provider_type: string; api_key: string; base_url?: string }) =>
-    api.post<{ models: string[] }>('/providers/fetch-models', {
-      ...data,
-      provider_type: providerTypeToBackend(data.provider_type),
-    }).then((res) => res.data.models),
+    api.post<{ models: string[] }>('/providers/fetch-models', data)
+      .then((res) => res.data.models),
 
   healthCheck: (id: string) =>
     api.post<{ status: string; latency_ms?: number; message?: string }>(`/providers/${id}/health`)

@@ -9,14 +9,14 @@ const PROVIDER_TYPES: { value: ProviderType; label: string }[] = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'claude', label: 'Claude (Anthropic)' },
   { value: 'gemini', label: 'Gemini (Google)' },
-  { value: 'openai_compat', label: 'OpenAI Compatible' },
+  { value: 'openai-compat', label: 'OpenAI Compatible' },
 ];
 
 const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   openai: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
-  openai_compat: '',
+  'openai-compat': '',
 };
 
 interface HeaderPair {
@@ -28,20 +28,32 @@ interface FormState {
   name: string;
   provider_type: ProviderType;
   base_url: string;
+  proxy_url: string;
   api_key: string;
-  enabled: boolean;
+  prefix: string;
+  disabled: boolean;
   models: string;
+  excluded_models: string;
   headers: HeaderPair[];
+  wire_api: string;
+  weight: number;
+  region: string;
 }
 
 const emptyForm: FormState = {
   name: '',
   provider_type: 'openai',
   base_url: DEFAULT_BASE_URLS.openai,
+  proxy_url: '',
   api_key: '',
-  enabled: true,
+  prefix: '',
+  disabled: false,
   models: '',
+  excluded_models: '',
   headers: [],
+  wire_api: 'chat',
+  weight: 1,
+  region: '',
 };
 
 export default function Providers() {
@@ -83,28 +95,29 @@ export default function Providers() {
     const headerPairs: HeaderPair[] = provider.headers
       ? Object.entries(provider.headers).map(([key, value]) => ({ key, value }))
       : [];
+    const modelStrings = (provider.models || []).map((m) =>
+      typeof m === 'string' ? m : m.id
+    );
     setForm({
       name: provider.name ?? '',
       provider_type: provider.provider_type,
       base_url: provider.base_url ?? '',
+      proxy_url: provider.proxy_url ?? '',
       api_key: '',
-      enabled: provider.enabled,
-      models: provider.models.join(', '),
+      prefix: provider.prefix ?? '',
+      disabled: provider.disabled,
+      models: modelStrings.join(', '),
+      excluded_models: (provider.excluded_models || []).join(', '),
       headers: headerPairs,
+      wire_api: provider.wire_api ?? 'chat',
+      weight: provider.weight ?? 1,
+      region: provider.region ?? '',
     });
     setError('');
     setShowModal(true);
   };
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      setError('Name is required');
-      return;
-    }
-    if (!form.base_url.trim()) {
-      setError('Base URL is required');
-      return;
-    }
     if (!editId && !form.api_key.trim()) {
       setError('API key is required');
       return;
@@ -119,6 +132,11 @@ export default function Providers() {
         .map((m) => m.trim())
         .filter(Boolean);
 
+      const excluded_models = form.excluded_models
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean);
+
       const headers: Record<string, string> = {};
       form.headers.forEach(({ key, value }) => {
         if (key.trim() && value.trim()) headers[key.trim()] = value.trim();
@@ -126,22 +144,34 @@ export default function Providers() {
 
       if (editId) {
         await providersApi.update(editId, {
-          name: form.name,
-          base_url: form.base_url,
+          name: form.name || null,
+          base_url: form.base_url || null,
+          proxy_url: form.proxy_url || null,
           api_key: form.api_key || undefined,
-          enabled: form.enabled,
+          prefix: form.prefix || null,
+          disabled: form.disabled,
           models,
+          excluded_models,
           headers,
+          wire_api: form.wire_api,
+          weight: form.weight,
+          region: form.region || null,
         });
       } else {
         const data: ProviderCreateRequest = {
-          name: form.name,
+          name: form.name || undefined,
           provider_type: form.provider_type,
-          base_url: form.base_url,
+          base_url: form.base_url || undefined,
+          proxy_url: form.proxy_url || undefined,
           api_key: form.api_key,
-          enabled: form.enabled,
+          prefix: form.prefix || undefined,
+          disabled: form.disabled,
           models,
+          excluded_models,
           headers,
+          wire_api: form.wire_api,
+          weight: form.weight,
+          region: form.region || undefined,
         };
         await providersApi.create(data);
       }
@@ -283,7 +313,7 @@ export default function Providers() {
                     </td>
                     <td>
                       {(provider.models || []).length > 0 ? (
-                        <TagList items={provider.models} maxVisible={3} />
+                        <TagList items={(provider.models || []).map((m) => typeof m === 'string' ? m : m.id)} maxVisible={3} />
                       ) : provider.models_count != null ? (
                         <div className="tag-list">
                           <span className="tag">{provider.models_count} models</span>
@@ -304,7 +334,7 @@ export default function Providers() {
                         </span>
                       ) : (
                         <StatusBadge
-                          status={provider.enabled ? 'active' : 'inactive'}
+                          status={provider.disabled ? 'inactive' : 'active'}
                         />
                       )}
                     </td>
@@ -475,12 +505,87 @@ export default function Providers() {
                 )}
               </div>
 
+              <div className="form-group">
+                <label>Excluded Models (comma-separated)</label>
+                <input
+                  type="text"
+                  value={form.excluded_models}
+                  onChange={(e) => setForm({ ...form, excluded_models: e.target.value })}
+                  placeholder="gpt-4-vision-*, dall-e-*"
+                />
+                <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                  Models matching these patterns will be excluded from routing.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Prefix</label>
+                <input
+                  type="text"
+                  value={form.prefix}
+                  onChange={(e) => setForm({ ...form, prefix: e.target.value })}
+                  placeholder="e.g., my-prefix/"
+                />
+                <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                  Optional prefix added to model names when routing.
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label>Proxy URL</label>
+                <input
+                  type="text"
+                  value={form.proxy_url}
+                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
+                  placeholder="http://proxy:8080 or socks5://proxy:1080"
+                />
+              </div>
+
+              <div className="form-row">
+                {form.provider_type === 'openai-compat' && (
+                  <div className="form-group">
+                    <label>Wire API</label>
+                    <select
+                      value={form.wire_api}
+                      onChange={(e) => setForm({ ...form, wire_api: e.target.value })}
+                    >
+                      <option value="chat">Chat Completions</option>
+                      <option value="responses">Responses API</option>
+                    </select>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label>Weight</label>
+                  <input
+                    type="number"
+                    value={form.weight}
+                    onChange={(e) => setForm({ ...form, weight: parseInt(e.target.value, 10) || 1 })}
+                    min="1"
+                    max="100"
+                  />
+                  <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                    Routing weight (1-100) for weighted round-robin.
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label>Region</label>
+                  <input
+                    type="text"
+                    value={form.region}
+                    onChange={(e) => setForm({ ...form, region: e.target.value })}
+                    placeholder="us-east, eu-west"
+                  />
+                </div>
+              </div>
+
               <div className="form-group form-group-inline">
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
-                    checked={form.enabled}
-                    onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                    checked={!form.disabled}
+                    onChange={(e) => setForm({ ...form, disabled: !e.target.checked })}
                   />
                   Enabled
                 </label>

@@ -103,17 +103,15 @@ describe('routingApi', () => {
 });
 
 describe('providersApi type mapping', () => {
-  it('converts openai_compat to openai-compat on create', async () => {
+  it('passes openai-compat provider type directly', async () => {
     const mod = await import('../../services/api');
     const instance = vi.mocked(axios.create).mock.results[0]?.value;
     vi.mocked(instance.post).mockResolvedValueOnce({ data: {} });
 
     await mod.providersApi.create({
-      name: 'test',
-      provider_type: 'openai_compat',
-      base_url: 'https://api.example.com',
+      provider_type: 'openai-compat',
       api_key: 'key',
-      enabled: true,
+      disabled: false,
       models: ['model-1'],
     });
 

@@ -17,35 +17,56 @@ export interface Provider {
   name: string | null;
   provider_type: ProviderType;
   base_url: string | null;
+  proxy_url: string | null;
   api_key_masked: string;
   api_key?: string;
-  enabled: boolean;
-  models: string[];
+  prefix: string | null;
+  disabled: boolean;
+  models: ModelMapping[];
   models_count: number;
+  excluded_models: string[];
   headers?: Record<string, string>;
-  created_at?: string;
-  updated_at?: string;
+  wire_api: 'chat' | 'responses';
+  weight: number;
+  region: string | null;
 }
 
-export type ProviderType = 'openai' | 'claude' | 'gemini' | 'openai_compat';
+export interface ModelMapping {
+  id: string;
+  alias: string | null;
+}
+
+export type ProviderType = 'openai' | 'claude' | 'gemini' | 'openai-compat';
 
 export interface ProviderCreateRequest {
-  name: string;
+  name?: string;
   provider_type: ProviderType;
-  base_url: string;
+  base_url?: string;
+  proxy_url?: string;
   api_key: string;
-  enabled: boolean;
+  prefix?: string;
+  disabled: boolean;
   models: string[];
+  excluded_models?: string[];
   headers?: Record<string, string>;
+  wire_api?: string;
+  weight?: number;
+  region?: string;
 }
 
 export interface ProviderUpdateRequest {
-  name?: string;
-  base_url?: string;
+  name?: string | null;
+  base_url?: string | null;
+  proxy_url?: string | null;
   api_key?: string;
-  enabled?: boolean;
+  prefix?: string | null;
+  disabled?: boolean;
   models?: string[];
+  excluded_models?: string[];
   headers?: Record<string, string>;
+  wire_api?: string;
+  weight?: number;
+  region?: string | null;
 }
 
 // ── Auth Keys ──
