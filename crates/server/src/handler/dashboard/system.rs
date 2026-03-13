@@ -80,6 +80,20 @@ pub async fn system_health(State(state): State<AppState>) -> impl IntoResponse {
         "degraded"
     };
 
+    // Collect metrics summary
+    let metrics = state.metrics.snapshot();
+    let metrics_summary = json!({
+        "total_requests": metrics["total_requests"],
+        "total_errors": metrics["total_errors"],
+        "error_rate": metrics["error_rate"],
+        "avg_latency_ms": metrics["avg_latency_ms"],
+        "rpm": metrics["rpm"],
+        "total_tokens": metrics["total_tokens"],
+        "total_cost_usd": metrics["total_cost_usd"],
+        "cache_hits": metrics["cache_hits"],
+        "cache_misses": metrics["cache_misses"],
+    });
+
     (
         StatusCode::OK,
         Json(json!({
@@ -90,6 +104,7 @@ pub async fn system_health(State(state): State<AppState>) -> impl IntoResponse {
             "port": config.port,
             "tls_enabled": config.tls.enable,
             "providers": providers,
+            "metrics": metrics_summary,
         })),
     )
 }

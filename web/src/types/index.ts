@@ -307,6 +307,17 @@ export interface SystemHealth {
   port: number;
   tls_enabled: boolean;
   providers: ProviderHealth[];
+  metrics?: {
+    total_requests: number;
+    total_errors: number;
+    error_rate: number;
+    avg_latency_ms: number;
+    rpm: number;
+    total_tokens: number;
+    total_cost_usd: number;
+    cache_hits: number;
+    cache_misses: number;
+  };
 }
 
 export interface ProviderHealth {

@@ -134,6 +134,40 @@ export default function System() {
             />
           </div>
 
+          {/* Traffic Metrics */}
+          {health.metrics && (
+            <div className="metric-grid" style={{ marginTop: '1.5rem' }}>
+              <MetricCard
+                title="Requests"
+                value={health.metrics.total_requests.toLocaleString()}
+                subtitle={`${health.metrics.rpm.toFixed(1)} rpm`}
+                icon={<Activity size={20} />}
+                color="blue"
+              />
+              <MetricCard
+                title="Avg Latency"
+                value={`${health.metrics.avg_latency_ms.toFixed(0)}ms`}
+                subtitle={`${(health.metrics.error_rate * 100).toFixed(1)}% error rate`}
+                icon={<Clock size={20} />}
+                color={health.metrics.error_rate > 0.05 ? 'red' : 'green'}
+              />
+              <MetricCard
+                title="Cost"
+                value={`$${health.metrics.total_cost_usd.toFixed(2)}`}
+                subtitle={`${health.metrics.total_tokens.toLocaleString()} tokens`}
+                icon={<Server size={20} />}
+                color="purple"
+              />
+              <MetricCard
+                title="Cache"
+                value={`${health.metrics.cache_hits + health.metrics.cache_misses > 0 ? ((health.metrics.cache_hits / (health.metrics.cache_hits + health.metrics.cache_misses)) * 100).toFixed(0) : '0'}%`}
+                subtitle={`${health.metrics.cache_hits} hits / ${health.metrics.cache_misses} misses`}
+                icon={<Activity size={20} />}
+                color="orange"
+              />
+            </div>
+          )}
+
           {/* Provider Health */}
           <div className="card" style={{ marginTop: '1.5rem' }}>
             <div className="card-header">
