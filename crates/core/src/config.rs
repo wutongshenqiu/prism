@@ -148,7 +148,7 @@ impl Config {
     /// Parse config from a string (avoids re-reading the file).
     pub fn load_from_str(contents: &str) -> Result<Self, anyhow::Error> {
         let mut config: Config = serde_yaml_ng::from_str(contents)?;
-        config.sanitize();
+        config.sanitize()?;
         config.validate()?;
         Ok(config)
     }
@@ -157,7 +157,16 @@ impl Config {
     /// Used by dashboard config editing where the caller may mutate before writing back.
     pub fn from_yaml(yaml: &str) -> Result<Self, anyhow::Error> {
         let mut config: Config = serde_yaml_ng::from_str(yaml)?;
-        config.sanitize();
+        config.sanitize()?;
+        Ok(config)
+    }
+
+    /// Deserialize config from a YAML string **without** secret resolution.
+    /// Entry normalization (dedup, URL cleanup) is still applied.
+    /// Used by dashboard config writes to preserve `env://` and `file://` references.
+    pub fn from_yaml_raw(yaml: &str) -> Result<Self, anyhow::Error> {
+        let mut config: Config = serde_yaml_ng::from_str(yaml)?;
+        config.normalize();
         Ok(config)
     }
 
@@ -183,38 +192,49 @@ impl Config {
         Ok(())
     }
 
-    /// Sanitize and normalize configuration.
-    fn sanitize(&mut self) {
+    /// Normalize entries without resolving secrets.
+    /// Safe for the persistence path (dashboard config writes).
+    fn normalize(&mut self) {
         sanitize_entries(&mut self.claude_api_key);
         sanitize_entries(&mut self.openai_api_key);
         sanitize_entries(&mut self.gemini_api_key);
         sanitize_entries(&mut self.openai_compatibility);
+    }
+
+    /// Sanitize and normalize configuration, including secret resolution.
+    /// Returns an error if any `env://` or `file://` secret reference cannot be resolved.
+    fn sanitize(&mut self) -> Result<(), anyhow::Error> {
+        self.normalize();
 
         // Resolve secrets in provider API keys
-        resolve_provider_secrets(&mut self.claude_api_key);
-        resolve_provider_secrets(&mut self.openai_api_key);
-        resolve_provider_secrets(&mut self.gemini_api_key);
-        resolve_provider_secrets(&mut self.openai_compatibility);
+        resolve_provider_secrets(&mut self.claude_api_key)?;
+        resolve_provider_secrets(&mut self.openai_api_key)?;
+        resolve_provider_secrets(&mut self.gemini_api_key)?;
+        resolve_provider_secrets(&mut self.openai_compatibility)?;
 
         // Resolve secrets in auth keys
         for entry in &mut self.auth_keys {
-            if let Ok(resolved) = crate::secret::resolve(&entry.key) {
-                entry.key = resolved;
-            }
+            entry.key = crate::secret::resolve(&entry.key).map_err(|e| {
+                anyhow::anyhow!(
+                    "auth-key '{}': {e}",
+                    entry.name.as_deref().unwrap_or("unnamed")
+                )
+            })?;
         }
 
         // Resolve secrets in dashboard config
-        if let Ok(resolved) = crate::secret::resolve(&self.dashboard.password_hash) {
-            self.dashboard.password_hash = resolved;
-        }
-        if let Some(ref secret) = self.dashboard.jwt_secret
-            && let Ok(resolved) = crate::secret::resolve(secret)
-        {
-            self.dashboard.jwt_secret = Some(resolved);
+        self.dashboard.password_hash = crate::secret::resolve(&self.dashboard.password_hash)
+            .map_err(|e| anyhow::anyhow!("dashboard.password-hash: {e}"))?;
+        if let Some(ref secret) = self.dashboard.jwt_secret {
+            self.dashboard.jwt_secret = Some(
+                crate::secret::resolve(secret)
+                    .map_err(|e| anyhow::anyhow!("dashboard.jwt-secret: {e}"))?,
+            );
         }
 
         // Build AuthKeyStore for O(1) auth key lookups
         self.auth_key_store = AuthKeyStore::new(self.auth_keys.clone());
+        Ok(())
     }
 
     /// Returns an iterator over all provider key entries.
@@ -228,12 +248,16 @@ impl Config {
 }
 
 /// Resolve env:// and file:// secrets in provider API keys.
-fn resolve_provider_secrets(entries: &mut [ProviderKeyEntry]) {
+fn resolve_provider_secrets(entries: &mut [ProviderKeyEntry]) -> Result<(), anyhow::Error> {
     for entry in entries.iter_mut() {
-        if let Ok(resolved) = crate::secret::resolve(&entry.api_key) {
-            entry.api_key = resolved;
-        }
+        entry.api_key = crate::secret::resolve(&entry.api_key).map_err(|e| {
+            anyhow::anyhow!(
+                "provider '{}': {e}",
+                entry.name.as_deref().unwrap_or("unnamed")
+            )
+        })?;
     }
+    Ok(())
 }
 
 /// Remove entries with empty api_key, deduplicate, normalize base_url.
@@ -317,7 +341,7 @@ impl Default for LogStoreConfig {
         Self {
             backend: LogStoreBackend::Memory,
             capacity: 1_000,
-            detail_level: LogDetailLevel::Full,
+            detail_level: LogDetailLevel::Metadata,
             max_body_bytes: 1_048_576,
             file_audit: FileAuditConfig::default(),
         }
@@ -932,6 +956,71 @@ dashboard:
         );
         unsafe { std::env::remove_var("TEST_PRISM_DASH_HASH") };
         unsafe { std::env::remove_var("TEST_PRISM_JWT_SECRET") };
+    }
+
+    #[test]
+    fn test_from_yaml_raw_preserves_secret_references() {
+        unsafe { std::env::set_var("TEST_RAW_API_KEY", "resolved-secret") };
+
+        let yaml = r#"
+claude-api-key:
+  - api-key: "env://TEST_RAW_API_KEY"
+    name: "test-claude"
+auth-keys:
+  - key: "env://TEST_RAW_API_KEY"
+    name: "test-auth"
+dashboard:
+  enabled: true
+  password-hash: "env://TEST_RAW_API_KEY"
+  jwt-secret: "env://TEST_RAW_API_KEY"
+"#;
+        // from_yaml_raw should NOT resolve secrets
+        let raw = Config::from_yaml_raw(yaml).unwrap();
+        assert_eq!(raw.claude_api_key[0].api_key, "env://TEST_RAW_API_KEY");
+        assert_eq!(raw.auth_keys[0].key, "env://TEST_RAW_API_KEY");
+        assert_eq!(raw.dashboard.password_hash, "env://TEST_RAW_API_KEY");
+        assert_eq!(
+            raw.dashboard.jwt_secret.as_deref(),
+            Some("env://TEST_RAW_API_KEY")
+        );
+
+        // Round-trip: serialize and re-parse should still preserve references
+        let serialized = raw.to_yaml().unwrap();
+        let raw2 = Config::from_yaml_raw(&serialized).unwrap();
+        assert_eq!(raw2.claude_api_key[0].api_key, "env://TEST_RAW_API_KEY");
+        assert_eq!(raw2.auth_keys[0].key, "env://TEST_RAW_API_KEY");
+        assert_eq!(raw2.dashboard.password_hash, "env://TEST_RAW_API_KEY");
+
+        // from_yaml (with sanitize) SHOULD resolve secrets
+        let resolved = Config::from_yaml(yaml).unwrap();
+        assert_eq!(resolved.claude_api_key[0].api_key, "resolved-secret");
+        assert_eq!(resolved.auth_keys[0].key, "resolved-secret");
+
+        unsafe { std::env::remove_var("TEST_RAW_API_KEY") };
+    }
+
+    #[test]
+    fn test_from_yaml_raw_preserves_file_secret_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret_path = dir.path().join("api-key.txt");
+        std::fs::write(&secret_path, "file-secret-value\n").unwrap();
+        let file_ref = format!("file://{}", secret_path.display());
+
+        let yaml = format!(
+            r#"
+claude-api-key:
+  - api-key: "{file_ref}"
+    name: "file-test"
+"#
+        );
+
+        // from_yaml_raw preserves file:// references
+        let raw = Config::from_yaml_raw(&yaml).unwrap();
+        assert_eq!(raw.claude_api_key[0].api_key, file_ref);
+
+        // from_yaml resolves them
+        let resolved = Config::from_yaml(&yaml).unwrap();
+        assert_eq!(resolved.claude_api_key[0].api_key, "file-secret-value");
     }
 
     #[test]

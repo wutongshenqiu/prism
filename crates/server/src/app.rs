@@ -247,8 +247,8 @@ pub fn run(args: RunConfig) -> anyhow::Result<()> {
         prism_lifecycle::daemon::daemonize()?;
     }
 
-    // Load config once — used for logging decisions and passed to Application::build
-    let config = Config::load(&args.config_path).unwrap_or_default();
+    // Load config once — fail fast if invalid (never fall back to defaults)
+    let config = Config::load(&args.config_path)?;
 
     // Init logging — force file logging when running as daemon
     let to_file = args.daemon || config.logging_to_file;
@@ -313,9 +313,12 @@ async fn serve_http(
         let _ = shutdown_rx.wait_for(|v| *v).await;
     };
 
-    axum::serve(listener, app_router)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        app_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
 
     lifecycle.on_stopping();
     tokio::time::sleep(Duration::from_secs(shutdown_timeout.min(1))).await;
@@ -362,8 +365,10 @@ async fn serve_tls(
                                 move |req: hyper::Request<hyper::body::Incoming>| {
                                     let router = router.clone();
                                     async move {
-                                        let (parts, body) = req.into_parts();
+                                        let (mut parts, body) = req.into_parts();
                                         let body = axum::body::Body::new(body);
+                                        // Inject ConnectInfo so middleware can read the peer address
+                                        parts.extensions.insert(axum::extract::ConnectInfo(peer_addr));
                                         let req = axum::http::Request::from_parts(parts, body);
                                         Ok::<_, std::convert::Infallible>(
                                             tower::ServiceExt::oneshot(router, req)

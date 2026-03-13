@@ -77,10 +77,13 @@ impl TestServer {
             let shutdown = async move {
                 let _ = rx.wait_for(|v| *v).await;
             };
-            axum::serve(listener, app_router)
-                .with_graceful_shutdown(shutdown)
-                .await
-                .unwrap();
+            axum::serve(
+                listener,
+                app_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await
+            .unwrap();
         });
 
         Self {

@@ -18,33 +18,42 @@ pub async fn ws_handler(
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    // Validate JWT from query param
+    // Validate JWT from query param — fail closed if JWT secret is not configured
     let config = state.config.load();
-    if let Some(secret) = config.dashboard.resolve_jwt_secret() {
-        let token = match query.token {
-            Some(t) => t,
-            None => {
-                return (
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "Missing token query parameter",
-                )
-                    .into_response();
-            }
-        };
-        let key = jsonwebtoken::DecodingKey::from_secret(secret.as_bytes());
-        if jsonwebtoken::decode::<crate::middleware::dashboard_auth::Claims>(
-            &token,
-            &key,
-            &jsonwebtoken::Validation::default(),
-        )
-        .is_err()
-        {
+    let secret = match config.dashboard.resolve_jwt_secret() {
+        Some(s) => s,
+        None => {
             return (
-                axum::http::StatusCode::UNAUTHORIZED,
-                "Invalid or expired token",
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Dashboard JWT secret not configured",
             )
                 .into_response();
         }
+    };
+
+    let token = match query.token {
+        Some(t) => t,
+        None => {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "Missing token query parameter",
+            )
+                .into_response();
+        }
+    };
+    let key = jsonwebtoken::DecodingKey::from_secret(secret.as_bytes());
+    if jsonwebtoken::decode::<crate::middleware::dashboard_auth::Claims>(
+        &token,
+        &key,
+        &jsonwebtoken::Validation::default(),
+    )
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Invalid or expired token",
+        )
+            .into_response();
     }
 
     ws.on_upgrade(move |socket| handle_ws(socket, state))

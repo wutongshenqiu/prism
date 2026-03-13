@@ -35,9 +35,23 @@ pub struct CacheStats {
 }
 
 impl CacheKey {
-    /// Build a cache key from model name and request body.
+    /// Build a cache key from model name, request body, and isolation context.
     /// Returns None for non-cacheable requests (streaming, non-zero temperature).
+    ///
+    /// The key includes tenant, API key, and credential identity to prevent
+    /// cross-tenant, cross-key, and cross-credential response reuse.
     pub fn build(model: &str, body: &serde_json::Value) -> Option<Self> {
+        Self::build_with_context(model, body, None, None, None)
+    }
+
+    /// Build a cache key with full isolation context.
+    pub fn build_with_context(
+        model: &str,
+        body: &serde_json::Value,
+        tenant_id: Option<&str>,
+        api_key_id: Option<&str>,
+        credential_name: Option<&str>,
+    ) -> Option<Self> {
         // Don't cache streaming requests
         if body
             .get("stream")
@@ -56,6 +70,20 @@ impl CacheKey {
 
         let mut hasher = sha2::Sha256::new();
         hasher.update(model.as_bytes());
+
+        // Include isolation context to prevent cross-tenant/credential reuse
+        if let Some(tid) = tenant_id {
+            hasher.update(b"tenant:");
+            hasher.update(tid.as_bytes());
+        }
+        if let Some(kid) = api_key_id {
+            hasher.update(b"apikey:");
+            hasher.update(kid.as_bytes());
+        }
+        if let Some(cname) = credential_name {
+            hasher.update(b"cred:");
+            hasher.update(cname.as_bytes());
+        }
 
         // Canonicalize relevant fields
         let fields = [
@@ -213,6 +241,53 @@ mod tests {
             "temperature": 0.0,
         });
         assert!(CacheKey::build("gpt-4", &body).is_some());
+    }
+
+    #[test]
+    fn test_cache_key_isolation_by_tenant() {
+        let body = serde_json::json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0,
+        });
+        let k1 = CacheKey::build_with_context("gpt-4", &body, Some("tenant-a"), None, None);
+        let k2 = CacheKey::build_with_context("gpt-4", &body, Some("tenant-b"), None, None);
+        let k3 = CacheKey::build_with_context("gpt-4", &body, None, None, None);
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k2, k3);
+    }
+
+    #[test]
+    fn test_cache_key_isolation_by_api_key() {
+        let body = serde_json::json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0,
+        });
+        let k1 = CacheKey::build_with_context("gpt-4", &body, None, Some("key-1"), None);
+        let k2 = CacheKey::build_with_context("gpt-4", &body, None, Some("key-2"), None);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_cache_key_isolation_by_credential() {
+        let body = serde_json::json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0,
+        });
+        let k1 = CacheKey::build_with_context("gpt-4", &body, None, None, Some("cred-a"));
+        let k2 = CacheKey::build_with_context("gpt-4", &body, None, None, Some("cred-b"));
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_cache_key_same_context_matches() {
+        let body = serde_json::json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0,
+        });
+        let k1 = CacheKey::build_with_context("gpt-4", &body, Some("t1"), Some("k1"), Some("c1"));
+        let k2 = CacheKey::build_with_context("gpt-4", &body, Some("t1"), Some("k1"), Some("c1"));
+        assert_eq!(k1, k2);
     }
 
     #[tokio::test]

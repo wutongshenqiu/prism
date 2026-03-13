@@ -406,15 +406,14 @@ async fn update_config_file(
 
     let contents =
         std::fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {e}"))?;
-    let mut config = prism_core::config::Config::from_yaml(&contents)
+
+    // Parse WITHOUT secret resolution to preserve env:// and file:// references
+    let mut raw_config = prism_core::config::Config::from_yaml_raw(&contents)
         .map_err(|e| format!("Failed to parse config: {e}"))?;
 
-    mutate(&mut config);
+    mutate(&mut raw_config);
 
-    // Rebuild derived fields
-    config.auth_key_store = prism_core::auth_key::AuthKeyStore::new(config.auth_keys.clone());
-
-    let yaml = config
+    let yaml = raw_config
         .to_yaml()
         .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
@@ -427,8 +426,17 @@ async fn update_config_file(
     std::fs::rename(&tmp_path, &config_path)
         .map_err(|e| format!("Failed to rename config file: {e}"))?;
 
-    // Reload in-memory config so changes take effect immediately
-    state.config.store(std::sync::Arc::new(config));
+    // Load the written config with full secret resolution for runtime use
+    let runtime_config = prism_core::config::Config::load_from_str(&yaml)
+        .map_err(|e| format!("Failed to load runtime config: {e}"))?;
+
+    // Update all derived runtime state (same as watcher/SIGHUP paths)
+    state.router.update_from_config(&runtime_config);
+    state.rate_limiter.update_config(&runtime_config.rate_limit);
+    state
+        .cost_calculator
+        .update_prices(&runtime_config.model_prices);
+    state.config.store(std::sync::Arc::new(runtime_config));
 
     Ok(())
 }

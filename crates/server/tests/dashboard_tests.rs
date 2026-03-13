@@ -295,9 +295,9 @@ async fn test_login_with_dashboard_disabled() {
         ))
         .unwrap();
 
-    let (status, body) = send_request(&harness, req).await;
+    let (status, _body) = send_request(&harness, req).await;
+    // Dashboard routes are not registered when disabled, so we get a plain 404
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"], "not_found");
 }
 
 #[tokio::test]

@@ -24,6 +24,15 @@ pub async fn count_tokens(
         .and_then(|m| m.as_str())
         .ok_or_else(|| ProxyError::BadRequest("missing model field".into()))?;
 
+    // Enforce model ACL (same as main dispatch path)
+    if let Some(ref auth_key) = ctx.auth_key
+        && !prism_core::auth_key::AuthKeyStore::check_model_access(auth_key, model)
+    {
+        return Err(ProxyError::ModelNotAllowed(format!(
+            "model '{model}' not allowed for this API key",
+        )));
+    }
+
     let allowed_credentials = ctx
         .auth_key
         .as_ref()

@@ -139,7 +139,13 @@ pub async fn dispatch(state: &AppState, mut req: DispatchRequest) -> Result<Resp
     if !req.stream
         && let Some(ref cache) = state.response_cache
         && let Ok(body_val) = serde_json::from_slice::<serde_json::Value>(&req.body)
-        && let Some(cache_key) = prism_core::cache::CacheKey::build(&req.model, &body_val)
+        && let Some(cache_key) = prism_core::cache::CacheKey::build_with_context(
+            &req.model,
+            &body_val,
+            req.tenant_id.as_deref(),
+            req.api_key_id.as_deref(),
+            None, // credential not yet selected at lookup time
+        )
     {
         if let Some(cached) = cache.get(&cache_key).await {
             state.metrics.record_cache_hit();
@@ -610,7 +616,13 @@ pub async fn dispatch(state: &AppState, mut req: DispatchRequest) -> Result<Resp
                                 && let Ok(body_val) =
                                     serde_json::from_slice::<serde_json::Value>(&req.body)
                                 && let Some(cache_key) =
-                                    prism_core::cache::CacheKey::build(&req.model, &body_val)
+                                    prism_core::cache::CacheKey::build_with_context(
+                                        &req.model,
+                                        &body_val,
+                                        req.tenant_id.as_deref(),
+                                        req.api_key_id.as_deref(),
+                                        auth.name(),
+                                    )
                             {
                                 let cached = prism_core::cache::CachedResponse {
                                     payload: Bytes::from(translated.clone()),

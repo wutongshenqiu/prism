@@ -23,6 +23,16 @@ pub async fn responses(
         .ok_or_else(|| ProxyError::BadRequest("missing model field".into()))?
         .to_string();
 
+    // Enforce model ACL (same as main dispatch path)
+    if let Some(ref auth_key) = ctx.auth_key
+        && !prism_core::auth_key::AuthKeyStore::check_model_access(auth_key, &model)
+    {
+        return Err(ProxyError::ModelNotAllowed(format!(
+            "model '{}' not allowed for this API key",
+            model
+        )));
+    }
+
     // Resolve provider - only OpenAI(-compatible) providers support this
     let providers = state.router.resolve_providers(&model);
     let target_format = providers

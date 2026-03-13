@@ -45,6 +45,8 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
     match prism_core::config::Config::load(&config_path) {
         Ok(new_cfg) => {
             state.router.update_from_config(&new_cfg);
+            state.rate_limiter.update_config(&new_cfg.rate_limit);
+            state.cost_calculator.update_prices(&new_cfg.model_prices);
             state.config.store(std::sync::Arc::new(new_cfg));
             (
                 StatusCode::OK,
