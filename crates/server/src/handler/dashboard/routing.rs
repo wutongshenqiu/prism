@@ -3,7 +3,12 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use prism_core::routing::config::{ModelResolution, RouteProfile, RouteRule};
+use prism_core::routing::config::{
+    CredentialPolicy, ModelResolution, ProviderPolicy, ProviderStrategy, RouteProfile, RouteRule,
+};
+use prism_core::routing::explain::explain;
+use prism_core::routing::planner::RoutePlanner;
+use prism_core::routing::types::RouteRequestFeatures;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -28,6 +33,14 @@ pub async fn update_routing(
     State(state): State<AppState>,
     Json(body): Json<UpdateRoutingRequest>,
 ) -> impl IntoResponse {
+    // Validate before applying
+    if let Err(errors) = validate_routing_update(&body) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "validation_failed", "details": errors})),
+        );
+    }
+
     match super::providers::update_config_file_public(&state, move |config| {
         if let Some(dp) = body.default_profile {
             config.routing.default_profile = dp;
@@ -53,4 +66,173 @@ pub async fn update_routing(
             Json(json!({"error": "write_failed", "message": e})),
         ),
     }
+}
+
+/// POST /api/dashboard/routing/preview
+pub async fn preview_route(
+    State(state): State<AppState>,
+    Json(req): Json<PreviewRequest>,
+) -> impl IntoResponse {
+    let features = req.into_features();
+    let config = state.config.load();
+    let inventory = state.catalog.snapshot();
+    let health = state.health_manager.snapshot();
+
+    let plan = RoutePlanner::plan(&features, &config.routing, &inventory, &health);
+    let mut explanation = explain(&plan);
+    // Preview omits detailed scoring
+    explanation.scoring.clear();
+
+    (StatusCode::OK, Json(json!(explanation)))
+}
+
+/// POST /api/dashboard/routing/explain
+pub async fn explain_route(
+    State(state): State<AppState>,
+    Json(req): Json<PreviewRequest>,
+) -> impl IntoResponse {
+    let features = req.into_features();
+    let config = state.config.load();
+    let inventory = state.catalog.snapshot();
+    let health = state.health_manager.snapshot();
+
+    let plan = RoutePlanner::plan(&features, &config.routing, &inventory, &health);
+    let explanation = explain(&plan);
+
+    (StatusCode::OK, Json(json!(explanation)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PreviewRequest {
+    pub model: String,
+    #[serde(default = "default_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_source_format")]
+    pub source_format: String,
+    pub tenant_id: Option<String>,
+    pub api_key_id: Option<String>,
+    pub region: Option<String>,
+    #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+}
+
+fn default_endpoint() -> String {
+    "chat-completions".to_string()
+}
+
+fn default_source_format() -> String {
+    "openai".to_string()
+}
+
+impl PreviewRequest {
+    fn into_features(self) -> RouteRequestFeatures {
+        use prism_core::provider::Format;
+        use prism_core::routing::types::RouteEndpoint;
+
+        let endpoint = match self.endpoint.as_str() {
+            "messages" => RouteEndpoint::Messages,
+            "responses" => RouteEndpoint::Responses,
+            _ => RouteEndpoint::ChatCompletions,
+        };
+
+        let source_format = match self.source_format.as_str() {
+            "claude" => Format::Claude,
+            "gemini" => Format::Gemini,
+            "openai-compat" | "openai_compat" => Format::OpenAICompat,
+            _ => Format::OpenAI,
+        };
+
+        RouteRequestFeatures {
+            requested_model: self.model,
+            endpoint,
+            source_format,
+            tenant_id: self.tenant_id,
+            api_key_id: self.api_key_id,
+            region: self.region,
+            stream: self.stream,
+            headers: self.headers,
+        }
+    }
+}
+
+/// Validate a routing update request. Returns Ok(()) if valid, Err(details) if invalid.
+fn validate_routing_update(body: &UpdateRoutingRequest) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+
+    // Validate profiles
+    if let Some(ref profiles) = body.profiles {
+        if profiles.is_empty() {
+            errors.push("profiles map must not be empty".to_string());
+        }
+
+        for (name, profile) in profiles {
+            validate_profile(name, profile, &mut errors);
+        }
+    }
+
+    // Validate rules reference existing profiles
+    if let (Some(rules), Some(profiles)) = (&body.rules, &body.profiles) {
+        for rule in rules {
+            if !profiles.contains_key(&rule.use_profile) {
+                errors.push(format!(
+                    "rule '{}' references non-existent profile '{}'",
+                    rule.name, rule.use_profile
+                ));
+            }
+        }
+    }
+
+    // Validate default_profile exists in profiles
+    if let (Some(dp), Some(profiles)) = (&body.default_profile, &body.profiles)
+        && !profiles.contains_key(dp.as_str())
+    {
+        errors.push(format!(
+            "default-profile '{}' does not exist in profiles",
+            dp
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn validate_profile(name: &str, profile: &RouteProfile, errors: &mut Vec<String>) {
+    validate_provider_policy(name, &profile.provider_policy, errors);
+    validate_credential_policy(name, &profile.credential_policy, errors);
+}
+
+fn validate_provider_policy(profile_name: &str, policy: &ProviderPolicy, errors: &mut Vec<String>) {
+    match policy.strategy {
+        ProviderStrategy::OrderedFallback => {
+            if policy.order.is_empty() {
+                errors.push(format!(
+                    "profile '{}': ordered-fallback strategy requires non-empty 'order' list",
+                    profile_name
+                ));
+            }
+        }
+        ProviderStrategy::WeightedRoundRobin => {
+            if policy.weights.is_empty() {
+                errors.push(format!(
+                    "profile '{}': weighted-round-robin strategy requires non-empty 'weights' map",
+                    profile_name
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_credential_policy(
+    _profile_name: &str,
+    _policy: &CredentialPolicy,
+    _errors: &mut Vec<String>,
+) {
+    // No additional validation needed for credential policies currently
 }

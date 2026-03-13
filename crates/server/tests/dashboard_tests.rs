@@ -1111,3 +1111,228 @@ async fn test_multiple_provider_types() {
     assert!(ids.contains(&"claude-0"));
     assert!(ids.contains(&"gemini-0"));
 }
+
+// ===========================================================================
+// Routing preview/explain tests
+// ===========================================================================
+
+#[tokio::test]
+async fn test_preview_route_empty_inventory() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/routing/preview",
+        &token,
+        json!({"model": "gpt-4"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "preview failed: {body:?}");
+    assert_eq!(body["profile"], "balanced");
+    // No credentials configured, so no selected route
+    assert!(body["selected"].is_null());
+    assert!(body["alternates"].as_array().unwrap().is_empty());
+    // Preview should not include scoring details
+    assert!(body["scoring"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_explain_route_empty_inventory() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/routing/explain",
+        &token,
+        json!({"model": "gpt-4"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
+    assert_eq!(body["profile"], "balanced");
+    assert!(body["selected"].is_null());
+}
+
+#[tokio::test]
+async fn test_preview_route_with_providers() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Create an OpenAI provider to populate catalog
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "provider_type": "openai",
+            "api_key": "sk-test-preview-1234567890abcdef",
+            "name": "Preview Test OpenAI"
+        }),
+    );
+    let (status, _) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Reload config and update catalog
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let new_config = Config::load(&config_path).expect("failed to reload config");
+    harness.state.router.update_from_config(&new_config);
+    harness
+        .state
+        .catalog
+        .update_from_credentials(&harness.state.router.credential_map());
+    harness.state.config.store(Arc::new(new_config));
+
+    // Preview should now find the provider
+    let req = authed_post(
+        "/api/dashboard/routing/preview",
+        &token,
+        json!({"model": "gpt-4", "endpoint": "chat-completions"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "preview failed: {body:?}");
+    assert_eq!(body["profile"], "balanced");
+    // Model chain should contain the requested model
+    assert!(
+        body["model_chain"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == "gpt-4")
+    );
+}
+
+#[tokio::test]
+async fn test_preview_route_invalid_body() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Missing required 'model' field
+    let req = authed_post(
+        "/api/dashboard/routing/preview",
+        &token,
+        json!({"endpoint": "chat-completions"}),
+    );
+    let (status, _body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn test_explain_includes_scoring() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Create a provider
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "provider_type": "openai",
+            "api_key": "sk-test-explain-1234567890abcdef",
+            "name": "Explain Test OpenAI"
+        }),
+    );
+    let (status, _) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Reload and update catalog
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let new_config = Config::load(&config_path).expect("failed to reload config");
+    harness.state.router.update_from_config(&new_config);
+    harness
+        .state
+        .catalog
+        .update_from_credentials(&harness.state.router.credential_map());
+    harness.state.config.store(Arc::new(new_config));
+
+    // Explain should include scoring (not cleared like preview)
+    let req = authed_post(
+        "/api/dashboard/routing/explain",
+        &token,
+        json!({"model": "gpt-4"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
+    // scoring field should be present (may be empty if no candidates scored, but present)
+    assert!(body["scoring"].is_array());
+}
+
+#[tokio::test]
+async fn test_update_routing_validation_empty_profiles() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_patch("/api/dashboard/routing", &token, json!({"profiles": {}}));
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "validation_failed");
+    let details = body["details"].as_array().unwrap();
+    assert!(details.iter().any(|d| {
+        d.as_str()
+            .unwrap()
+            .contains("profiles map must not be empty")
+    }));
+}
+
+#[tokio::test]
+async fn test_update_routing_validation_rule_references_nonexistent_profile() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_patch(
+        "/api/dashboard/routing",
+        &token,
+        json!({
+            "profiles": {
+                "balanced": {
+                    "provider-policy": {"strategy": "weighted-round-robin", "weights": {"openai": 100}},
+                    "credential-policy": {"strategy": "priority-weighted-rr"},
+                    "health": {
+                        "circuit-breaker": {"enabled": true, "failure-threshold": 5, "cooldown-seconds": 30},
+                        "outlier-detection": {"consecutive-5xx": 5, "consecutive-local-failures": 3, "base-eject-seconds": 10, "max-eject-seconds": 300}
+                    },
+                    "failover": {"credential-attempts": 2, "provider-attempts": 2, "model-attempts": 2, "retry-budget": {"ratio": 0.2, "min-retries-per-second": 1}, "retry-on": ["429", "5xx"]}
+                }
+            },
+            "rules": [
+                {"name": "test-rule", "match": {"models": ["gpt-*"]}, "use-profile": "nonexistent"}
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "validation_failed");
+    let details = body["details"].as_array().unwrap();
+    assert!(
+        details
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("nonexistent"))
+    );
+}
+
+#[tokio::test]
+async fn test_update_routing_then_preview_reflects_change() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Switch to stable profile
+    let req = authed_patch(
+        "/api/dashboard/routing",
+        &token,
+        json!({"default-profile": "stable"}),
+    );
+    let (status, _) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Reload config
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let new_config = Config::load(&config_path).expect("failed to reload config");
+    harness.state.config.store(Arc::new(new_config));
+
+    // Preview should reflect the new profile
+    let req = authed_post(
+        "/api/dashboard/routing/preview",
+        &token,
+        json!({"model": "gpt-4"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["profile"], "stable");
+}

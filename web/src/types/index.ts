@@ -207,6 +207,67 @@ export interface RoutingUpdateRequest {
   'model-resolution'?: ModelResolution;
 }
 
+// ── Route Preview/Explain ──
+
+export interface PreviewRequest {
+  model: string;
+  endpoint?: string;
+  source_format?: string;
+  tenant_id?: string;
+  api_key_id?: string;
+  region?: string;
+  stream?: boolean;
+  headers?: Record<string, string>;
+}
+
+export interface RouteScore {
+  weight: number;
+  latency_ms?: number;
+  inflight?: number;
+  estimated_cost?: number;
+  health_penalty: number;
+}
+
+export interface SelectedRoute {
+  provider: string;
+  credential_name: string;
+  model: string;
+  score: RouteScore;
+}
+
+export interface RouteRejection {
+  candidate: string;
+  reason: string;
+}
+
+export interface ModelResolutionStep {
+  step: string;
+  from?: string;
+  to?: string;
+  rule?: string;
+  primary?: string;
+  fallbacks?: string[];
+  model?: string;
+  providers?: string[];
+}
+
+export interface RouteScoringEntry {
+  candidate: string;
+  score: RouteScore;
+  rank: number;
+}
+
+export interface RouteExplanation {
+  profile: string;
+  matched_rule: string | null;
+  model_chain: string[];
+  selected: SelectedRoute | null;
+  alternates: SelectedRoute[];
+  rejections: RouteRejection[];
+  model_resolution: ModelResolutionStep[];
+  scoring: RouteScoringEntry[];
+}
+
 // ── Metrics (real-time WebSocket snapshot) ──
 
 export interface MetricsSnapshot {

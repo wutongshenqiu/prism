@@ -10,6 +10,8 @@ import type {
   AuthKeyUpdateRequest,
   RoutingConfig,
   RoutingUpdateRequest,
+  PreviewRequest,
+  RouteExplanation,
   RequestLog,
   PaginatedResponse,
   RequestLogFilter,
@@ -177,6 +179,18 @@ export const routingApi = {
 
   update: (data: RoutingUpdateRequest) =>
     api.patch('/routing', data),
+
+  preview: (data: PreviewRequest) =>
+    api.post('/routing/preview', data).then((res) => ({
+      ...res,
+      data: res.data as RouteExplanation,
+    })) as Promise<{ data: RouteExplanation } & Record<string, unknown>>,
+
+  explain: (data: PreviewRequest) =>
+    api.post('/routing/explain', data).then((res) => ({
+      ...res,
+      data: res.data as RouteExplanation,
+    })) as Promise<{ data: RouteExplanation } & Record<string, unknown>>,
 };
 
 // ── Logs ──

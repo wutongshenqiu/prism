@@ -156,6 +156,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(handler::dashboard::routing::get_routing)
                 .patch(handler::dashboard::routing::update_routing),
         )
+        .route(
+            "/api/dashboard/routing/preview",
+            axum::routing::post(handler::dashboard::routing::preview_route),
+        )
+        .route(
+            "/api/dashboard/routing/explain",
+            axum::routing::post(handler::dashboard::routing::explain_route),
+        )
         // Config operations
         .route(
             "/api/dashboard/config/validate",
