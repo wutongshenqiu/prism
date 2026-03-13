@@ -62,11 +62,13 @@ pub async fn count_tokens(
     let url = format!("{base_url}/v1/messages/count_tokens");
 
     let global_proxy = state.config.load().proxy_url.clone();
-    let client = prism_core::proxy::build_http_client(
-        auth.effective_proxy(global_proxy.as_deref()),
-        global_proxy.as_deref(),
-    )
-    .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))?;
+    let client = state
+        .http_client_pool
+        .get_or_create_default(
+            auth.effective_proxy(global_proxy.as_deref()),
+            global_proxy.as_deref(),
+        )
+        .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))?;
 
     let mut req = client
         .post(&url)

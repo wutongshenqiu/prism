@@ -35,6 +35,7 @@ pub struct AppState {
     pub rate_limiter: Arc<CompositeRateLimiter>,
     pub cost_calculator: Arc<CostCalculator>,
     pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,
+    pub http_client_pool: Arc<prism_core::proxy::HttpClientPool>,
     pub start_time: Instant,
     pub login_limiter: Arc<handler::dashboard::auth::LoginRateLimiter>,
 }

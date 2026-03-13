@@ -7,6 +7,7 @@ pub mod routing;
 pub mod sse;
 
 use prism_core::provider::{Format, ProviderExecutor};
+use prism_core::proxy::HttpClientPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -50,19 +51,22 @@ impl ExecutorRegistry {
     }
 }
 
-pub fn build_registry(global_proxy: Option<String>) -> ExecutorRegistry {
+pub fn build_registry(
+    global_proxy: Option<String>,
+    client_pool: Arc<HttpClientPool>,
+) -> ExecutorRegistry {
     let mut executors: HashMap<String, Arc<dyn ProviderExecutor>> = HashMap::new();
 
     // OpenAI executor (OpenAI-compatible with OpenAI defaults)
-    let openai = openai::new_openai_executor(global_proxy.clone());
+    let openai = openai::new_openai_executor(global_proxy.clone(), client_pool.clone());
     executors.insert("openai".to_string(), Arc::new(openai));
 
     // Claude executor
-    let claude = claude::ClaudeExecutor::new(global_proxy.clone());
+    let claude = claude::ClaudeExecutor::new(global_proxy.clone(), client_pool.clone());
     executors.insert("claude".to_string(), Arc::new(claude));
 
     // Gemini executor
-    let gemini = gemini::GeminiExecutor::new(global_proxy.clone());
+    let gemini = gemini::GeminiExecutor::new(global_proxy.clone(), client_pool.clone());
     executors.insert("gemini".to_string(), Arc::new(gemini));
 
     // OpenAI-compatible generic executor (no default base_url - users must provide base-url in config)
@@ -71,6 +75,7 @@ pub fn build_registry(global_proxy: Option<String>) -> ExecutorRegistry {
         default_base_url: String::new(),
         format: Format::OpenAICompat,
         global_proxy: global_proxy.clone(),
+        client_pool,
     };
     executors.insert("openai-compat".to_string(), Arc::new(compat));
 

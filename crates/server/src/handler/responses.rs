@@ -65,11 +65,13 @@ pub async fn responses(
     let base_url = auth.base_url_or_default("https://api.openai.com");
     let url = format!("{base_url}/v1/responses");
 
-    let client = prism_core::proxy::build_http_client(
-        auth.effective_proxy(state.config.load().proxy_url.as_deref()),
-        state.config.load().proxy_url.as_deref(),
-    )
-    .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))?;
+    let client = state
+        .http_client_pool
+        .get_or_create_default(
+            auth.effective_proxy(state.config.load().proxy_url.as_deref()),
+            state.config.load().proxy_url.as_deref(),
+        )
+        .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))?;
 
     let mut req = client
         .post(&url)

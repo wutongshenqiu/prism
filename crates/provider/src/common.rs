@@ -1,14 +1,16 @@
 use crate::sse::parse_sse_stream;
 use prism_core::error::ProxyError;
 use prism_core::provider::*;
+use prism_core::proxy::HttpClientPool;
 use std::collections::HashMap;
 
-/// Build an HTTP client for a provider request.
+/// Build an HTTP client for a provider request using a shared pool.
 pub fn build_client(
     auth: &AuthRecord,
     global_proxy: Option<&str>,
+    pool: &HttpClientPool,
 ) -> Result<reqwest::Client, ProxyError> {
-    prism_core::proxy::build_http_client(auth.effective_proxy(global_proxy), global_proxy)
+    pool.get_or_create_default(auth.effective_proxy(global_proxy), global_proxy)
         .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))
 }
 

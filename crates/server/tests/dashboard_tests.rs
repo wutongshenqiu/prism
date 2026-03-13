@@ -50,7 +50,8 @@ fn create_test_harness() -> TestHarness {
     let credential_router = Arc::new(CredentialRouter::new(RoutingStrategy::RoundRobin));
     credential_router.update_from_config(&config);
 
-    let executors = Arc::new(build_registry(None));
+    let http_client_pool = Arc::new(prism_core::proxy::HttpClientPool::new());
+    let executors = Arc::new(build_registry(None, http_client_pool.clone()));
     let translators = Arc::new(prism_translator::build_registry());
     let metrics = Arc::new(Metrics::new());
     let log_store: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(1000, None));
@@ -66,6 +67,7 @@ fn create_test_harness() -> TestHarness {
         rate_limiter: Arc::new(CompositeRateLimiter::new(&config.rate_limit)),
         cost_calculator: Arc::new(CostCalculator::new(&config.model_prices)),
         response_cache: None,
+        http_client_pool,
         start_time: Instant::now(),
         login_limiter: Arc::new(prism_server::handler::dashboard::auth::LoginRateLimiter::new()),
     };

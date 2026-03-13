@@ -2,6 +2,8 @@ use crate::common;
 use async_trait::async_trait;
 use prism_core::error::ProxyError;
 use prism_core::provider::*;
+use prism_core::proxy::HttpClientPool;
+use std::sync::Arc;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -9,11 +11,15 @@ const ANTHROPIC_BETA: &str = "output-128k-2025-02-19";
 
 pub struct ClaudeExecutor {
     pub global_proxy: Option<String>,
+    pub client_pool: Arc<HttpClientPool>,
 }
 
 impl ClaudeExecutor {
-    pub fn new(global_proxy: Option<String>) -> Self {
-        Self { global_proxy }
+    pub fn new(global_proxy: Option<String>, client_pool: Arc<HttpClientPool>) -> Self {
+        Self {
+            global_proxy,
+            client_pool,
+        }
     }
 
     /// Build a POST request with Claude-specific auth and version headers.
@@ -23,7 +29,7 @@ impl ClaudeExecutor {
         url: &str,
         request: &ProviderRequest,
     ) -> Result<reqwest::RequestBuilder, ProxyError> {
-        let client = common::build_client(auth, self.global_proxy.as_deref())?;
+        let client = common::build_client(auth, self.global_proxy.as_deref(), &self.client_pool)?;
 
         let mut req = client
             .post(url)

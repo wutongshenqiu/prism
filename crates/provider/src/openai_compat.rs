@@ -2,12 +2,15 @@ use crate::common;
 use async_trait::async_trait;
 use prism_core::error::ProxyError;
 use prism_core::provider::*;
+use prism_core::proxy::HttpClientPool;
+use std::sync::Arc;
 
 pub struct OpenAICompatExecutor {
     pub name: String,
     pub default_base_url: String,
     pub format: Format,
     pub global_proxy: Option<String>,
+    pub client_pool: Arc<HttpClientPool>,
 }
 
 impl OpenAICompatExecutor {
@@ -19,7 +22,7 @@ impl OpenAICompatExecutor {
         body: &[u8],
         request_headers: &std::collections::HashMap<String, String>,
     ) -> Result<reqwest::RequestBuilder, ProxyError> {
-        let client = common::build_client(auth, self.global_proxy.as_deref())?;
+        let client = common::build_client(auth, self.global_proxy.as_deref(), &self.client_pool)?;
         let req = client
             .post(url)
             .header("authorization", format!("Bearer {}", auth.api_key))

@@ -436,6 +436,7 @@ async fn update_config_file(
     state
         .cost_calculator
         .update_prices(&runtime_config.model_prices);
+    state.http_client_pool.clear();
     state.config.store(std::sync::Arc::new(runtime_config));
 
     Ok(())
@@ -450,10 +451,11 @@ pub struct FetchModelsRequest {
 }
 
 fn build_reqwest_client(
+    pool: &prism_core::proxy::HttpClientPool,
     proxy_url: Option<&str>,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    prism_core::proxy::build_http_client_with_timeout(None, proxy_url, timeout_secs, timeout_secs)
+    pool.get_or_create(None, proxy_url, timeout_secs, timeout_secs)
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
@@ -572,7 +574,7 @@ pub async fn fetch_models(
     };
 
     let global_proxy = state.config.load().proxy_url.clone();
-    let client = match build_reqwest_client(global_proxy.as_deref(), 15) {
+    let client = match build_reqwest_client(&state.http_client_pool, global_proxy.as_deref(), 15) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -679,7 +681,7 @@ pub async fn health_check(
     // Use entry-level proxy, fall back to global proxy
     let proxy_url = entry.proxy_url.as_deref().or(config.proxy_url.as_deref());
 
-    let client = match build_reqwest_client(proxy_url, 10) {
+    let client = match build_reqwest_client(&state.http_client_pool, proxy_url, 10) {
         Ok(c) => c,
         Err(e) => {
             return (

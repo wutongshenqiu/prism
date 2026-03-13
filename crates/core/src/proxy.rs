@@ -1,4 +1,6 @@
 use reqwest::{Client, Proxy};
+use std::collections::HashMap;
+use std::sync::RwLock;
 use std::time::Duration;
 
 /// Default User-Agent for upstream requests.
@@ -11,6 +13,81 @@ use std::time::Duration;
 ///       user-agent: "claude-code/2.1.62"
 /// ```
 const DEFAULT_USER_AGENT: &str = "prism/0.1.0";
+
+/// Cache key for pooled HTTP clients: (proxy_url, connect_timeout, request_timeout).
+type ClientKey = (Option<String>, u64, u64);
+
+/// A pool of reusable `reqwest::Client` instances keyed by transport configuration.
+/// `reqwest::Client` internally manages a connection pool, so reusing the same
+/// client for identical transport settings avoids repeated TLS handshakes and
+/// DNS resolution.
+pub struct HttpClientPool {
+    clients: RwLock<HashMap<ClientKey, Client>>,
+}
+
+impl Default for HttpClientPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HttpClientPool {
+    pub fn new() -> Self {
+        Self {
+            clients: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a client for the given transport configuration.
+    pub fn get_or_create(
+        &self,
+        entry_proxy: Option<&str>,
+        global_proxy: Option<&str>,
+        connect_timeout_secs: u64,
+        request_timeout_secs: u64,
+    ) -> Result<Client, anyhow::Error> {
+        let proxy_url = resolve_proxy_url(entry_proxy, global_proxy).map(String::from);
+        let key = (proxy_url, connect_timeout_secs, request_timeout_secs);
+
+        // Fast path: read lock
+        if let Ok(guard) = self.clients.read()
+            && let Some(client) = guard.get(&key)
+        {
+            return Ok(client.clone());
+        }
+
+        // Slow path: build client and insert
+        let client = build_http_client_with_timeout(
+            entry_proxy,
+            global_proxy,
+            connect_timeout_secs,
+            request_timeout_secs,
+        )?;
+
+        if let Ok(mut guard) = self.clients.write() {
+            // Another thread may have inserted while we were building
+            guard.entry(key).or_insert(client.clone());
+        }
+
+        Ok(client)
+    }
+
+    /// Get or create a client with default timeouts (30s connect, 300s request).
+    pub fn get_or_create_default(
+        &self,
+        entry_proxy: Option<&str>,
+        global_proxy: Option<&str>,
+    ) -> Result<Client, anyhow::Error> {
+        self.get_or_create(entry_proxy, global_proxy, 30, 300)
+    }
+
+    /// Clear all cached clients (e.g., after config reload changes proxy settings).
+    pub fn clear(&self) {
+        if let Ok(mut guard) = self.clients.write() {
+            guard.clear();
+        }
+    }
+}
 
 /// Build an HTTP client with optional proxy support.
 ///

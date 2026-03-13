@@ -47,6 +47,7 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
             state.router.update_from_config(&new_cfg);
             state.rate_limiter.update_config(&new_cfg.rate_limit);
             state.cost_calculator.update_prices(&new_cfg.model_prices);
+            state.http_client_pool.clear();
             state.config.store(std::sync::Arc::new(new_cfg));
             (
                 StatusCode::OK,
@@ -121,6 +122,7 @@ pub async fn apply_config(
     state
         .cost_calculator
         .update_prices(&runtime_config.model_prices);
+    state.http_client_pool.clear();
     state.config.store(std::sync::Arc::new(runtime_config));
 
     (
