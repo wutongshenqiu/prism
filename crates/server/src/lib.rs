@@ -155,6 +155,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/dashboard/config/current",
             axum::routing::get(handler::dashboard::config_ops::get_config),
         )
+        .route(
+            "/api/dashboard/config/raw",
+            axum::routing::get(handler::dashboard::config_ops::get_raw_config),
+        )
         // Request logs — filters before {id} to avoid capture
         .route(
             "/api/dashboard/logs/stats",

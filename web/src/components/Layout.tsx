@@ -7,6 +7,7 @@ import {
   Server,
   Key,
   GitBranch,
+  FileCode,
   Activity,
   ScrollText,
   LogOut,
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/providers', icon: Server, label: 'Providers' },
   { to: '/auth-keys', icon: Key, label: 'Auth Keys' },
   { to: '/routing', icon: GitBranch, label: 'Routing' },
+  { to: '/config', icon: FileCode, label: 'Config' },
   { to: '/system', icon: Activity, label: 'System' },
   { to: '/logs', icon: ScrollText, label: 'App Logs' },
 ];

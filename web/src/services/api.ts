@@ -310,8 +310,10 @@ export const systemApi = {
 export const configApi = {
   current: () => api.get('/config/current'),
 
-  validate: (config: string) =>
-    api.post<ConfigValidateResponse>('/config/validate', { config }),
+  raw: () => api.get<{ content: string; path: string }>('/config/raw'),
+
+  validate: (yaml: string) =>
+    api.post<ConfigValidateResponse>('/config/validate', { yaml }),
 
   reload: () => api.post('/config/reload'),
 };
