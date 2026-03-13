@@ -24,17 +24,35 @@ export default function RequestLogs() {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Filter state
-  const [filterProvider, setFilterProvider] = useState('');
-  const [filterModel, setFilterModel] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterErrorType, setFilterErrorType] = useState('');
-  const [filterKeyword, setFilterKeyword] = useState('');
+  // Filter state — initialize from URL search params
+  const [filterProvider, setFilterProvider] = useState(searchParams.get('provider') || '');
+  const [filterModel, setFilterModel] = useState(searchParams.get('model') || '');
+  const [filterStatus, setFilterStatus] = useState(searchParams.get('status') || '');
+  const [filterErrorType, setFilterErrorType] = useState(searchParams.get('error_type') || '');
+  const [filterKeyword, setFilterKeyword] = useState(searchParams.get('keyword') || '');
+  const [filterTenantId, setFilterTenantId] = useState(searchParams.get('tenant_id') || '');
+  const [filterApiKeyId, setFilterApiKeyId] = useState(searchParams.get('api_key_id') || '');
+  const [filterStream, setFilterStream] = useState(searchParams.get('stream') || '');
+  const [filterLatencyMin, setFilterLatencyMin] = useState(searchParams.get('latency_min') || '');
+  const [filterLatencyMax, setFilterLatencyMax] = useState(searchParams.get('latency_max') || '');
 
+  // Apply URL-based filters on mount
   useEffect(() => {
+    const initialFilters: RequestLogFilter = {};
+    if (searchParams.get('provider')) initialFilters.provider = searchParams.get('provider')!;
+    if (searchParams.get('model')) initialFilters.model = searchParams.get('model')!;
+    if (searchParams.get('status')) initialFilters.status = searchParams.get('status')!;
+    if (searchParams.get('error_type')) initialFilters.error_type = searchParams.get('error_type')!;
+    if (searchParams.get('keyword')) initialFilters.keyword = searchParams.get('keyword')!;
+    if (searchParams.get('tenant_id')) initialFilters.tenant_id = searchParams.get('tenant_id')!;
+    if (searchParams.get('api_key_id')) initialFilters.api_key_id = searchParams.get('api_key_id')!;
+    if (searchParams.get('stream')) initialFilters.stream = searchParams.get('stream') === 'true';
+    if (searchParams.get('latency_min')) initialFilters.latency_min = Number(searchParams.get('latency_min'));
+    if (searchParams.get('latency_max')) initialFilters.latency_max = Number(searchParams.get('latency_max'));
+    if (Object.keys(initialFilters).length > 0) setFilters(initialFilters);
     fetchLogs();
     fetchFilterOptions();
-  }, [fetchLogs, fetchFilterOptions]);
+  }, [fetchLogs, fetchFilterOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-open drawer if ?id= is in URL
   useEffect(() => {
@@ -56,7 +74,19 @@ export default function RequestLogs() {
     if (filterStatus) filters.status = filterStatus;
     if (filterErrorType) filters.error_type = filterErrorType;
     if (filterKeyword) filters.keyword = filterKeyword;
+    if (filterTenantId) filters.tenant_id = filterTenantId;
+    if (filterApiKeyId) filters.api_key_id = filterApiKeyId;
+    if (filterStream) filters.stream = filterStream === 'true';
+    if (filterLatencyMin) filters.latency_min = Number(filterLatencyMin);
+    if (filterLatencyMax) filters.latency_max = Number(filterLatencyMax);
     setFilters(filters);
+
+    // Sync to URL
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') params.set(k, String(v));
+    });
+    setSearchParams(params, { replace: true });
   };
 
   const handleClearFilters = () => {
@@ -65,7 +95,13 @@ export default function RequestLogs() {
     setFilterStatus('');
     setFilterErrorType('');
     setFilterKeyword('');
+    setFilterTenantId('');
+    setFilterApiKeyId('');
+    setFilterStream('');
+    setFilterLatencyMin('');
+    setFilterLatencyMax('');
     setFilters({});
+    setSearchParams({}, { replace: true });
   };
 
   const formatTokens = (log: typeof logs[0]): string => {
@@ -126,6 +162,51 @@ export default function RequestLogs() {
                 onChange={setFilterErrorType}
                 options={filterOptions?.error_types ?? []}
                 placeholder="All Errors"
+              />
+              <select
+                value={filterStream}
+                onChange={(e) => setFilterStream(e.target.value)}
+                className="filter-input"
+              >
+                <option value="">All Modes</option>
+                <option value="true">Stream</option>
+                <option value="false">Non-Stream</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Tenant ID"
+                value={filterTenantId}
+                onChange={(e) => setFilterTenantId(e.target.value)}
+                className="filter-input"
+                style={{ maxWidth: 140 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
+              />
+              <input
+                type="text"
+                placeholder="API Key ID"
+                value={filterApiKeyId}
+                onChange={(e) => setFilterApiKeyId(e.target.value)}
+                className="filter-input"
+                style={{ maxWidth: 140 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
+              />
+              <input
+                type="number"
+                placeholder="Min ms"
+                value={filterLatencyMin}
+                onChange={(e) => setFilterLatencyMin(e.target.value)}
+                className="filter-input"
+                style={{ maxWidth: 80 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
+              />
+              <input
+                type="number"
+                placeholder="Max ms"
+                value={filterLatencyMax}
+                onChange={(e) => setFilterLatencyMax(e.target.value)}
+                className="filter-input"
+                style={{ maxWidth: 80 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
               />
               <div className="search-input-wrapper">
                 <Search size={14} className="search-icon" />
