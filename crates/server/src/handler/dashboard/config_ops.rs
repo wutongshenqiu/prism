@@ -60,6 +60,75 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+/// PUT /api/dashboard/config/apply — validate, persist, and reload config.
+/// Accepts `{"yaml": "..."}` with the full YAML config to apply.
+pub async fn apply_config(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let yaml_str = match body.get("yaml").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "validation_failed", "message": "Missing 'yaml' field"})),
+            );
+        }
+    };
+
+    // Step 1: Validate
+    let runtime_config = match prism_core::config::Config::load_from_str(&yaml_str) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "validation_failed", "message": e.to_string()})),
+            );
+        }
+    };
+
+    // Step 2: Persist atomically
+    let config_path = match state.config_path.lock() {
+        Ok(path) => path.clone(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "lock_failed", "message": e.to_string()})),
+            );
+        }
+    };
+
+    let dir = std::path::Path::new(&config_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let tmp_path = dir.join(".config.yaml.tmp");
+    if let Err(e) = std::fs::write(&tmp_path, &yaml_str) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "write_failed", "message": e.to_string()})),
+        );
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &config_path) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "write_failed", "message": e.to_string()})),
+        );
+    }
+
+    // Step 3: Reload runtime
+    state.router.update_from_config(&runtime_config);
+    state.rate_limiter.update_config(&runtime_config.rate_limit);
+    state
+        .cost_calculator
+        .update_prices(&runtime_config.model_prices);
+    state.config.store(std::sync::Arc::new(runtime_config));
+
+    (
+        StatusCode::OK,
+        Json(json!({"message": "Configuration applied successfully"})),
+    )
+}
+
 /// GET /api/dashboard/config/raw — get raw YAML config file contents.
 pub async fn get_raw_config(State(state): State<AppState>) -> impl IntoResponse {
     let config_path = match state.config_path.lock() {

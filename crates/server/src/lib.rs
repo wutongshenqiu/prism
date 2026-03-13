@@ -161,6 +161,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::dashboard::config_ops::reload_config),
         )
         .route(
+            "/api/dashboard/config/apply",
+            axum::routing::put(handler::dashboard::config_ops::apply_config),
+        )
+        .route(
             "/api/dashboard/config/current",
             axum::routing::get(handler::dashboard::config_ops::get_config),
         )

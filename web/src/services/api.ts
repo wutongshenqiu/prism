@@ -287,6 +287,9 @@ export const configApi = {
     api.post<ConfigValidateResponse>('/config/validate', { yaml }),
 
   reload: () => api.post('/config/reload'),
+
+  apply: (yaml: string) =>
+    api.put<{ message: string }>('/config/apply', { yaml }),
 };
 
 export default api;

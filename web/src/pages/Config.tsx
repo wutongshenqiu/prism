@@ -6,9 +6,10 @@ import {
   RefreshCw,
   CheckCircle,
   XCircle,
-  Play,
   Eye,
   Edit3,
+  Save,
+  RotateCcw,
 } from 'lucide-react';
 
 type Tab = 'view' | 'editor';
@@ -22,7 +23,7 @@ export default function Config() {
   const [isLoading, setIsLoading] = useState(true);
   const [validationResult, setValidationResult] = useState<ConfigValidateResponse | null>(null);
   const [isValidating, setIsValidating] = useState(false);
-  const [isReloading, setIsReloading] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const fetchConfig = useCallback(async () => {
@@ -36,6 +37,7 @@ export default function Config() {
       setRawYaml(rawRes.data.content);
       setConfigPath(rawRes.data.path);
       setEditorContent(rawRes.data.content);
+      setValidationResult(null);
     } catch (err) {
       console.error('Failed to fetch config:', err);
       setMessage({ type: 'error', text: 'Failed to load configuration' });
@@ -69,23 +71,31 @@ export default function Config() {
     }
   };
 
-  const handleReload = async () => {
-    if (!window.confirm('Reload the gateway configuration from disk? Active connections will not be affected.')) {
+  const handleApply = async () => {
+    if (!window.confirm(
+      'Apply this configuration? The gateway will validate, save to disk, and reload.'
+    )) {
       return;
     }
-    setIsReloading(true);
+    setIsApplying(true);
     setMessage(null);
     try {
-      await configApi.reload();
-      setMessage({ type: 'success', text: 'Configuration reloaded successfully.' });
-      fetchConfig();
+      await configApi.apply(editorContent);
+      setMessage({ type: 'success', text: 'Configuration applied successfully.' });
+      await fetchConfig();
     } catch (err) {
-      setMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to reload configuration',
-      });
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { data?: { message?: string } } };
+        const errMsg = axiosErr.response?.data?.message || 'Failed to apply configuration';
+        setMessage({ type: 'error', text: errMsg });
+      } else {
+        setMessage({
+          type: 'error',
+          text: err instanceof Error ? err.message : 'Failed to apply configuration',
+        });
+      }
     } finally {
-      setIsReloading(false);
+      setIsApplying(false);
     }
   };
 
@@ -124,14 +134,6 @@ export default function Config() {
           <button className="btn btn-secondary" onClick={fetchConfig}>
             <RefreshCw size={16} />
             Refresh
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleReload}
-            disabled={isReloading}
-          >
-            <Play size={16} />
-            {isReloading ? 'Reloading...' : 'Reload Config'}
           </button>
         </div>
       </div>
@@ -193,10 +195,16 @@ export default function Config() {
               <h3>
                 <FileCode size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
                 YAML Configuration
+                {hasChanges && (
+                  <span style={{ color: 'var(--warning)', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
+                    (unsaved changes)
+                  </span>
+                )}
               </h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 {hasChanges && (
                   <button className="btn btn-ghost btn-sm" onClick={handleReset}>
+                    <RotateCcw size={14} />
                     Reset
                   </button>
                 )}
@@ -207,6 +215,15 @@ export default function Config() {
                 >
                   <CheckCircle size={14} />
                   {isValidating ? 'Validating...' : 'Validate'}
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleApply}
+                  disabled={isApplying || !hasChanges}
+                  title={!hasChanges ? 'No changes to apply' : 'Validate, save to disk, and reload'}
+                >
+                  <Save size={14} />
+                  {isApplying ? 'Applying...' : 'Save & Apply'}
                 </button>
               </div>
             </div>
