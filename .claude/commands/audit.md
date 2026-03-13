@@ -45,9 +45,14 @@ Steps:
 5. **创建 GitHub Issues**（可选，仅无 `--fix` 时）:
    - 询问用户是否要创建 issues
    - 按问题逐个 `gh issue create`，附标签和优先级
+   - 不要生成 `docs/issues/` 文档——直接用 GitHub Issues 追踪
 
 6. **结果报告**:
    - 发现问题总数（按优先级）
    - 修复数（如 `--fix`）
    - 剩余需手动处理的问题
    - 下一步建议（如 `/ship` 提交修复）
+
+注意:
+- 审计结果直接写入 GitHub Issues，不落地到 `docs/issues/` 目录
+- 如果发现已有 `docs/issues/` 中的旧文档且对应 issues 已关闭，应清理这些文件
