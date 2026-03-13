@@ -87,11 +87,11 @@ pub async fn system_health(State(state): State<AppState>) -> impl IntoResponse {
         "total_errors": metrics["total_errors"],
         "error_rate": metrics["error_rate"],
         "avg_latency_ms": metrics["avg_latency_ms"],
-        "rpm": metrics["rpm"],
+        "rpm": metrics["requests_per_minute"],
         "total_tokens": metrics["total_tokens"],
         "total_cost_usd": metrics["total_cost_usd"],
-        "cache_hits": metrics["cache_hits"],
-        "cache_misses": metrics["cache_misses"],
+        "cache_hits": metrics["cache"]["hits"],
+        "cache_misses": metrics["cache"]["misses"],
     });
 
     (
