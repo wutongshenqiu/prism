@@ -20,6 +20,7 @@ prism-lifecycle = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
+bcrypt = { workspace = true }
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -19,6 +19,19 @@ pub enum Command {
     Status(PidArgs),
     /// Send SIGHUP to reload configuration
     Reload(PidArgs),
+    /// Generate a bcrypt password hash for dashboard config
+    HashPassword(HashPasswordArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct HashPasswordArgs {
+    /// Password to hash (reads from stdin if not provided)
+    #[arg(long)]
+    pub password: Option<String>,
+
+    /// bcrypt cost factor (default: 12)
+    #[arg(long, default_value = "12")]
+    pub cost: u32,
 }
 
 #[derive(Parser, Debug)]

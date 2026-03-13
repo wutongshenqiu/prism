@@ -1807,6 +1807,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "axum",
+ "bcrypt",
  "clap",
  "dotenvy",
  "prism-core",
