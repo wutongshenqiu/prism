@@ -99,10 +99,16 @@ export class WebSocketManager {
 }
 
 let instance: WebSocketManager | null = null;
+let instanceToken: string | null = null;
 
 export function getWebSocketManager(token: string): WebSocketManager {
-  if (!instance) {
+  if (!instance || instanceToken !== token) {
+    // Token changed — tear down old connection and create a new one
+    if (instance) {
+      instance.disconnect();
+    }
     instance = new WebSocketManager(token);
+    instanceToken = token;
   }
   return instance;
 }
@@ -111,5 +117,6 @@ export function destroyWebSocketManager(): void {
   if (instance) {
     instance.disconnect();
     instance = null;
+    instanceToken = null;
   }
 }

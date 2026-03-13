@@ -38,6 +38,25 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Token state bridge: centralizes token read/write so both the interceptor
+// and the Zustand auth store stay in sync without circular imports.
+// The auth store registers itself on init via `setTokenSetter`.
+let _tokenSetter: ((token: string | null) => void) | null = null;
+
+export function setTokenSetter(setter: (token: string | null) => void): void {
+  _tokenSetter = setter;
+}
+
+function setToken(token: string): void {
+  localStorage.setItem('auth_token', token);
+  _tokenSetter?.(token);
+}
+
+function clearToken(): void {
+  localStorage.removeItem('auth_token');
+  _tokenSetter?.(null);
+}
+
 // Response interceptor: handle 401 and token refresh
 api.interceptors.response.use(
   (response) => response,
@@ -60,12 +79,12 @@ api.interceptors.response.use(
         );
 
         const newToken = response.data.token;
-        localStorage.setItem('auth_token', newToken);
+        setToken(newToken);
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
 
         return api(originalRequest);
       } catch {
-        localStorage.removeItem('auth_token');
+        clearToken();
         window.location.href = '/login';
         return Promise.reject(error);
       }

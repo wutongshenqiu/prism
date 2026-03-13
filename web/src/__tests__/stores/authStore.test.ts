@@ -7,6 +7,7 @@ vi.mock('../../services/api', () => ({
     login: vi.fn(),
     refresh: vi.fn(),
   },
+  setTokenSetter: vi.fn(),
 }));
 vi.mock('../../services/websocket', () => ({
   destroyWebSocketManager: vi.fn(),

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { authApi } from '../services/api';
+import { authApi, setTokenSetter } from '../services/api';
 import { destroyWebSocketManager } from '../services/websocket';
 
 interface AuthState {
@@ -62,3 +62,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 }));
+
+// Register the Zustand store as the token setter so the Axios interceptor
+// can update auth state on token refresh (avoiding circular imports).
+setTokenSetter((token) => {
+  if (token) {
+    useAuthStore.setState({ token, isAuthenticated: true });
+  } else {
+    destroyWebSocketManager();
+    useAuthStore.setState({ token: null, isAuthenticated: false });
+  }
+});

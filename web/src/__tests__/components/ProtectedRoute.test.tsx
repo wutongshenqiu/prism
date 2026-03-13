@@ -4,6 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 vi.mock('../../services/api', () => ({
   authApi: { login: vi.fn(), refresh: vi.fn() },
+  setTokenSetter: vi.fn(),
 }));
 vi.mock('../../services/websocket', () => ({
   destroyWebSocketManager: vi.fn(),

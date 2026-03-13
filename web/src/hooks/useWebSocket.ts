@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { getWebSocketManager, destroyWebSocketManager } from '../services/websocket';
 import { useAuthStore } from '../stores/authStore';
 import { useMetricsStore } from '../stores/metricsStore';
@@ -9,17 +9,13 @@ export function useWebSocket(): void {
   const token = useAuthStore((s) => s.token);
   const setSnapshot = useMetricsStore((s) => s.setSnapshot);
   const addLog = useLogsStore((s) => s.addLog);
-  const connectedRef = useRef(false);
 
   useEffect(() => {
     if (!token) return;
 
+    // getWebSocketManager detects token changes and rebuilds the connection
     const manager = getWebSocketManager(token);
-
-    if (!connectedRef.current) {
-      manager.connect();
-      connectedRef.current = true;
-    }
+    manager.connect();
 
     const unsubscribe = manager.subscribe((message: WsMessage) => {
       switch (message.type) {
@@ -42,7 +38,6 @@ export function useWebSocket(): void {
   useEffect(() => {
     return () => {
       destroyWebSocketManager();
-      connectedRef.current = false;
     };
   }, []);
 }
