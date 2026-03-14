@@ -5,6 +5,7 @@ use crate::file_audit::FileAuditConfig;
 use crate::payload::PayloadConfig;
 use crate::request_record::LogDetailLevel;
 pub use crate::routing::config::RoutingConfig;
+use crate::thinking_cache::ThinkingCacheConfig;
 use arc_swap::ArcSwap;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,9 @@ pub struct Config {
     // Daemon
     pub daemon: DaemonConfig,
 
+    // Thinking signature cache
+    pub thinking_cache: ThinkingCacheConfig,
+
     // Provider credentials
     pub claude_api_key: Vec<ProviderKeyEntry>,
     pub openai_api_key: Vec<ProviderKeyEntry>,
@@ -131,6 +135,7 @@ impl Default for Config {
             log_store: LogStoreConfig::default(),
             dashboard: DashboardConfig::default(),
             daemon: DaemonConfig::default(),
+            thinking_cache: ThinkingCacheConfig::default(),
             claude_api_key: Vec::new(),
             openai_api_key: Vec::new(),
             gemini_api_key: Vec::new(),

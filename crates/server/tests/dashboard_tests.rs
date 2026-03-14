@@ -69,6 +69,7 @@ fn create_test_harness() -> TestHarness {
         rate_limiter: Arc::new(CompositeRateLimiter::new(&config.rate_limit)),
         cost_calculator: Arc::new(CostCalculator::new(&config.model_prices)),
         response_cache: None,
+        thinking_cache: None,
         http_client_pool,
         start_time: Instant::now(),
         login_limiter: Arc::new(prism_server::handler::dashboard::auth::LoginRateLimiter::new()),

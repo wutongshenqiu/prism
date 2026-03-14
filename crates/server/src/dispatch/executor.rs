@@ -243,6 +243,31 @@ impl<'a> ExecutionController<'a> {
             translated_payload
         };
 
+        // Inject cached thinking signatures for Claude targets
+        let translated_payload = if target_format == Format::Claude
+            && let Some(ref thinking_cache) = self.state.thinking_cache
+        {
+            let tenant_id = req.tenant_id.as_deref().unwrap_or("");
+            match serde_json::from_slice::<serde_json::Value>(&translated_payload) {
+                Ok(mut val) => {
+                    let injected = thinking_cache
+                        .inject_into_request(tenant_id, &actual_model, &mut val)
+                        .await;
+                    if injected > 0 {
+                        tracing::debug!(
+                            injected,
+                            model = actual_model.as_str(),
+                            "Injected cached thinking signatures"
+                        );
+                    }
+                    serde_json::to_vec(&val).unwrap_or(translated_payload)
+                }
+                Err(_) => translated_payload,
+            }
+        } else {
+            translated_payload
+        };
+
         // Build request headers
         let mut request_headers: HashMap<String, String> = Default::default();
         if target_format == Format::Claude
@@ -408,6 +433,15 @@ impl<'a> ExecutionController<'a> {
                             self.state.router.record_success(&auth.id);
                             self.state.router.record_latency(&auth.id, latency_ms as f64);
 
+                            // Extract thinking signatures from Claude responses
+                            if target_format == Format::Claude
+                                && let Some(ref tc) = self.state.thinking_cache
+                            {
+                                let tenant_id = req.tenant_id.as_deref().unwrap_or("");
+                                tc.extract_from_response(tenant_id, &actual_model, &response.payload)
+                                    .await;
+                            }
+
                             let translated = self.state.translators.translate_non_stream(
                                 req.source_format,
                                 target_format,
@@ -495,6 +529,15 @@ impl<'a> ExecutionController<'a> {
                     self.state
                         .router
                         .record_latency(&auth.id, latency_ms as f64);
+
+                    // Extract thinking signatures from Claude responses
+                    if target_format == Format::Claude
+                        && let Some(ref tc) = self.state.thinking_cache
+                    {
+                        let tenant_id = req.tenant_id.as_deref().unwrap_or("");
+                        tc.extract_from_response(tenant_id, &actual_model, &response.payload)
+                            .await;
+                    }
 
                     let translated = self.state.translators.translate_non_stream(
                         req.source_format,

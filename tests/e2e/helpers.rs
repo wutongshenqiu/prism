@@ -71,6 +71,7 @@ impl TestServer {
             rate_limiter,
             cost_calculator,
             response_cache: None,
+            thinking_cache: None,
             http_client_pool,
             start_time: Instant::now(),
             login_limiter: Arc::new(

@@ -114,6 +114,20 @@ impl Application {
         let rate_limiter = Arc::new(CompositeRateLimiter::new(&config.rate_limit));
         let cost_calculator = Arc::new(prism_core::cost::CostCalculator::new(&config.model_prices));
 
+        // Initialize thinking signature cache (if enabled)
+        let thinking_cache = if config.thinking_cache.enabled {
+            tracing::info!(
+                "Thinking signature cache enabled (max_entries={}, ttl={}s)",
+                config.thinking_cache.max_entries,
+                config.thinking_cache.ttl_secs
+            );
+            Some(Arc::new(prism_core::thinking_cache::ThinkingCache::new(
+                &config.thinking_cache,
+            )))
+        } else {
+            None
+        };
+
         // Initialize response cache (if enabled)
         let response_cache: Option<Arc<dyn ResponseCacheBackend>> = if config.cache.enabled {
             tracing::info!(
@@ -141,6 +155,7 @@ impl Application {
             rate_limiter: rate_limiter.clone(),
             cost_calculator: cost_calculator.clone(),
             response_cache,
+            thinking_cache,
             http_client_pool: http_client_pool.clone(),
             start_time: Instant::now(),
             login_limiter: Arc::new(crate::handler::dashboard::auth::LoginRateLimiter::new()),

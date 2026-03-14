@@ -14,6 +14,7 @@ use prism_core::cost::CostCalculator;
 use prism_core::metrics::Metrics;
 use prism_core::rate_limit::CompositeRateLimiter;
 use prism_core::request_log::LogStore;
+use prism_core::thinking_cache::ThinkingCache;
 use prism_provider::ExecutorRegistry;
 use prism_provider::catalog::ProviderCatalog;
 use prism_provider::health::HealthManager;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub cost_calculator: Arc<CostCalculator>,
     pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,
     pub http_client_pool: Arc<prism_core::proxy::HttpClientPool>,
+    pub thinking_cache: Option<Arc<ThinkingCache>>,
     pub start_time: Instant,
     pub login_limiter: Arc<handler::dashboard::auth::LoginRateLimiter>,
     pub catalog: Arc<ProviderCatalog>,

@@ -21,4 +21,5 @@ pub mod request_log;
 pub mod request_record;
 pub mod routing;
 pub mod secret;
+pub mod thinking_cache;
 pub mod types;

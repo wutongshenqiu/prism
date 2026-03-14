@@ -39,7 +39,17 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-030 | Provider & Dispatch Unit Tests                 | Active    | [active/SPEC-030/](active/SPEC-030/) |
 | SPEC-036 | Add RequestContext to ProviderExecutor          | Draft     | [active/SPEC-036/](active/SPEC-036/) |
 | SPEC-042 | Crate Structure Refactoring                    | Draft     | [active/SPEC-042/](active/SPEC-042/) |
-| SPEC-047 | OAuth & Auth-File Upstream Onboarding             | Draft     | [active/SPEC-047/](active/SPEC-047/) |
+| SPEC-047 | OAuth & Auth-File Upstream Onboarding           | Deprecated | [active/SPEC-047/](active/SPEC-047/) — *Superseded by SPEC-057* |
+| SPEC-053 | Thinking Signature Cache                       | Active    | [active/SPEC-053/](active/SPEC-053/) |
+| SPEC-054 | Extended Thinking Cross-Provider Translation   | Draft     | [active/SPEC-054/](active/SPEC-054/) |
+| SPEC-055 | Gemini Native API Endpoints                    | Draft     | [active/SPEC-055/](active/SPEC-055/) |
+| SPEC-056 | Gemini Multimodal Enhancement                  | Draft     | [active/SPEC-056/](active/SPEC-056/) |
+| SPEC-057 | OAuth & Auth-File Provider Authentication      | Draft     | [active/SPEC-057/](active/SPEC-057/) |
+| SPEC-058 | Provider-Scoped Routing & Amp Integration      | Draft     | [active/SPEC-058/](active/SPEC-058/) |
+| SPEC-059 | Structured Output Translation                  | Draft     | [active/SPEC-059/](active/SPEC-059/) |
+| SPEC-060 | Reverse Translation Paths                      | Draft     | [active/SPEC-060/](active/SPEC-060/) |
+| SPEC-061 | Quota-Aware Credential Switching               | Draft     | [active/SPEC-061/](active/SPEC-061/) |
+| SPEC-062 | Vertex AI Provider                             | Draft     | [active/SPEC-062/](active/SPEC-062/) |
 
 ## Retroactively Completed
 
