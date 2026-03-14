@@ -59,9 +59,77 @@ pub fn translate_request(
         claude_req["thinking"] = thinking.clone();
     }
 
+    // Map reasoning_effort → thinking.budget_tokens if thinking not already set
+    if claude_req.get("thinking").is_none()
+        && let Some(effort) = req.get("reasoning_effort").and_then(|e| e.as_str())
+    {
+        let budget = match effort {
+            "low" => 1024u64,
+            "medium" => 4096,
+            "high" => {
+                let base = max_tokens.max(8192);
+                (base as f64 * 0.8) as u64
+            }
+            _ => 0,
+        };
+        if budget > 0 {
+            claude_req["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": budget,
+            });
+        }
+    }
+
     // Forward tool_choice if present
     if let Some(tc) = req.get("tool_choice") {
         claude_req["tool_choice"] = convert_tool_choice(tc);
+    }
+
+    // Handle response_format translation
+    if let Some(rf) = req.get("response_format") {
+        let rf_type = rf.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match rf_type {
+            "json_schema" => {
+                if let Some(schema_obj) = rf.get("json_schema") {
+                    let name = schema_obj
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("structured_output");
+                    let schema = schema_obj
+                        .get("schema")
+                        .cloned()
+                        .unwrap_or(json!({"type": "object"}));
+
+                    let synthetic_tool = json!({
+                        "name": name,
+                        "description": format!("Respond with structured output matching the {} schema", name),
+                        "input_schema": schema,
+                    });
+
+                    if let Some(tools) = claude_req.get_mut("tools").and_then(|t| t.as_array_mut())
+                    {
+                        tools.push(synthetic_tool);
+                    } else {
+                        claude_req["tools"] = json!([synthetic_tool]);
+                    }
+
+                    claude_req["tool_choice"] = json!({"type": "tool", "name": name});
+                }
+            }
+            "json_object" => {
+                let json_instruction = "\n\nYou must respond with valid JSON only. Do not include any text outside the JSON object.";
+                if let Some(system) = claude_req
+                    .get("system")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+                {
+                    claude_req["system"] = Value::String(format!("{}{}", system, json_instruction));
+                } else {
+                    claude_req["system"] = Value::String(json_instruction.trim_start().to_string());
+                }
+            }
+            _ => {}
+        }
     }
 
     serde_json::to_vec(&claude_req).map_err(|e| ProxyError::Translation(e.to_string()))
@@ -144,6 +212,14 @@ fn convert_messages(req: &Value) -> Result<Vec<Value>, ProxyError> {
 
         if role == "assistant" {
             let mut content_blocks = Vec::new();
+
+            // Handle reasoning_content → thinking block
+            if let Some(reasoning) = msg.get("reasoning_content").and_then(|r| r.as_str())
+                && !reasoning.is_empty()
+            {
+                content_blocks
+                    .push(json!({"type": "thinking", "thinking": reasoning, "signature": ""}));
+            }
 
             // Handle text content
             if let Some(content) = msg.get("content") {
@@ -759,5 +835,187 @@ mod tests {
         let raw = b"not valid json";
         let result = translate_request("claude-3-5-sonnet-20241022", raw, false);
         assert!(result.is_err());
+    }
+
+    // === Reasoning / Thinking translation ===
+
+    #[test]
+    fn test_reasoning_content_to_thinking_block() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": "Solve this math problem"},
+                {
+                    "role": "assistant",
+                    "reasoning_content": "Let me think step by step...",
+                    "content": "The answer is 42."
+                },
+                {"role": "user", "content": "Are you sure?"}
+            ]
+        });
+        let result = translate(req, false);
+        let assistant = &result["messages"][1];
+        let content = assistant["content"].as_array().unwrap();
+        // Should have thinking block first, then text
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "Let me think step by step...");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "The answer is 42.");
+    }
+
+    #[test]
+    fn test_reasoning_effort_low() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "low"
+        });
+        let result = translate(req, false);
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 1024);
+    }
+
+    #[test]
+    fn test_reasoning_effort_medium() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "medium"
+        });
+        let result = translate(req, false);
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 4096);
+    }
+
+    #[test]
+    fn test_reasoning_effort_high() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning_effort": "high",
+            "max_tokens": 16384
+        });
+        let result = translate(req, false);
+        assert_eq!(result["thinking"]["type"], "enabled");
+        // high = max_tokens.max(8192) * 0.8 = 16384 * 0.8 = 13107
+        assert_eq!(result["thinking"]["budget_tokens"], 13107);
+    }
+
+    // === Structured output (response_format) translation ===
+
+    #[test]
+    fn test_json_schema_response_format_to_tool() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "What is 2+2?"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "math_response",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "answer": {"type": "number"}
+                        },
+                        "required": ["answer"]
+                    }
+                }
+            }
+        });
+        let result = translate(req, false);
+
+        // Should have a synthetic tool
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "math_response");
+        assert_eq!(
+            tools[0]["input_schema"]["properties"]["answer"]["type"],
+            "number"
+        );
+
+        // Should force tool choice
+        assert_json_eq!(
+            result["tool_choice"],
+            json!({"type": "tool", "name": "math_response"})
+        );
+    }
+
+    #[test]
+    fn test_json_schema_with_existing_tools() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "output",
+                    "schema": {"type": "object"}
+                }
+            }
+        });
+        let result = translate(req, false);
+
+        // Should have both the original tool and the synthetic tool
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], "get_weather");
+        assert_eq!(tools[1]["name"], "output");
+
+        // tool_choice should be overridden to the synthetic tool
+        assert_json_eq!(
+            result["tool_choice"],
+            json!({"type": "tool", "name": "output"})
+        );
+    }
+
+    #[test]
+    fn test_json_object_response_format_to_system_prompt() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Give me JSON"}
+            ],
+            "response_format": {"type": "json_object"}
+        });
+        let result = translate(req, false);
+
+        let system = result["system"].as_str().unwrap();
+        assert!(system.starts_with("You are helpful."));
+        assert!(system.contains("You must respond with valid JSON only"));
+    }
+
+    #[test]
+    fn test_json_object_response_format_no_existing_system() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Give me JSON"}],
+            "response_format": {"type": "json_object"}
+        });
+        let result = translate(req, false);
+
+        let system = result["system"].as_str().unwrap();
+        assert!(system.contains("You must respond with valid JSON only"));
+    }
+
+    #[test]
+    fn test_reasoning_effort_not_overridden_by_explicit_thinking() {
+        let req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": 50000},
+            "reasoning_effort": "low"
+        });
+        let result = translate(req, false);
+        // Explicit thinking should take precedence
+        assert_eq!(result["thinking"]["budget_tokens"], 50000);
     }
 }

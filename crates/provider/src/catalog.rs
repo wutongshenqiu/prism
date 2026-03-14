@@ -144,6 +144,9 @@ mod tests {
             credential_name: Some(format!("name-{id}")),
             weight: 100,
             region: None,
+            vertex: false,
+            vertex_project: None,
+            vertex_location: None,
         }
     }
 

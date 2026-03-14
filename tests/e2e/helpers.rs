@@ -71,6 +71,7 @@ impl TestServer {
             rate_limiter,
             cost_calculator,
             response_cache: None,
+            thinking_cache: None,
             http_client_pool,
             start_time: Instant::now(),
             login_limiter: Arc::new(
@@ -123,6 +124,10 @@ fn make_key_entry(api_key: &str, name: &str, base_url: Option<&str>) -> Provider
         wire_api: Default::default(),
         weight: 1,
         region: None,
+        credential_source: None,
+        vertex: false,
+        vertex_project: None,
+        vertex_location: None,
     }
 }
 

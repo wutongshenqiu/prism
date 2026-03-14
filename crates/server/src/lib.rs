@@ -14,6 +14,7 @@ use prism_core::cost::CostCalculator;
 use prism_core::metrics::Metrics;
 use prism_core::rate_limit::CompositeRateLimiter;
 use prism_core::request_log::LogStore;
+use prism_core::thinking_cache::ThinkingCache;
 use prism_provider::ExecutorRegistry;
 use prism_provider::catalog::ProviderCatalog;
 use prism_provider::health::HealthManager;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub cost_calculator: Arc<CostCalculator>,
     pub response_cache: Option<Arc<dyn ResponseCacheBackend>>,
     pub http_client_pool: Arc<prism_core::proxy::HttpClientPool>,
+    pub thinking_cache: Option<Arc<ThinkingCache>>,
     pub start_time: Instant,
     pub login_limiter: Arc<handler::dashboard::auth::LoginRateLimiter>,
     pub catalog: Arc<ProviderCatalog>,
@@ -96,6 +98,28 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v1/messages/count_tokens",
             axum::routing::post(handler::count_tokens::count_tokens),
+        )
+        // Gemini native routes
+        .route(
+            "/v1beta/models",
+            axum::routing::get(handler::gemini::list_models),
+        )
+        .route(
+            "/v1beta/models/{model_action}",
+            axum::routing::post(handler::gemini::gemini_model_action),
+        )
+        // Provider-scoped routes
+        .route(
+            "/api/provider/{provider}/v1/chat/completions",
+            axum::routing::post(handler::provider_scoped::provider_chat_completions),
+        )
+        .route(
+            "/api/provider/{provider}/v1/messages",
+            axum::routing::post(handler::provider_scoped::provider_messages),
+        )
+        .route(
+            "/api/provider/{provider}/v1/responses",
+            axum::routing::post(handler::provider_scoped::provider_responses),
         )
         .layer(RequestBodyLimitLayer::new(body_limit_bytes))
         .layer(axum_mw::from_fn_with_state(

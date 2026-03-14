@@ -34,6 +34,12 @@ pub struct AuthRecord {
     pub weight: u32,
     /// Region for geo-aware routing.
     pub region: Option<String>,
+    /// Whether this is a Vertex AI credential.
+    pub vertex: bool,
+    /// Vertex AI project ID.
+    pub vertex_project: Option<String>,
+    /// Vertex AI location (e.g. "us-central1").
+    pub vertex_location: Option<String>,
 }
 
 impl std::fmt::Debug for AuthRecord {

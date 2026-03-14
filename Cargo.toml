@@ -60,6 +60,7 @@ libc = "0.2"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 bcrypt = "0.19"
 moka = { version = "0.12", features = ["future"] }
+dashmap = "6"
 
 # workspace internal
 prism-types = { path = "crates/types", default-features = false }

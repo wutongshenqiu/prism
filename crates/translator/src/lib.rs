@@ -1,8 +1,10 @@
 pub mod claude_to_openai;
 pub mod common;
 pub mod gemini_to_openai;
+pub mod gemini_to_openai_request;
 pub mod openai_to_claude;
 pub mod openai_to_gemini;
+pub mod openai_to_gemini_response;
 
 use prism_types::error::ProxyError;
 use prism_types::format::Format;
@@ -88,6 +90,10 @@ impl TranslatorRegistry {
     ) {
         self.requests.insert((from, to), request);
         self.responses.insert((from, to), response);
+    }
+
+    pub fn register_request(&mut self, from: Format, to: Format, request: RequestTransformFn) {
+        self.requests.insert((from, to), request);
     }
 
     pub fn translate_request(
@@ -210,6 +216,34 @@ pub fn build_registry() -> TranslatorRegistry {
             non_stream: |_model, _orig_req, data| Ok(String::from_utf8_lossy(data).to_string()),
         },
     );
+
+    // Gemini -> OpenAI request translation, OpenAI -> Gemini response translation
+    reg.register(
+        Format::Gemini,
+        Format::OpenAI,
+        gemini_to_openai_request::translate_request,
+        ResponseTransform {
+            stream: openai_to_gemini_response::translate_stream,
+            non_stream: openai_to_gemini_response::translate_non_stream,
+        },
+    );
+
+    // Gemini -> OpenAICompat (same translators as Gemini -> OpenAI)
+    reg.register(
+        Format::Gemini,
+        Format::OpenAICompat,
+        gemini_to_openai_request::translate_request,
+        ResponseTransform {
+            stream: openai_to_gemini_response::translate_stream,
+            non_stream: openai_to_gemini_response::translate_non_stream,
+        },
+    );
+
+    // Gemini -> Claude (chain: Gemini -> OpenAI -> Claude request only)
+    reg.register_request(Format::Gemini, Format::Claude, |model, raw, stream| {
+        let openai_payload = gemini_to_openai_request::translate_request(model, raw, stream)?;
+        openai_to_claude::translate_request(model, &openai_payload, stream)
+    });
 
     reg
 }
@@ -430,14 +464,89 @@ mod tests {
         assert!(!reg.has_response_translator(Format::Claude, Format::Gemini));
     }
 
+    // === Gemini reverse paths ===
+
+    #[test]
+    fn test_registry_gemini_to_openai_request() {
+        let reg = build_registry();
+        let payload = json!({
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
+        });
+        let raw = serde_json::to_vec(&payload).unwrap();
+        let result = reg
+            .translate_request(Format::Gemini, Format::OpenAI, "gpt-4", &raw, false)
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["model"], "gpt-4");
+        assert_eq!(val["messages"][0]["role"], "user");
+        assert_eq!(val["messages"][0]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_registry_gemini_to_claude_chained_request() {
+        let reg = build_registry();
+        let payload = json!({
+            "systemInstruction": {"parts": [{"text": "Be helpful"}]},
+            "contents": [{"role": "user", "parts": [{"text": "Hi"}]}]
+        });
+        let raw = serde_json::to_vec(&payload).unwrap();
+        let result = reg
+            .translate_request(
+                Format::Gemini,
+                Format::Claude,
+                "claude-sonnet-4-20250514",
+                &raw,
+                false,
+            )
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Should produce Claude format (model, system, messages)
+        assert_eq!(val["model"], "claude-sonnet-4-20250514");
+        assert_eq!(val["messages"][0]["role"], "user");
+        // System should be extracted
+        let system = val.get("system");
+        assert!(system.is_some(), "system prompt should be present");
+    }
+
+    #[test]
+    fn test_registry_gemini_to_openai_response() {
+        let reg = build_registry();
+        let openai_resp = json!({
+            "id": "chatcmpl-123",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let data = serde_json::to_vec(&openai_resp).unwrap();
+        let result = reg
+            .translate_non_stream(Format::Gemini, Format::OpenAI, "gpt-4", b"{}", &data)
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&result).unwrap();
+        // Should produce Gemini response format
+        assert_eq!(
+            val["candidates"][0]["content"]["parts"][0]["text"],
+            "Hello!"
+        );
+        assert_eq!(val["candidates"][0]["finishReason"], "STOP");
+        assert_eq!(val["usageMetadata"]["promptTokenCount"], 10);
+    }
+
     // === build_registry ===
 
     #[test]
     fn test_build_registry_has_all_paths() {
         let reg = build_registry();
-        // Should have 3 request translators
-        assert_eq!(reg.requests.len(), 3);
-        // Should have 3 response translators
-        assert_eq!(reg.responses.len(), 3);
+        // Should have 6 request translators:
+        // OpenAI→Claude, OpenAI→Gemini, OpenAI→OpenAICompat,
+        // Gemini→OpenAI, Gemini→OpenAICompat, Gemini→Claude
+        assert_eq!(reg.requests.len(), 6);
+        // Should have 5 response translators:
+        // OpenAI→Claude, OpenAI→Gemini, OpenAI→OpenAICompat,
+        // Gemini→OpenAI, Gemini→OpenAICompat
+        assert_eq!(reg.responses.len(), 5);
     }
 }

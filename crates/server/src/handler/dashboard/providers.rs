@@ -226,6 +226,10 @@ pub async fn create_provider(
         wire_api,
         weight: body.weight,
         region: body.region,
+        credential_source: None,
+        vertex: false,
+        vertex_project: None,
+        vertex_location: None,
     };
 
     match update_config_file(&state, |config| match body.provider_type.as_str() {

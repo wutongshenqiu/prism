@@ -16,7 +16,7 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
-    // Extract token from Authorization: Bearer or x-api-key header
+    // Extract token from Authorization: Bearer, x-api-key, x-goog-api-key header, or ?key= query param
     let token = request
         .headers()
         .get("authorization")
@@ -28,7 +28,26 @@ pub async fn auth_middleware(
                 .get("x-api-key")
                 .and_then(|v| v.to_str().ok())
         })
-        .map(|s| s.to_string());
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-goog-api-key")
+                .and_then(|v| v.to_str().ok())
+        })
+        .map(|s| s.to_string())
+        .or_else(|| {
+            // Extract from ?key= query parameter (Gemini SDK convention)
+            request.uri().query().and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let (k, v) = pair.split_once('=')?;
+                    if k == "key" {
+                        Some(v.to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
 
     let token = match token {
         Some(t) => t,

@@ -102,6 +102,13 @@ pub async fn dispatch(state: &AppState, mut req: DispatchRequest) -> Result<Resp
         );
     }
 
+    // ── Model suffix parsing: "model(budget)" → model + thinking budget injection ──
+    if let Some((base_model, budget)) = parse_model_thinking_suffix(&req.model) {
+        req.model = base_model.clone();
+        req.body = inject_thinking_budget(&req.body, budget);
+        req.body = rewrite_model_in_body(&req.body, &base_model);
+    }
+
     // ── Model ACL check ──
     if let Some(ctx) = req
         .api_key
@@ -274,6 +281,41 @@ pub(super) fn record_usage_on_span(
     if let Some(c) = cost {
         span.record("cost", c);
     }
+}
+
+/// Parse model suffix `model(budget)` → (model_name, budget_tokens).
+/// e.g., `claude-sonnet-4-5(10000)` → ("claude-sonnet-4-5", 10000)
+fn parse_model_thinking_suffix(model: &str) -> Option<(String, u64)> {
+    let model = model.trim();
+    if !model.ends_with(')') {
+        return None;
+    }
+    let open = model.rfind('(')?;
+    let base = &model[..open];
+    let budget_str = &model[open + 1..model.len() - 1];
+    let budget = budget_str.parse::<u64>().ok()?;
+    if base.is_empty() || budget == 0 {
+        return None;
+    }
+    Some((base.to_string(), budget))
+}
+
+/// Inject `thinking.budget_tokens` into a request body if not already present.
+fn inject_thinking_budget(body: &Bytes, budget: u64) -> Bytes {
+    let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.clone();
+    };
+    // Don't override existing thinking config
+    if val.get("thinking").is_some() {
+        return body.clone();
+    }
+    val["thinking"] = serde_json::json!({
+        "type": "enabled",
+        "budget_tokens": budget,
+    });
+    serde_json::to_vec(&val)
+        .map(Bytes::from)
+        .unwrap_or_else(|_| body.clone())
 }
 
 #[cfg(test)]
@@ -490,5 +532,75 @@ mod tests {
         let payload = b"not json".to_vec();
         let result = inject_stream_usage_option(payload.clone());
         assert_eq!(result, payload);
+    }
+
+    // === parse_model_thinking_suffix ===
+
+    #[test]
+    fn test_parse_model_suffix_basic() {
+        let (model, budget) = parse_model_thinking_suffix("claude-sonnet-4-5(10000)").unwrap();
+        assert_eq!(model, "claude-sonnet-4-5");
+        assert_eq!(budget, 10000);
+    }
+
+    #[test]
+    fn test_parse_model_suffix_large_budget() {
+        let (model, budget) = parse_model_thinking_suffix("gemini-2.5-flash(50000)").unwrap();
+        assert_eq!(model, "gemini-2.5-flash");
+        assert_eq!(budget, 50000);
+    }
+
+    #[test]
+    fn test_parse_model_suffix_no_suffix() {
+        assert!(parse_model_thinking_suffix("claude-3-5-sonnet").is_none());
+    }
+
+    #[test]
+    fn test_parse_model_suffix_empty_budget() {
+        assert!(parse_model_thinking_suffix("model()").is_none());
+    }
+
+    #[test]
+    fn test_parse_model_suffix_zero_budget() {
+        assert!(parse_model_thinking_suffix("model(0)").is_none());
+    }
+
+    #[test]
+    fn test_parse_model_suffix_non_numeric() {
+        assert!(parse_model_thinking_suffix("model(abc)").is_none());
+    }
+
+    #[test]
+    fn test_parse_model_suffix_empty_model_name() {
+        assert!(parse_model_thinking_suffix("(10000)").is_none());
+    }
+
+    // === inject_thinking_budget ===
+
+    #[test]
+    fn test_inject_thinking_budget_basic() {
+        let body = Bytes::from(r#"{"model":"claude-sonnet-4-5","messages":[]}"#);
+        let result = inject_thinking_budget(&body, 10000);
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(val["thinking"]["type"], "enabled");
+        assert_eq!(val["thinking"]["budget_tokens"], 10000);
+    }
+
+    #[test]
+    fn test_inject_thinking_budget_no_override() {
+        let body = Bytes::from(
+            r#"{"model":"claude-sonnet-4-5","thinking":{"type":"enabled","budget_tokens":5000}}"#,
+        );
+        let result = inject_thinking_budget(&body, 10000);
+        let val: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        // Should not override existing thinking config
+        assert_eq!(val["thinking"]["budget_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_inject_thinking_budget_invalid_json() {
+        let body = Bytes::from("not json");
+        let result = inject_thinking_budget(&body, 10000);
+        assert_eq!(result, body);
     }
 }

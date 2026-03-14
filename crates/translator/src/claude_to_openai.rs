@@ -24,8 +24,9 @@ pub fn translate_non_stream(
         .to_string();
     let created = chrono::Utc::now().timestamp();
 
-    // Extract text content and tool_use blocks
+    // Extract text content, thinking content, and tool_use blocks
     let mut text_parts = Vec::new();
+    let mut thinking_parts = Vec::new();
     let mut tool_calls = Vec::new();
     let mut tool_call_index = 0u32;
 
@@ -33,6 +34,13 @@ pub fn translate_non_stream(
         for block in content {
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
             match block_type {
+                "thinking" => {
+                    if let Some(text) = block.get("thinking").and_then(|t| t.as_str())
+                        && !text.is_empty()
+                    {
+                        thinking_parts.push(text.to_string());
+                    }
+                }
                 "text" => {
                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                         text_parts.push(text.to_string());
@@ -52,6 +60,28 @@ pub fn translate_non_stream(
         }
     }
 
+    // Check if original request had json_schema response_format
+    let original: Value = serde_json::from_slice(_original_req).unwrap_or(json!({}));
+    let has_json_schema = original
+        .get("response_format")
+        .and_then(|rf| rf.get("type"))
+        .and_then(|t| t.as_str())
+        == Some("json_schema");
+
+    // If json_schema mode and we got tool_use results, unwrap as content
+    if has_json_schema && !tool_calls.is_empty() && text_parts.is_empty() {
+        if let Some(content) = resp.get("content").and_then(|c| c.as_array()) {
+            for block in content {
+                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && let Some(input) = block.get("input")
+                {
+                    text_parts.push(serde_json::to_string(input).unwrap_or_default());
+                }
+            }
+        }
+        tool_calls.clear();
+    }
+
     let finish_reason = map_claude_finish_reason(resp.get("stop_reason").and_then(|v| v.as_str()));
 
     let content_str = text_parts.join("");
@@ -65,7 +95,17 @@ pub fn translate_non_stream(
     } else {
         Some(tool_calls)
     };
-    let message = build_assistant_message(content, tc);
+    let mut message = build_assistant_message(content, tc);
+
+    // Add reasoning_content if thinking blocks were present
+    if !thinking_parts.is_empty()
+        && let Some(obj) = message.as_object_mut()
+    {
+        obj.insert(
+            "reasoning_content".to_string(),
+            Value::String(thinking_parts.join("\n")),
+        );
+    }
 
     // Map usage
     let usage = if let Some(u) = resp.get("usage") {
@@ -134,7 +174,9 @@ pub fn translate_stream(
 
             if let Some(cb) = event.get("content_block") {
                 let block_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                if block_type == "tool_use" {
+                if block_type == "thinking" {
+                    // Start of thinking block — no chunk emitted, we'll emit reasoning_content deltas
+                } else if block_type == "tool_use" {
                     let tc_idx = state.next_tool_call_index() as i32;
                     let tc_id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -163,6 +205,17 @@ pub fn translate_stream(
             if let Some(delta) = event.get("delta") {
                 let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match delta_type {
+                    "thinking_delta" => {
+                        let text = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
+                        let chunk = build_openai_chunk(
+                            &state.response_id,
+                            state.created,
+                            &state.model,
+                            json!({"reasoning_content": text}),
+                            None,
+                        );
+                        chunks.push(serde_json::to_string(&chunk)?);
+                    }
                     "text_delta" => {
                         let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
                         let chunk = build_openai_chunk(
@@ -635,5 +688,177 @@ mod tests {
         )
         .unwrap();
         assert!(chunks.is_empty());
+    }
+
+    // ==================
+    // Thinking / reasoning_content tests
+    // ==================
+
+    #[test]
+    fn test_non_stream_thinking_to_reasoning_content() {
+        let claude_resp = json!({
+            "id": "msg_think",
+            "model": "claude-sonnet-4-5-20250514",
+            "content": [
+                {"type": "thinking", "thinking": "Let me analyze this step by step...", "signature": "sig123"},
+                {"type": "text", "text": "The answer is 42."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 50}
+        });
+        let data = serde_json::to_vec(&claude_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+
+        assert_eq!(
+            result["choices"][0]["message"]["reasoning_content"],
+            "Let me analyze this step by step..."
+        );
+        assert_eq!(
+            result["choices"][0]["message"]["content"],
+            "The answer is 42."
+        );
+    }
+
+    #[test]
+    fn test_non_stream_no_thinking_no_reasoning_content() {
+        let claude_resp = json!({
+            "id": "msg_no_think",
+            "model": "claude-3-5-sonnet-20241022",
+            "content": [{"type": "text", "text": "Hello!"}],
+            "stop_reason": "end_turn"
+        });
+        let data = serde_json::to_vec(&claude_resp).unwrap();
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", b"{}", &data).unwrap()).unwrap();
+
+        assert!(
+            result["choices"][0]["message"]
+                .get("reasoning_content")
+                .is_none()
+        );
+    }
+
+    // ==================
+    // Structured output (json_schema unwrap) tests
+    // ==================
+
+    #[test]
+    fn test_json_schema_tool_use_unwrapped() {
+        let original_req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "What is 2+2?"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "math_response",
+                    "schema": {"type": "object", "properties": {"answer": {"type": "number"}}}
+                }
+            }
+        });
+        let original_bytes = serde_json::to_vec(&original_req).unwrap();
+
+        let claude_resp = json!({
+            "id": "msg_schema",
+            "model": "claude-3-5-sonnet-20241022",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_schema",
+                "name": "math_response",
+                "input": {"answer": 4}
+            }],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        let data = serde_json::to_vec(&claude_resp).unwrap();
+
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", &original_bytes, &data).unwrap())
+                .unwrap();
+
+        // Content should be the unwrapped tool input as JSON string
+        let content = result["choices"][0]["message"]["content"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(content).unwrap();
+        assert_eq!(parsed["answer"], 4);
+
+        // Should NOT have tool_calls
+        assert!(result["choices"][0]["message"].get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn test_non_json_schema_tool_use_not_unwrapped() {
+        let original_req = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Weather?"}]
+        });
+        let original_bytes = serde_json::to_vec(&original_req).unwrap();
+
+        let claude_resp = json!({
+            "id": "msg_normal",
+            "model": "claude-3-5-sonnet-20241022",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_123",
+                "name": "get_weather",
+                "input": {"city": "SF"}
+            }],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        let data = serde_json::to_vec(&claude_resp).unwrap();
+
+        let result: Value =
+            serde_json::from_str(&translate_non_stream("model", &original_bytes, &data).unwrap())
+                .unwrap();
+
+        // Should still have tool_calls (not unwrapped)
+        assert!(result["choices"][0]["message"]["tool_calls"].is_array());
+        assert_eq!(result["choices"][0]["message"]["content"], Value::Null);
+    }
+
+    #[test]
+    fn test_stream_thinking_delta_to_reasoning_content() {
+        let mut state = new_state();
+        state.response_id = "chatcmpl-test".to_string();
+        state.created = 1000;
+        state.model = "claude-sonnet-4-5".to_string();
+
+        // content_block_start for thinking — should emit no chunk
+        let event = json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": ""}
+        });
+        let data = serde_json::to_vec(&event).unwrap();
+        let chunks = translate_stream(
+            "model",
+            b"{}",
+            Some("content_block_start"),
+            &data,
+            &mut state,
+        )
+        .unwrap();
+        assert!(chunks.is_empty());
+
+        // thinking_delta — should emit reasoning_content
+        let event = json!({
+            "type": "content_block_delta",
+            "delta": {"type": "thinking_delta", "thinking": "Step 1: "}
+        });
+        let data = serde_json::to_vec(&event).unwrap();
+        let chunks = translate_stream(
+            "model",
+            b"{}",
+            Some("content_block_delta"),
+            &data,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(chunks.len(), 1);
+        let chunk = parse_chunk(&chunks[0]);
+        assert_eq!(
+            chunk["choices"][0]["delta"]["reasoning_content"],
+            "Step 1: "
+        );
     }
 }

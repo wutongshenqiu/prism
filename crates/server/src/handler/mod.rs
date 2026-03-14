@@ -3,9 +3,11 @@ pub mod chat_completions;
 pub mod completions;
 pub mod count_tokens;
 pub mod dashboard;
+pub mod gemini;
 pub mod health;
 pub mod messages;
 pub mod models;
+pub mod provider_scoped;
 pub mod responses;
 
 use crate::AppState;

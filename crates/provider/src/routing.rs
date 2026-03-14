@@ -1,3 +1,4 @@
+use dashmap::DashMap;
 use prism_core::circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerPolicy, CircuitState, NoopCircuitBreaker,
     ThreeStateCircuitBreaker,
@@ -9,6 +10,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+/// Tracks when a credential's quota cooldown expires.
+pub struct QuotaCooldown {
+    pub until: Instant,
+}
 
 /// Check if a credential is allowed by the given patterns.
 /// Empty patterns = allow all. Non-empty patterns require the credential to have
@@ -37,6 +44,8 @@ pub struct CredentialRouter {
     ewma_alpha: RwLock<f64>,
     /// Circuit breaker config (used when building new records).
     cb_config: RwLock<CircuitBreakerConfig>,
+    /// Quota cooldowns: credential_id → cooldown expiry.
+    cooldowns: DashMap<String, QuotaCooldown>,
 }
 
 impl CredentialRouter {
@@ -49,6 +58,7 @@ impl CredentialRouter {
             latency_ewma: RwLock::new(HashMap::new()),
             ewma_alpha: RwLock::new(0.3),
             cb_config: RwLock::new(CircuitBreakerConfig::default()),
+            cooldowns: DashMap::new(),
         }
     }
 
@@ -74,6 +84,7 @@ impl CredentialRouter {
                 a.is_available()
                     && a.supports_model(model)
                     && !tried.contains(&a.id)
+                    && !self.is_cooled_down(&a.id)
                     && check_credential_access(allowed_credentials, a.credential_name.as_deref())
             })
             .collect();
@@ -179,6 +190,29 @@ impl CredentialRouter {
         if let Some(auth) = self.find_credential(auth_id) {
             auth.circuit_breaker.record_failure();
         }
+    }
+
+    /// Set a quota cooldown for a credential, temporarily excluding it from selection.
+    pub fn set_quota_cooldown(&self, credential_id: &str, duration: Duration) {
+        self.cooldowns.insert(
+            credential_id.to_string(),
+            QuotaCooldown {
+                until: Instant::now() + duration,
+            },
+        );
+    }
+
+    /// Check if a credential is currently in quota cooldown.
+    pub fn is_cooled_down(&self, credential_id: &str) -> bool {
+        if let Some(entry) = self.cooldowns.get(credential_id) {
+            if Instant::now() < entry.until {
+                return true;
+            }
+            // Cooldown expired — remove it
+            drop(entry);
+            self.cooldowns.remove(credential_id);
+        }
+        false
     }
 
     /// O(1) credential lookup by ID using the index.
@@ -389,6 +423,9 @@ fn build_auth_record(
         credential_name: entry.name.clone(),
         weight: entry.weight.max(1),
         region: entry.region.clone(),
+        vertex: entry.vertex,
+        vertex_project: entry.vertex_project.clone(),
+        vertex_location: entry.vertex_location.clone(),
     }
 }
 
@@ -422,6 +459,9 @@ mod tests {
             credential_name: Some(id.to_string()),
             weight: 1,
             region: None,
+            vertex: false,
+            vertex_project: None,
+            vertex_location: None,
         }
     }
 
@@ -756,5 +796,90 @@ mod tests {
             &["nonexistent".to_string()],
         );
         assert!(picked.is_none());
+    }
+
+    // === Quota cooldown ===
+
+    #[test]
+    fn test_set_and_check_cooldown() {
+        let router = CredentialRouter::new(CredentialStrategy::FillFirst);
+        assert!(!router.is_cooled_down("cred-1"));
+
+        router.set_quota_cooldown("cred-1", Duration::from_secs(60));
+        assert!(router.is_cooled_down("cred-1"));
+        assert!(!router.is_cooled_down("cred-2"));
+    }
+
+    #[test]
+    fn test_cooldown_expires() {
+        let router = CredentialRouter::new(CredentialStrategy::FillFirst);
+
+        // Set a very short cooldown
+        router.set_quota_cooldown("cred-1", Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(!router.is_cooled_down("cred-1"));
+    }
+
+    #[test]
+    fn test_cooled_down_credential_skipped_in_pick() {
+        let router = setup_router(
+            CredentialStrategy::FillFirst,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        // Cool down credential "a"
+        router.set_quota_cooldown("a", Duration::from_secs(60));
+
+        // Should skip "a" and pick "b"
+        let picked = router
+            .pick(Format::OpenAI, "gpt-4", &[], None, &[])
+            .unwrap();
+        assert_eq!(picked.id, "b");
+    }
+
+    #[test]
+    fn test_all_credentials_cooled_down_returns_none() {
+        let router = setup_router(
+            CredentialStrategy::FillFirst,
+            vec![
+                make_auth("a", Format::OpenAI, vec!["gpt-4"]),
+                make_auth("b", Format::OpenAI, vec!["gpt-4"]),
+            ],
+        );
+
+        router.set_quota_cooldown("a", Duration::from_secs(60));
+        router.set_quota_cooldown("b", Duration::from_secs(60));
+
+        let picked = router.pick(Format::OpenAI, "gpt-4", &[], None, &[]);
+        assert!(picked.is_none());
+    }
+
+    #[test]
+    fn test_cooldown_expired_credential_available_again() {
+        let router = setup_router(
+            CredentialStrategy::FillFirst,
+            vec![make_auth("a", Format::OpenAI, vec!["gpt-4"])],
+        );
+
+        router.set_quota_cooldown("a", Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+
+        let picked = router
+            .pick(Format::OpenAI, "gpt-4", &[], None, &[])
+            .unwrap();
+        assert_eq!(picked.id, "a");
+    }
+
+    #[test]
+    fn test_cooldown_override_extends_duration() {
+        let router = CredentialRouter::new(CredentialStrategy::FillFirst);
+
+        router.set_quota_cooldown("cred-1", Duration::from_millis(1));
+        // Override with a longer cooldown
+        router.set_quota_cooldown("cred-1", Duration::from_secs(60));
+        assert!(router.is_cooled_down("cred-1"));
     }
 }
