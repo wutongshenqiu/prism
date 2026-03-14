@@ -53,8 +53,8 @@ rustls-pki-types = "1"
 tokio-rustls = "0.26"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
-fork = "0.6"
-sd-notify = "0.4"
+fork = "0.7"
+sd-notify = "0.5"
 tracing-appender = "0.2"
 libc = "0.2"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

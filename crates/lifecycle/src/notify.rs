@@ -2,15 +2,15 @@
 
 /// Notify systemd that the service is ready.
 pub fn sd_ready() {
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
+    let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
 }
 
 /// Notify systemd that the service is reloading configuration.
 pub fn sd_reloading() {
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
+    let _ = sd_notify::notify(&[sd_notify::NotifyState::Reloading]);
 }
 
 /// Notify systemd that the service is stopping.
 pub fn sd_stopping() {
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
+    let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
 }
