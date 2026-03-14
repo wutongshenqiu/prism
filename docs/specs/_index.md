@@ -52,7 +52,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-062 | Vertex AI Provider                             | Completed | [active/SPEC-062/](active/SPEC-062/) |
 | SPEC-063 | Unified Provider Configuration                 | Completed | [active/SPEC-063/](active/SPEC-063/) |
 | SPEC-064 | Upstream Presentation Layer                    | Draft     | [active/SPEC-064/](active/SPEC-064/) |
-| SPEC-065 | Canonical Multi-Protocol Gateway & Control Plane Redesign | Active | [active/SPEC-065/](active/SPEC-065/) |
+| SPEC-065 | Canonical Multi-Protocol Gateway & Control Plane Redesign | Completed | [completed/SPEC-065/](completed/SPEC-065/) |
 
 ## Retroactively Completed
 
