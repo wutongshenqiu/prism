@@ -38,6 +38,8 @@ test-all: test
 
 lint:
 	cargo fmt --check
+	@cargo check --workspace 2>&1 | (! grep -q "^warning:") || \
+		{ cargo check --workspace 2>&1 | grep "^warning:"; echo "error: cargo check produced warnings (see above)"; exit 1; }
 	cargo clippy --workspace --tests -- -D warnings
 
 fmt:
