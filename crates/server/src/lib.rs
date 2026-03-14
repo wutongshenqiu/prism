@@ -153,6 +153,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::dashboard::providers::health_check),
         )
         .route(
+            "/api/dashboard/providers/{id}/presentation-preview",
+            axum::routing::post(handler::dashboard::providers::presentation_preview),
+        )
+        .route(
             "/api/dashboard/providers",
             axum::routing::get(handler::dashboard::providers::list_providers)
                 .post(handler::dashboard::providers::create_provider),

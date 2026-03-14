@@ -42,6 +42,8 @@ pub struct CreateProviderRequest {
     pub weight: u32,
     #[serde(default)]
     pub region: Option<String>,
+    #[serde(default)]
+    pub upstream_presentation: Option<prism_core::presentation::UpstreamPresentationConfig>,
 }
 
 fn default_weight() -> u32 {
@@ -72,6 +74,8 @@ pub struct UpdateProviderRequest {
     pub weight: Option<u32>,
     #[serde(default)]
     pub region: Option<Option<String>>,
+    #[serde(default)]
+    pub upstream_presentation: Option<prism_core::presentation::UpstreamPresentationConfig>,
 }
 
 fn mask_key(key: &str) -> String {
@@ -127,6 +131,7 @@ pub async fn get_provider(
                 "wire_api": entry.wire_api,
                 "weight": entry.weight,
                 "region": entry.region,
+                "upstream_presentation": entry.upstream_presentation,
             });
             (StatusCode::OK, Json(detail))
         }
@@ -206,7 +211,7 @@ pub async fn create_provider(
         headers: body.headers,
         disabled: body.disabled,
         cloak: Default::default(),
-        upstream_presentation: Default::default(),
+        upstream_presentation: body.upstream_presentation.unwrap_or_default(),
         wire_api,
         weight: body.weight,
         region: body.region,
@@ -307,6 +312,9 @@ pub async fn update_provider(
             }
             if let Some(ref region) = body.region {
                 entry.region = region.clone();
+            }
+            if let Some(ref presentation) = body.upstream_presentation {
+                entry.upstream_presentation = presentation.clone();
             }
         }
     })
@@ -614,6 +622,60 @@ pub async fn fetch_models(
 
     let models = extract_model_ids(format, &body_json);
     (StatusCode::OK, Json(json!({"models": models})))
+}
+
+/// POST /api/dashboard/providers/{name}/presentation-preview
+pub async fn presentation_preview(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<PresentationPreviewRequest>,
+) -> impl IntoResponse {
+    let config = state.config.load();
+
+    let entry = match config.providers.iter().find(|e| e.name == name) {
+        Some(e) => e,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "not_found", "message": "Provider not found"})),
+            );
+        }
+    };
+
+    let mut payload = body
+        .sample_body
+        .unwrap_or_else(|| json!({"messages": [{"role": "user", "content": "hello"}]}));
+
+    let ctx = prism_core::presentation::PresentationContext {
+        target_format: entry.format,
+        model: body.model.as_deref().unwrap_or("unknown"),
+        user_agent: body.user_agent.as_deref(),
+        api_key: &entry.api_key,
+    };
+
+    let result = prism_core::presentation::apply(&entry.upstream_presentation, &ctx, &mut payload);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "profile": result.trace.profile,
+            "activated": result.trace.activated,
+            "effective_headers": result.headers,
+            "body_mutations": result.trace.body_mutations,
+            "protected_headers_blocked": result.trace.protected_blocked,
+            "effective_body": payload,
+        })),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PresentationPreviewRequest {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub sample_body: Option<serde_json::Value>,
 }
 
 /// POST /api/dashboard/providers/{name}/health
