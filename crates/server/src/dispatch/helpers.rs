@@ -140,6 +140,7 @@ pub(super) fn inject_route_headers(
 
 /// Inject `stream_options.include_usage = true` into an OpenAI-format streaming request
 /// payload so that the final SSE chunk includes token usage data.
+#[cfg(test)]
 pub(super) fn inject_stream_usage_option(payload: Vec<u8>) -> Vec<u8> {
     if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&payload)
         && let Some(obj) = val.as_object_mut()
@@ -156,6 +157,19 @@ pub(super) fn inject_stream_usage_option(payload: Vec<u8>) -> Vec<u8> {
         }
     }
     payload
+}
+
+/// Inject `stream_options.include_usage = true` into a mutable Value.
+pub(super) fn inject_stream_usage_option_value(val: &mut serde_json::Value) {
+    if let Some(obj) = val.as_object_mut() {
+        let stream_opts = obj
+            .entry("stream_options")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(opts) = stream_opts.as_object_mut() {
+            opts.entry("include_usage")
+                .or_insert(serde_json::Value::Bool(true));
+        }
+    }
 }
 
 /// Rewrite the `model` field in a JSON request body to use a different model name.

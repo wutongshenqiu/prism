@@ -6,11 +6,10 @@ use prism_core::provider::{Format, ProviderRequest, ProviderResponse};
 use prism_core::request_record::{LogDetailLevel, truncate_body};
 use prism_core::routing::config::FailoverConfig;
 use prism_core::routing::types::{RouteAttemptPlan, RouteFallbackEvent, RoutePlan, RouteTrace};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::helpers::{
-    build_json_response, extract_usage, inject_stream_usage_option, rewrite_model_in_body,
+    build_json_response, extract_usage, inject_stream_usage_option_value, rewrite_model_in_body,
 };
 use super::streaming::{
     StreamDoneContext, build_keepalive_body, translate_stream, with_usage_capture,
@@ -204,84 +203,62 @@ impl<'a> ExecutionController<'a> {
             req.stream,
         )?;
 
-        // Apply payload manipulation rules
-        let translated_payload = {
-            let mut payload_value: serde_json::Value =
-                serde_json::from_slice(&translated_payload).unwrap_or(serde_json::Value::Null);
-            if payload_value.is_object() {
-                prism_core::payload::apply_payload_rules(
-                    &mut payload_value,
-                    &config.payload,
-                    &actual_model,
-                    Some(target_format.as_str()),
-                );
-                serde_json::to_vec(&payload_value).unwrap_or(translated_payload)
-            } else {
-                translated_payload
-            }
-        };
+        // Parse payload into mutable Value for manipulation pipeline
+        let mut payload_value: serde_json::Value =
+            serde_json::from_slice(&translated_payload).unwrap_or(serde_json::Value::Null);
 
-        // Apply cloaking for Claude targets
-        let translated_payload = if target_format == Format::Claude {
-            if let Some(ref cloak_cfg) = auth.cloak {
-                if prism_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref()) {
-                    let mut val: serde_json::Value = serde_json::from_slice(&translated_payload)
-                        .unwrap_or(serde_json::Value::Null);
-                    if val.is_object() {
-                        prism_core::cloak::apply_cloak(&mut val, cloak_cfg, &auth.api_key);
-                        serde_json::to_vec(&val).unwrap_or(translated_payload)
-                    } else {
-                        translated_payload
-                    }
-                } else {
-                    translated_payload
-                }
-            } else {
-                translated_payload
-            }
-        } else {
-            translated_payload
+        // Apply payload manipulation rules
+        if payload_value.is_object() {
+            prism_core::payload::apply_payload_rules(
+                &mut payload_value,
+                &config.payload,
+                &actual_model,
+                Some(target_format.as_str()),
+            );
+        }
+
+        // Apply upstream presentation (unified headers + body mutations)
+        let presentation_ctx = prism_core::presentation::PresentationContext {
+            target_format,
+            model: &actual_model,
+            user_agent: req.user_agent.as_deref(),
+            api_key: &auth.api_key,
         };
+        let presentation_result = prism_core::presentation::apply(
+            &auth.upstream_presentation,
+            &presentation_ctx,
+            &mut payload_value,
+        );
 
         // Inject cached thinking signatures for Claude targets
-        let translated_payload = if target_format == Format::Claude
+        if target_format == Format::Claude
             && let Some(ref thinking_cache) = self.state.thinking_cache
         {
             let tenant_id = req.tenant_id.as_deref().unwrap_or("");
-            match serde_json::from_slice::<serde_json::Value>(&translated_payload) {
-                Ok(mut val) => {
-                    let injected = thinking_cache
-                        .inject_into_request(tenant_id, &actual_model, &mut val)
-                        .await;
-                    if injected > 0 {
-                        tracing::debug!(
-                            injected,
-                            model = actual_model.as_str(),
-                            "Injected cached thinking signatures"
-                        );
-                    }
-                    serde_json::to_vec(&val).unwrap_or(translated_payload)
-                }
-                Err(_) => translated_payload,
-            }
-        } else {
-            translated_payload
-        };
-
-        // Build request headers
-        let mut request_headers: HashMap<String, String> = Default::default();
-        if target_format == Format::Claude
-            && let Some(ref cloak_cfg) = auth.cloak
-            && prism_core::cloak::should_cloak(cloak_cfg, req.user_agent.as_deref())
-        {
-            for (k, v) in &config.claude_header_defaults {
-                request_headers.insert(k.clone(), v.clone());
+            let injected = thinking_cache
+                .inject_into_request(tenant_id, &actual_model, &mut payload_value)
+                .await;
+            if injected > 0 {
+                tracing::debug!(
+                    injected,
+                    model = actual_model.as_str(),
+                    "Injected cached thinking signatures"
+                );
             }
         }
 
+        // Inject stream_options.include_usage for OpenAI-format streaming
+        if req.stream && target_format == Format::OpenAI {
+            inject_stream_usage_option_value(&mut payload_value);
+        }
+
+        // Serialize final payload
+        let final_payload =
+            serde_json::to_vec(&payload_value).unwrap_or_else(|_| translated_payload.clone());
+
         // Record upstream request body on span
         if detail_level >= LogDetailLevel::Standard
-            && let Ok(upstream_str) = std::str::from_utf8(&translated_payload)
+            && let Ok(upstream_str) = std::str::from_utf8(&final_payload)
         {
             request_span.record(
                 "upstream_request_body",
@@ -289,19 +266,12 @@ impl<'a> ExecutionController<'a> {
             );
         }
 
-        // Inject stream_options.include_usage for OpenAI-format streaming
-        let translated_payload = if req.stream && matches!(target_format, Format::OpenAI) {
-            inject_stream_usage_option(translated_payload)
-        } else {
-            translated_payload
-        };
-
         let provider_request = ProviderRequest {
             model: actual_model.clone(),
-            payload: Bytes::from(translated_payload),
+            payload: Bytes::from(final_payload),
             source_format: req.source_format,
             stream: req.stream,
-            headers: request_headers,
+            headers: presentation_result.headers,
             original_request: Some(body.clone()),
         };
 
