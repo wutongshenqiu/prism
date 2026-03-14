@@ -1,0 +1,15 @@
+{
+  "candidates": [{
+    "content": {
+      "parts": [{"text": "2+2 equals 4."}],
+      "role": "model"
+    },
+    "finishReason": "STOP"
+  }],
+  "modelVersion": "gemini-1.5-pro",
+  "usageMetadata": {
+    "promptTokenCount": 15,
+    "candidatesTokenCount": 8,
+    "totalTokenCount": 23
+  }
+}

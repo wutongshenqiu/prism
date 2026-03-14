@@ -1,0 +1,16 @@
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "messages": [
+    {"role": "user", "content": "What's the weather in SF?"}
+  ],
+  "tools": [{
+    "name": "get_weather",
+    "description": "Get weather for a city",
+    "input_schema": {
+      "type": "object",
+      "properties": {"city": {"type": "string"}},
+      "required": ["city"]
+    }
+  }],
+  "max_tokens": 200
+}

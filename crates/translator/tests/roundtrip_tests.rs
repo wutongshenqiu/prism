@@ -297,3 +297,261 @@ fn test_roundtrip_openai_to_claude_streaming() {
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0], "[DONE]");
 }
+
+// ─── Claude → OpenAI roundtrip tests ─────────────────────────────────────────
+
+#[test]
+fn test_roundtrip_claude_to_openai_text() {
+    let reg = build_registry();
+
+    // 1. Translate Claude request → OpenAI format
+    let claude_req = json!({
+        "model": "claude-3-5-sonnet-20241022",
+        "system": "You are helpful.",
+        "messages": [
+            {"role": "user", "content": "What is 2+2?"}
+        ],
+        "max_tokens": 100
+    });
+    let raw = serde_json::to_vec(&claude_req).unwrap();
+    let openai_req = reg
+        .translate_request(Format::Claude, Format::OpenAI, "gpt-4", &raw, false)
+        .unwrap();
+    let openai_req_val: Value = serde_json::from_slice(&openai_req).unwrap();
+
+    // Verify OpenAI request structure
+    assert_eq!(openai_req_val["model"], "gpt-4");
+    assert_eq!(openai_req_val["messages"][0]["role"], "system");
+    assert_eq!(openai_req_val["messages"][0]["content"], "You are helpful.");
+    assert_eq!(openai_req_val["messages"][1]["role"], "user");
+    assert_eq!(openai_req_val["max_tokens"], 100);
+
+    // 2. Simulate OpenAI response
+    let openai_resp = json!({
+        "id": "chatcmpl-roundtrip-1",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "gpt-4",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "2+2 equals 4."},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 15, "completion_tokens": 8, "total_tokens": 23}
+    });
+    let resp_data = serde_json::to_vec(&openai_resp).unwrap();
+
+    // 3. Translate OpenAI response → Claude format
+    let claude_resp = reg
+        .translate_non_stream(Format::Claude, Format::OpenAI, "gpt-4", &raw, &resp_data)
+        .unwrap();
+    let result: Value = serde_json::from_str(&claude_resp).unwrap();
+
+    // 4. Verify Claude response structure
+    assert_eq!(result["type"], "message");
+    assert_eq!(result["role"], "assistant");
+    assert_eq!(result["content"][0]["type"], "text");
+    assert_eq!(result["content"][0]["text"], "2+2 equals 4.");
+    assert_eq!(result["stop_reason"], "end_turn");
+    assert_eq!(result["usage"]["input_tokens"], 15);
+    assert_eq!(result["usage"]["output_tokens"], 8);
+}
+
+#[test]
+fn test_roundtrip_claude_to_openai_tool_call() {
+    let reg = build_registry();
+
+    // 1. Translate Claude request with tools → OpenAI format
+    let claude_req = json!({
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Weather in SF?"}],
+        "tools": [{
+            "name": "get_weather",
+            "description": "Get weather",
+            "input_schema": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"]
+            }
+        }],
+        "max_tokens": 200
+    });
+    let raw = serde_json::to_vec(&claude_req).unwrap();
+    let openai_req = reg
+        .translate_request(Format::Claude, Format::OpenAI, "gpt-4", &raw, false)
+        .unwrap();
+    let openai_req_val: Value = serde_json::from_slice(&openai_req).unwrap();
+
+    // Verify tools translated
+    assert_eq!(openai_req_val["tools"][0]["type"], "function");
+    assert_eq!(
+        openai_req_val["tools"][0]["function"]["name"],
+        "get_weather"
+    );
+
+    // 2. Simulate OpenAI tool_calls response
+    let openai_resp = json!({
+        "id": "chatcmpl-tool-rt",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "gpt-4",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_rt1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{\"city\":\"SF\"}"}
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {"prompt_tokens": 30, "completion_tokens": 20, "total_tokens": 50}
+    });
+    let resp_data = serde_json::to_vec(&openai_resp).unwrap();
+
+    // 3. Translate back to Claude format
+    let claude_resp = reg
+        .translate_non_stream(Format::Claude, Format::OpenAI, "gpt-4", &raw, &resp_data)
+        .unwrap();
+    let result: Value = serde_json::from_str(&claude_resp).unwrap();
+
+    // 4. Verify Claude response has tool_use block
+    assert_eq!(result["stop_reason"], "tool_use");
+    let tool_block = &result["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["type"] == "tool_use")
+        .unwrap();
+    assert_eq!(tool_block["name"], "get_weather");
+    assert_eq!(tool_block["id"], "call_rt1");
+}
+
+#[test]
+fn test_roundtrip_claude_to_openai_streaming() {
+    let reg = build_registry();
+
+    let claude_req = json!({
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Say hi"}],
+        "max_tokens": 100
+    });
+    let raw = serde_json::to_vec(&claude_req).unwrap();
+    let _openai_req = reg
+        .translate_request(Format::Claude, Format::OpenAI, "gpt-4", &raw, true)
+        .unwrap();
+
+    // Simulate OpenAI streaming chunks
+    let mut state = TranslateState::default();
+
+    // Role chunk
+    let role_chunk = json!({
+        "id": "chatcmpl-stream-rt",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]
+    });
+    let chunks = reg
+        .translate_stream(
+            Format::Claude,
+            Format::OpenAI,
+            "gpt-4",
+            &raw,
+            None,
+            &serde_json::to_vec(&role_chunk).unwrap(),
+            &mut state,
+        )
+        .unwrap();
+    // Should produce message_start and content_block_start events
+    assert!(chunks.iter().any(|c| c.contains("message_start")));
+
+    // Content delta
+    let content_chunk = json!({
+        "id": "chatcmpl-stream-rt",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "delta": {"content": "Hi!"}, "finish_reason": null}]
+    });
+    let chunks = reg
+        .translate_stream(
+            Format::Claude,
+            Format::OpenAI,
+            "gpt-4",
+            &raw,
+            None,
+            &serde_json::to_vec(&content_chunk).unwrap(),
+            &mut state,
+        )
+        .unwrap();
+    assert!(chunks.iter().any(|c| c.contains("text_delta")));
+
+    // Finish chunk
+    let stop_chunk = json!({
+        "id": "chatcmpl-stream-rt",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    });
+    let chunks = reg
+        .translate_stream(
+            Format::Claude,
+            Format::OpenAI,
+            "gpt-4",
+            &raw,
+            None,
+            &serde_json::to_vec(&stop_chunk).unwrap(),
+            &mut state,
+        )
+        .unwrap();
+    assert!(chunks.iter().any(|c| c.contains("message_stop")));
+}
+
+// ─── Translation registry coverage tests ─────────────────────────────────────
+
+#[test]
+fn test_registered_translation_paths() {
+    let reg = build_registry();
+
+    // Currently registered request translation paths
+    let request_paths = [
+        (Format::OpenAI, Format::Claude),
+        (Format::OpenAI, Format::Gemini),
+        (Format::Claude, Format::OpenAI),
+        (Format::Claude, Format::Gemini),
+    ];
+
+    for (source, target) in &request_paths {
+        let test_body = json!({"model": "test", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 10});
+        let raw = serde_json::to_vec(&test_body).unwrap();
+        let result = reg.translate_request(*source, *target, "test-model", &raw, false);
+        assert!(
+            result.is_ok(),
+            "request translation {source:?} → {target:?} should be registered"
+        );
+    }
+}
+
+#[test]
+fn test_same_format_passthrough() {
+    let reg = build_registry();
+
+    // Same format should return body unchanged
+    for format in [Format::OpenAI, Format::Claude, Format::Gemini] {
+        let body = json!({"model": "test", "messages": [], "max_tokens": 10});
+        let raw = serde_json::to_vec(&body).unwrap();
+        let result = reg
+            .translate_request(format, format, "test", &raw, false)
+            .unwrap();
+        assert_eq!(
+            raw, result,
+            "same-format passthrough should return body unchanged for {format:?}"
+        );
+    }
+}

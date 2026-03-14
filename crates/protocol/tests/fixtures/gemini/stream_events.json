@@ -1,0 +1,24 @@
+[
+  {
+    "candidates": [{
+      "content": {
+        "parts": [{"text": "Hello"}],
+        "role": "model"
+      }
+    }]
+  },
+  {
+    "candidates": [{
+      "content": {
+        "parts": [{"text": " world"}],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }],
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 5,
+      "totalTokenCount": 15
+    }
+  }
+]
