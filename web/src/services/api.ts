@@ -4,6 +4,7 @@ import type {
   Provider,
   ProviderCreateRequest,
   ProviderUpdateRequest,
+  PresentationPreviewResponse,
   AuthKey,
   AuthKeyCreateRequest,
   AuthKeyCreateResponse,
@@ -131,6 +132,10 @@ export const providersApi = {
 
   healthCheck: (name: string) =>
     api.post<{ status: string; latency_ms?: number; message?: string }>(`/providers/${encodeURIComponent(name)}/health`)
+      .then((res) => res.data),
+
+  presentationPreview: (name: string, data: { model?: string; user_agent?: string; sample_body?: unknown }) =>
+    api.post<PresentationPreviewResponse>(`/providers/${encodeURIComponent(name)}/presentation-preview`, data)
       .then((res) => res.data),
 };
 

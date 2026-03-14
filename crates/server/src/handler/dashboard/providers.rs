@@ -15,6 +15,7 @@ struct ProviderSummary {
     base_url: Option<String>,
     models_count: usize,
     disabled: bool,
+    upstream_presentation: prism_core::presentation::UpstreamPresentationConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +103,7 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
             base_url: entry.base_url.clone(),
             models_count: entry.models.len(),
             disabled: entry.disabled,
+            upstream_presentation: entry.upstream_presentation.clone(),
         });
     }
 

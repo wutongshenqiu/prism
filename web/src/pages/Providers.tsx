@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { providersApi } from '../services/api';
-import type { Provider, ProviderCreateRequest, FormatType } from '../types';
+import type { Provider, ProviderCreateRequest, FormatType, ProfileKind, ActivationMode, PresentationPreviewResponse } from '../types';
 import StatusBadge from '../components/StatusBadge';
 import TagList from '../components/TagList';
-import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse, PlusCircle, MinusCircle, Copy } from 'lucide-react';
+import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse, PlusCircle, MinusCircle, Copy, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 
 const FORMAT_OPTIONS: { value: FormatType; label: string }[] = [
   { value: 'openai', label: 'OpenAI' },
@@ -16,6 +16,13 @@ const DEFAULT_BASE_URLS: Record<FormatType, string> = {
   claude: 'https://api.anthropic.com',
   gemini: 'https://generativelanguage.googleapis.com',
 };
+
+const PROFILE_OPTIONS: { value: ProfileKind; label: string; description: string }[] = [
+  { value: 'native', label: 'Native', description: 'No identity headers or body mutations' },
+  { value: 'claude-code', label: 'Claude Code', description: 'Claude Code client identity (headers + body mutations)' },
+  { value: 'gemini-cli', label: 'Gemini CLI', description: 'Gemini CLI client identity (headers only)' },
+  { value: 'codex-cli', label: 'Codex CLI', description: 'Codex CLI client identity (headers only)' },
+];
 
 interface HeaderPair {
   key: string;
@@ -36,6 +43,13 @@ interface FormState {
   wire_api: string;
   weight: number;
   region: string;
+  // Upstream Presentation
+  profile: ProfileKind;
+  activation_mode: ActivationMode;
+  strict_mode: boolean;
+  sensitive_words: string;
+  cache_user_id: boolean;
+  presentation_headers: HeaderPair[];
 }
 
 interface NoticeState {
@@ -57,6 +71,12 @@ const emptyForm: FormState = {
   wire_api: 'chat',
   weight: 1,
   region: '',
+  profile: 'native',
+  activation_mode: 'always',
+  strict_mode: false,
+  sensitive_words: '',
+  cache_user_id: false,
+  presentation_headers: [],
 };
 
 export default function Providers() {
@@ -71,6 +91,9 @@ export default function Providers() {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
   const [healthResults, setHealthResults] = useState<Record<string, { status: string; latency_ms?: number; message?: string }>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [previewResult, setPreviewResult] = useState<PresentationPreviewResponse | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const extractErrorMessage = (err: unknown, fallback: string) => {
     if (typeof err === 'object' && err !== null) {
@@ -117,33 +140,59 @@ export default function Providers() {
     setEditName(null);
     setForm(emptyForm);
     setError('');
+    setShowAdvanced(false);
+    setPreviewResult(null);
     setShowModal(true);
   };
 
-  const openEdit = (provider: Provider) => {
+  const openEdit = async (provider: Provider) => {
     setEditName(provider.name);
-    const headerPairs: HeaderPair[] = provider.headers
-      ? Object.entries(provider.headers).map(([key, value]) => ({ key, value }))
+    setError('');
+    setShowAdvanced(false);
+    setPreviewResult(null);
+
+    // Fetch full provider details (includes upstream_presentation)
+    let detail = provider;
+    try {
+      const res = await providersApi.get(provider.name);
+      detail = res.data;
+    } catch {
+      // Fall back to list data
+    }
+
+    const headerPairs: HeaderPair[] = detail.headers
+      ? Object.entries(detail.headers).map(([key, value]) => ({ key, value }))
       : [];
-    const modelStrings = (provider.models || []).map((m) =>
+    const modelStrings = (detail.models || []).map((m) =>
       typeof m === 'string' ? m : m.id
     );
+
+    const pres = detail.upstream_presentation;
+    const presHeaders: HeaderPair[] = pres?.['custom-headers']
+      ? Object.entries(pres['custom-headers']).map(([key, value]) => ({ key, value }))
+      : [];
+
     setForm({
-      name: provider.name,
-      format: provider.format,
-      base_url: provider.base_url ?? '',
-      proxy_url: provider.proxy_url ?? '',
+      name: detail.name,
+      format: detail.format,
+      base_url: detail.base_url ?? '',
+      proxy_url: detail.proxy_url ?? '',
       api_key: '',
-      prefix: provider.prefix ?? '',
-      disabled: provider.disabled,
+      prefix: detail.prefix ?? '',
+      disabled: detail.disabled,
       models: modelStrings.join(', '),
-      excluded_models: (provider.excluded_models || []).join(', '),
+      excluded_models: (detail.excluded_models || []).join(', '),
       headers: headerPairs,
-      wire_api: provider.wire_api ?? 'chat',
-      weight: provider.weight ?? 1,
-      region: provider.region ?? '',
+      wire_api: detail.wire_api ?? 'chat',
+      weight: detail.weight ?? 1,
+      region: detail.region ?? '',
+      profile: pres?.profile ?? 'native',
+      activation_mode: pres?.mode ?? 'always',
+      strict_mode: pres?.['strict-mode'] ?? false,
+      sensitive_words: (pres?.['sensitive-words'] ?? []).join(', '),
+      cache_user_id: pres?.['cache-user-id'] ?? false,
+      presentation_headers: presHeaders,
     });
-    setError('');
     setShowModal(true);
   };
 
@@ -177,6 +226,24 @@ export default function Providers() {
         if (key.trim() && value.trim()) headers[key.trim()] = value.trim();
       });
 
+      // Build upstream_presentation
+      const presCustomHeaders: Record<string, string> = {};
+      form.presentation_headers.forEach(({ key, value }) => {
+        if (key.trim() && value.trim()) presCustomHeaders[key.trim()] = value.trim();
+      });
+      const sensitiveWords = form.sensitive_words
+        .split(',')
+        .map((w) => w.trim())
+        .filter(Boolean);
+      const upstream_presentation = {
+        profile: form.profile,
+        mode: form.activation_mode,
+        'strict-mode': form.strict_mode,
+        'sensitive-words': sensitiveWords,
+        'cache-user-id': form.cache_user_id,
+        'custom-headers': presCustomHeaders,
+      };
+
       if (editName) {
         await providersApi.update(editName, {
           base_url: form.base_url || null,
@@ -190,6 +257,7 @@ export default function Providers() {
           wire_api: form.wire_api,
           weight: form.weight,
           region: form.region || null,
+          upstream_presentation,
         });
       } else {
         const data: ProviderCreateRequest = {
@@ -206,6 +274,7 @@ export default function Providers() {
           wire_api: form.wire_api,
           weight: form.weight,
           region: form.region || undefined,
+          upstream_presentation,
         };
         await providersApi.create(data);
       }
@@ -307,6 +376,21 @@ export default function Providers() {
     }
   };
 
+  const handlePresentationPreview = async () => {
+    if (!editName) return;
+    setPreviewLoading(true);
+    try {
+      const result = await providersApi.presentationPreview(editName, {
+        model: form.models.split(',')[0]?.trim() || undefined,
+      });
+      setPreviewResult(result);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to generate presentation preview'));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -333,6 +417,7 @@ export default function Providers() {
               <tr>
                 <th>Name</th>
                 <th>Format</th>
+                <th>Profile</th>
                 <th>Base URL</th>
                 <th>Models</th>
                 <th>Status</th>
@@ -342,11 +427,11 @@ export default function Providers() {
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="table-empty">Loading...</td>
+                  <td colSpan={7} className="table-empty">Loading...</td>
                 </tr>
               ) : providers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="table-empty">
+                  <td colSpan={7} className="table-empty">
                     <div className="empty-state">
                       <Server size={48} />
                       <p>No providers configured</p>
@@ -364,6 +449,11 @@ export default function Providers() {
                     <td>
                       <span className="type-badge">
                         {FORMAT_OPTIONS.find((t) => t.value === provider.format)?.label ?? provider.format}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="type-badge" style={{ opacity: provider.upstream_presentation?.profile && provider.upstream_presentation.profile !== 'native' ? 1 : 0.5 }}>
+                        {PROFILE_OPTIONS.find((p) => p.value === provider.upstream_presentation?.profile)?.label ?? 'Native'}
                       </span>
                     </td>
                     <td className="text-mono" style={{ maxWidth: 250 }}>
@@ -531,60 +621,265 @@ export default function Providers() {
                 />
               </div>
 
-              <div className="form-group">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label>Custom Headers</label>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setForm({ ...form, headers: [...form.headers, { key: '', value: '' }] })}
+              {/* ── Upstream Presentation ── */}
+              <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px', marginBottom: 0 }}>
+                <legend style={{ fontSize: '0.85rem', fontWeight: 600, padding: '0 6px' }}>Upstream Presentation</legend>
+
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label>Profile</label>
+                  <select
+                    value={form.profile}
+                    onChange={(e) => setForm({ ...form, profile: e.target.value as ProfileKind })}
                   >
-                    <PlusCircle size={14} />
-                    Add Header
-                  </button>
+                    {PROFILE_OPTIONS.map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                  <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                    {PROFILE_OPTIONS.find((p) => p.value === form.profile)?.description}
+                  </span>
                 </div>
-                {form.headers.map((header, idx) => (
-                  <div key={idx} className="header-pair">
-                    <input
-                      type="text"
-                      value={header.key}
-                      onChange={(e) => {
-                        const next = [...form.headers];
-                        next[idx] = { ...next[idx], key: e.target.value };
-                        setForm({ ...form, headers: next });
-                      }}
-                      placeholder="Header name"
-                      className="header-key"
-                    />
-                    <input
-                      type="text"
-                      value={header.value}
-                      onChange={(e) => {
-                        const next = [...form.headers];
-                        next[idx] = { ...next[idx], value: e.target.value };
-                        setForm({ ...form, headers: next });
-                      }}
-                      placeholder="Header value"
-                      className="header-value"
-                    />
+
+                {form.profile !== 'native' && (
+                  <div className="form-group" style={{ marginBottom: 12 }}>
+                    <label>Activation Mode</label>
+                    <select
+                      value={form.activation_mode}
+                      onChange={(e) => setForm({ ...form, activation_mode: e.target.value as ActivationMode })}
+                    >
+                      <option value="always">Always</option>
+                      <option value="auto">Auto (skip if real client detected)</option>
+                    </select>
+                  </div>
+                )}
+
+                {form.profile === 'claude-code' && (
+                  <div style={{ background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
+                    <p style={{ fontSize: '0.8rem', fontWeight: 600, margin: '0 0 8px' }}>Claude Code Options</p>
+
+                    <div className="form-group form-group-inline" style={{ marginBottom: 8 }}>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={form.strict_mode}
+                          onChange={(e) => setForm({ ...form, strict_mode: e.target.checked })}
+                        />
+                        Strict Mode
+                      </label>
+                      <span className="form-help" style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: 4 }}>
+                        Replace user's system prompt instead of prepending
+                      </span>
+                    </div>
+
+                    <div className="form-group form-group-inline" style={{ marginBottom: 8 }}>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={form.cache_user_id}
+                          onChange={(e) => setForm({ ...form, cache_user_id: e.target.checked })}
+                        />
+                        Cache User ID
+                      </label>
+                      <span className="form-help" style={{ fontSize: '0.75rem', opacity: 0.6, marginLeft: 4 }}>
+                        Deterministic user_id per API key
+                      </span>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>Sensitive Words (comma-separated)</label>
+                      <input
+                        type="text"
+                        value={form.sensitive_words}
+                        onChange={(e) => setForm({ ...form, sensitive_words: e.target.value })}
+                        placeholder="proxy, prism"
+                      />
+                      <span className="form-help" style={{ fontSize: '0.75rem', opacity: 0.6 }}>
+                        Words to obfuscate with zero-width spaces in requests
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom Headers (presentation-level) */}
+                <div className="form-group" style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label>Custom Headers</label>
                     <button
                       type="button"
-                      className="btn btn-ghost btn-sm btn-danger-ghost"
-                      onClick={() => {
-                        const next = form.headers.filter((_, i) => i !== idx);
-                        setForm({ ...form, headers: next });
-                      }}
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setForm({ ...form, presentation_headers: [...form.presentation_headers, { key: '', value: '' }] })}
                     >
-                      <MinusCircle size={14} />
+                      <PlusCircle size={14} />
+                      Add
                     </button>
                   </div>
-                ))}
-                {form.headers.length === 0 && (
-                  <p className="form-hint" style={{ margin: '4px 0 0', fontSize: '0.8rem', opacity: 0.6 }}>
-                    No custom headers. Click "Add Header" to configure User-Agent, etc.
-                  </p>
+                  {form.presentation_headers.map((header, idx) => (
+                    <div key={idx} className="header-pair">
+                      <input
+                        type="text"
+                        value={header.key}
+                        onChange={(e) => {
+                          const next = [...form.presentation_headers];
+                          next[idx] = { ...next[idx], key: e.target.value };
+                          setForm({ ...form, presentation_headers: next });
+                        }}
+                        placeholder="Header name"
+                        className="header-key"
+                      />
+                      <input
+                        type="text"
+                        value={header.value}
+                        onChange={(e) => {
+                          const next = [...form.presentation_headers];
+                          next[idx] = { ...next[idx], value: e.target.value };
+                          setForm({ ...form, presentation_headers: next });
+                        }}
+                        placeholder="Header value"
+                        className="header-value"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm btn-danger-ghost"
+                        onClick={() => {
+                          const next = form.presentation_headers.filter((_, i) => i !== idx);
+                          setForm({ ...form, presentation_headers: next });
+                        }}
+                      >
+                        <MinusCircle size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {form.presentation_headers.length === 0 && (
+                    <p className="form-hint" style={{ margin: '4px 0 0', fontSize: '0.75rem', opacity: 0.6 }}>
+                      Additional headers sent to upstream. Profile headers are applied automatically.
+                    </p>
+                  )}
+                </div>
+
+                {/* Preview Button (only for existing providers) */}
+                {editName && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={handlePresentationPreview}
+                      disabled={previewLoading}
+                      style={{ width: '100%' }}
+                    >
+                      <Eye size={14} />
+                      {previewLoading ? 'Loading...' : 'Preview Presentation'}
+                    </button>
+
+                    {previewResult && (
+                      <div style={{ marginTop: 8, background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 6, padding: '10px 12px', fontSize: '0.8rem' }}>
+                        <p style={{ fontWeight: 600, margin: '0 0 6px' }}>
+                          Profile: {previewResult.profile} — {previewResult.activated ? 'Active' : 'Skipped'}
+                        </p>
+                        {Object.keys(previewResult.effective_headers).length > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            <p style={{ fontWeight: 500, margin: '0 0 2px' }}>Effective Headers:</p>
+                            {Object.entries(previewResult.effective_headers).map(([k, v]) => (
+                              <div key={k} className="text-mono" style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+                                {k}: {v}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {previewResult.body_mutations.length > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            <p style={{ fontWeight: 500, margin: '0 0 2px' }}>Body Mutations:</p>
+                            {previewResult.body_mutations.map((m, i) => (
+                              <div key={i} style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+                                {m.kind}: {m.applied ? 'applied' : `skipped${m.reason ? ` (${m.reason})` : ''}`}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {previewResult.protected_headers_blocked.length > 0 && (
+                          <div>
+                            <p style={{ fontWeight: 500, margin: '0 0 2px', color: 'var(--color-warning, #b86e00)' }}>Protected (blocked):</p>
+                            <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+                              {previewResult.protected_headers_blocked.join(', ')}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
+              </fieldset>
+
+              {/* ── Advanced Section (collapsible) ── */}
+              <div style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  style={{ width: '100%', justifyContent: 'space-between', display: 'flex' }}
+                >
+                  <span>Advanced Options</span>
+                  {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
               </div>
+
+              {showAdvanced && (
+                <>
+                  <div className="form-group">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <label>Legacy Headers</label>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setForm({ ...form, headers: [...form.headers, { key: '', value: '' }] })}
+                      >
+                        <PlusCircle size={14} />
+                        Add Header
+                      </button>
+                    </div>
+                    {form.headers.map((header, idx) => (
+                      <div key={idx} className="header-pair">
+                        <input
+                          type="text"
+                          value={header.key}
+                          onChange={(e) => {
+                            const next = [...form.headers];
+                            next[idx] = { ...next[idx], key: e.target.value };
+                            setForm({ ...form, headers: next });
+                          }}
+                          placeholder="Header name"
+                          className="header-key"
+                        />
+                        <input
+                          type="text"
+                          value={header.value}
+                          onChange={(e) => {
+                            const next = [...form.headers];
+                            next[idx] = { ...next[idx], value: e.target.value };
+                            setForm({ ...form, headers: next });
+                          }}
+                          placeholder="Header value"
+                          className="header-value"
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm btn-danger-ghost"
+                          onClick={() => {
+                            const next = form.headers.filter((_, i) => i !== idx);
+                            setForm({ ...form, headers: next });
+                          }}
+                        >
+                          <MinusCircle size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {form.headers.length === 0 && (
+                      <p className="form-hint" style={{ margin: '4px 0 0', fontSize: '0.8rem', opacity: 0.6 }}>
+                        Legacy headers field. Use "Custom Headers" in Upstream Presentation instead.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className="form-group">
                 <label>Excluded Models (comma-separated)</label>

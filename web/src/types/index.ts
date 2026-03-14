@@ -28,6 +28,7 @@ export interface Provider {
   wire_api: 'chat' | 'responses';
   weight: number;
   region: string | null;
+  upstream_presentation?: UpstreamPresentation;
 }
 
 export interface ModelMapping {
@@ -36,6 +37,27 @@ export interface ModelMapping {
 }
 
 export type FormatType = 'openai' | 'claude' | 'gemini';
+
+export type ProfileKind = 'native' | 'claude-code' | 'gemini-cli' | 'codex-cli';
+export type ActivationMode = 'always' | 'auto';
+
+export interface UpstreamPresentation {
+  profile: ProfileKind;
+  mode: ActivationMode;
+  'strict-mode': boolean;
+  'sensitive-words': string[];
+  'cache-user-id': boolean;
+  'custom-headers': Record<string, string>;
+}
+
+export interface PresentationPreviewResponse {
+  profile: string;
+  activated: boolean;
+  effective_headers: Record<string, string>;
+  body_mutations: { kind: string; applied: boolean; reason?: string }[];
+  protected_headers_blocked: string[];
+  effective_body: unknown;
+}
 
 export interface ProviderCreateRequest {
   name: string;
@@ -51,6 +73,7 @@ export interface ProviderCreateRequest {
   wire_api?: string;
   weight?: number;
   region?: string;
+  upstream_presentation?: UpstreamPresentation;
 }
 
 export interface ProviderUpdateRequest {
@@ -65,6 +88,7 @@ export interface ProviderUpdateRequest {
   wire_api?: string;
   weight?: number;
   region?: string | null;
+  upstream_presentation?: UpstreamPresentation;
 }
 
 // ── Auth Keys ──
