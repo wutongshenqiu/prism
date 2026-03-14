@@ -38,6 +38,11 @@ interface FormState {
   region: string;
 }
 
+interface NoticeState {
+  type: 'success' | 'error' | 'warning';
+  message: string;
+}
+
 const emptyForm: FormState = {
   name: '',
   format: 'openai',
@@ -61,24 +66,51 @@ export default function Providers() {
   const [editName, setEditName] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState<NoticeState | null>(null);
   const [saving, setSaving] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
   const [healthResults, setHealthResults] = useState<Record<string, { status: string; latency_ms?: number; message?: string }>>({});
 
-  const fetchProviders = async () => {
+  const extractErrorMessage = (err: unknown, fallback: string) => {
+    if (typeof err === 'object' && err !== null) {
+      const maybeError = err as {
+        message?: unknown;
+        response?: { data?: { message?: unknown } };
+      };
+      const apiMessage = maybeError.response?.data?.message;
+      if (typeof apiMessage === 'string' && apiMessage.trim()) {
+        return apiMessage;
+      }
+      if (typeof maybeError.message === 'string' && maybeError.message.trim()) {
+        return maybeError.message;
+      }
+    }
+    return fallback;
+  };
+
+  const fetchProviders = async (options?: { surfaceError?: boolean }) => {
+    const surfaceError = options?.surfaceError ?? true;
     try {
       const response = await providersApi.list();
       setProviders(response.data);
+      return response.data;
     } catch (err) {
       console.error('Failed to fetch providers:', err);
+      if (surfaceError) {
+        setNotice({
+          type: 'error',
+          message: extractErrorMessage(err, 'Failed to fetch providers'),
+        });
+      }
+      throw err;
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProviders();
+    void fetchProviders();
   }, []);
 
   const openCreate = () => {
@@ -116,7 +148,8 @@ export default function Providers() {
   };
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) {
+    const providerName = form.name.trim();
+    if (!providerName) {
       setError('Name is required');
       return;
     }
@@ -160,7 +193,7 @@ export default function Providers() {
         });
       } else {
         const data: ProviderCreateRequest = {
-          name: form.name,
+          name: providerName,
           format: form.format,
           base_url: form.base_url || undefined,
           proxy_url: form.proxy_url || undefined,
@@ -177,10 +210,32 @@ export default function Providers() {
         await providersApi.create(data);
       }
 
+      const persistedProviderName = editName ?? providerName;
       setShowModal(false);
-      fetchProviders();
+      setForm(emptyForm);
+
+      try {
+        const refreshedProviders = await fetchProviders({ surfaceError: false });
+        const providerExists = refreshedProviders.some((provider) => provider.name === persistedProviderName);
+        setNotice(
+          providerExists
+            ? {
+                type: 'success',
+                message: `Provider "${persistedProviderName}" ${editName ? 'updated' : 'created'} successfully.`,
+              }
+            : {
+                type: 'warning',
+                message: `Provider "${persistedProviderName}" ${editName ? 'updated' : 'created'} successfully, but the refreshed list did not include it.`,
+              }
+        );
+      } catch (refreshErr) {
+        setNotice({
+          type: 'warning',
+          message: `Provider "${persistedProviderName}" ${editName ? 'updated' : 'created'} successfully, but refreshing the list failed: ${extractErrorMessage(refreshErr, 'Failed to fetch providers')}`,
+        });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save provider');
+      setError(extractErrorMessage(err, 'Failed to save provider'));
     } finally {
       setSaving(false);
     }
@@ -193,9 +248,21 @@ export default function Providers() {
 
     try {
       await providersApi.delete(name);
-      fetchProviders();
+      try {
+        await fetchProviders({ surfaceError: false });
+        setNotice({ type: 'success', message: `Provider "${name}" deleted successfully.` });
+      } catch (refreshErr) {
+        setNotice({
+          type: 'warning',
+          message: `Provider "${name}" deleted successfully, but refreshing the list failed: ${extractErrorMessage(refreshErr, 'Failed to fetch providers')}`,
+        });
+      }
     } catch (err) {
       console.error('Failed to delete provider:', err);
+      setNotice({
+        type: 'error',
+        message: extractErrorMessage(err, `Failed to delete provider "${name}"`),
+      });
     }
   };
 
@@ -252,6 +319,12 @@ export default function Providers() {
           Add Provider
         </button>
       </div>
+
+      {notice && (
+        <div className={`alert alert-${notice.type}`} style={{ marginBottom: '1.5rem' }}>
+          {notice.message}
+        </div>
+      )}
 
       <div className="card">
         <div className="table-wrapper">

@@ -1118,6 +1118,52 @@ async fn test_multiple_provider_types() {
     assert!(names.contains(&"Gemini Prod"));
 }
 
+#[tokio::test]
+async fn test_providers_with_same_api_key_across_formats() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let shared_key = "sk-sp-shared-test-1234567890abcdef";
+    let providers = vec![
+        json!({
+            "format": "openai",
+            "api_key": shared_key,
+            "name": "Bailian OpenAI",
+            "base_url": "https://coding.dashscope.aliyuncs.com"
+        }),
+        json!({
+            "format": "claude",
+            "api_key": shared_key,
+            "name": "Bailian Claude",
+            "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+        }),
+    ];
+
+    for p in &providers {
+        let req = authed_post("/api/dashboard/providers", &token, p.clone());
+        let (status, body) = send_request(&harness, req).await;
+        assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+
+        let config_path = harness.state.config_path.lock().unwrap().clone();
+        let new_config = Config::load(&config_path).expect("failed to reload config");
+        harness.state.config.store(Arc::new(new_config));
+    }
+
+    let req = authed_get("/api/dashboard/providers", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let all_providers = body["providers"].as_array().unwrap();
+    assert_eq!(all_providers.len(), 2, "providers: {all_providers:?}");
+
+    let names: Vec<&str> = all_providers
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"Bailian OpenAI"));
+    assert!(names.contains(&"Bailian Claude"));
+}
+
 // ===========================================================================
 // Routing preview/explain tests
 // ===========================================================================

@@ -130,8 +130,7 @@ pub struct Config {
 
 ### Sanitization (on load)
 
-- Entries with empty `api_key` are removed.
-- Duplicate entries (by `api_key`) are deduplicated.
+- Entries with empty `api_key` (and no `credential_source`) are removed.
 - Trailing slashes are stripped from `base_url`.
 - Header keys are normalized to lowercase.
 - `auth_key_store` is built from `auth_keys` for O(1) lookups.

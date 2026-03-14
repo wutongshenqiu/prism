@@ -283,14 +283,11 @@ fn resolve_provider_secrets(entries: &mut [ProviderKeyEntry]) -> Result<(), anyh
     Ok(())
 }
 
-/// Remove entries with empty api_key (unless they have a credential_source), deduplicate, normalize base_url.
+/// Remove entries with empty api_key (unless they have a credential_source),
+/// then normalize base_url and header casing.
 fn sanitize_entries(entries: &mut Vec<ProviderKeyEntry>) {
     // Remove entries with empty API keys that don't have a credential_source
     entries.retain(|e| !e.api_key.is_empty() || e.credential_source.is_some());
-
-    // Deduplicate by api_key
-    let mut seen = std::collections::HashSet::new();
-    entries.retain(|e| seen.insert(e.api_key.clone()));
 
     // Normalize entries
     for entry in entries.iter_mut() {
@@ -688,15 +685,18 @@ mod tests {
         e1.base_url = Some("https://api.example.com/".into());
         e1.headers = HashMap::from([("X-Custom".into(), "val".into())]);
         let e2 = make_test_entry("p2", "");
-        let e3 = make_test_entry("p3", "key1"); // duplicate key
+        let mut e3 = make_test_entry("p3", "key1");
+        e3.format = crate::provider::Format::Claude;
         let mut entries = vec![e1, e2, e3];
         sanitize_entries(&mut entries);
-        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 2);
         assert_eq!(
             entries[0].base_url.as_deref(),
             Some("https://api.example.com")
         );
         assert!(entries[0].headers.contains_key("x-custom"));
+        assert_eq!(entries[1].name, "p3");
+        assert_eq!(entries[1].format, crate::provider::Format::Claude);
     }
 
     #[test]
