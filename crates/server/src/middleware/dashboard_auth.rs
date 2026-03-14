@@ -23,12 +23,19 @@ pub async fn dashboard_auth_middleware(
 
     // Enforce localhost-only access
     if config.dashboard.localhost_only {
-        let is_local = request
+        let client_ip = request
             .extensions()
             .get::<prism_core::context::RequestContext>()
-            .and_then(|ctx| ctx.client_ip.as_deref())
+            .and_then(|ctx| ctx.client_ip.clone());
+        let is_local = client_ip
+            .as_deref()
             .is_some_and(|ip| ip == "127.0.0.1" || ip == "::1" || ip == "localhost");
         if !is_local {
+            tracing::warn!(
+                client_ip = client_ip.as_deref().unwrap_or("unknown"),
+                path = %request.uri().path(),
+                "Dashboard access denied: non-localhost IP"
+            );
             return Err(error_response(
                 StatusCode::FORBIDDEN,
                 "access_denied",
@@ -38,6 +45,7 @@ pub async fn dashboard_auth_middleware(
     }
 
     let secret = config.dashboard.resolve_jwt_secret().ok_or_else(|| {
+        tracing::error!("Dashboard JWT secret not configured");
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "jwt_not_configured",
@@ -54,6 +62,10 @@ pub async fn dashboard_auth_middleware(
         .map(|s| s.to_string());
 
     let token = token.ok_or_else(|| {
+        tracing::warn!(
+            path = %request.uri().path(),
+            "Dashboard auth failed: missing Authorization header"
+        );
         error_response(
             StatusCode::UNAUTHORIZED,
             "missing_token",
@@ -65,9 +77,13 @@ pub async fn dashboard_auth_middleware(
     let token_data = decode::<Claims>(&token, &key, &Validation::default()).map_err(|e| {
         let (code, msg) = match e.kind() {
             jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                tracing::debug!(path = %request.uri().path(), "Dashboard auth: token expired");
                 ("token_expired", "Token has expired")
             }
-            _ => ("invalid_token", "Invalid token"),
+            _ => {
+                tracing::warn!(path = %request.uri().path(), "Dashboard auth failed: invalid token");
+                ("invalid_token", "Invalid token")
+            }
         };
         error_response(StatusCode::UNAUTHORIZED, code, msg)
     })?;

@@ -232,6 +232,8 @@ pub async fn create_provider(
         vertex_location: None,
     };
 
+    let provider_type = body.provider_type.clone();
+    let provider_name = new_entry.name.clone();
     match update_config_file(&state, |config| match body.provider_type.as_str() {
         "claude" => config.claude_api_key.push(new_entry.clone()),
         "openai" => config.openai_api_key.push(new_entry.clone()),
@@ -241,14 +243,28 @@ pub async fn create_provider(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::CREATED,
-            Json(json!({"message": "Provider created successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(
+                provider_type = %provider_type,
+                name = ?provider_name,
+                "Provider created via dashboard"
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({"message": "Provider created successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(
+                provider_type = %provider_type,
+                error = %e,
+                "Failed to create provider"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 
@@ -269,6 +285,7 @@ pub async fn update_provider(
     };
 
     let ptype = ptype.to_string();
+    let id_for_log = id.clone();
     match update_config_file(&state, move |config| {
         let entries = match ptype.as_str() {
             "claude" => &mut config.claude_api_key,
@@ -327,14 +344,20 @@ pub async fn update_provider(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"message": "Provider updated successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(provider_id = %id_for_log, "Provider updated via dashboard");
+            (
+                StatusCode::OK,
+                Json(json!({"message": "Provider updated successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(provider_id = %id_for_log, error = %e, "Failed to update provider");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 
@@ -354,6 +377,7 @@ pub async fn delete_provider(
     };
 
     let ptype = ptype.to_string();
+    let id_for_log = id.clone();
     match update_config_file(&state, move |config| {
         let entries = match ptype.as_str() {
             "claude" => &mut config.claude_api_key,
@@ -368,14 +392,20 @@ pub async fn delete_provider(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"message": "Provider deleted successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(provider_id = %id_for_log, "Provider deleted via dashboard");
+            (
+                StatusCode::OK,
+                Json(json!({"message": "Provider deleted successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(provider_id = %id_for_log, error = %e, "Failed to delete provider");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 

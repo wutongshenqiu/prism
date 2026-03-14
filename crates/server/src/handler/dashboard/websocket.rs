@@ -23,6 +23,7 @@ pub async fn ws_handler(
     let secret = match config.dashboard.resolve_jwt_secret() {
         Some(s) => s,
         None => {
+            tracing::error!("WebSocket rejected: JWT secret not configured");
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Dashboard JWT secret not configured",
@@ -34,6 +35,7 @@ pub async fn ws_handler(
     let token = match query.token {
         Some(t) => t,
         None => {
+            tracing::warn!("WebSocket rejected: missing token");
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Missing token query parameter",
@@ -49,6 +51,7 @@ pub async fn ws_handler(
     )
     .is_err()
     {
+        tracing::warn!("WebSocket rejected: invalid or expired token");
         return (
             axum::http::StatusCode::UNAUTHORIZED,
             "Invalid or expired token",

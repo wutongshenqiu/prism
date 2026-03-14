@@ -95,23 +95,30 @@ pub async fn create_auth_key(
         metadata: body.metadata,
     };
 
+    let key_name = entry.name.clone();
     match super::providers::update_config_file_public(&state, move |config| {
         config.auth_keys.push(entry);
         config.auth_key_store = AuthKeyStore::new(config.auth_keys.clone());
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::CREATED,
-            Json(json!({
-                "key": full_key,
-                "message": "API key created. Save this key - it will not be shown again.",
-            })),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(name = ?key_name, "Auth key created via dashboard");
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "key": full_key,
+                    "message": "API key created. Save this key - it will not be shown again.",
+                })),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to create auth key");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 
@@ -153,14 +160,20 @@ pub async fn update_auth_key(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"message": "Auth key updated successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(key_id = id, "Auth key updated via dashboard");
+            (
+                StatusCode::OK,
+                Json(json!({"message": "Auth key updated successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(key_id = id, error = %e, "Failed to update auth key");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 
@@ -177,13 +190,19 @@ pub async fn delete_auth_key(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"message": "API key deleted successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!(key_id = id, "Auth key deleted via dashboard");
+            (
+                StatusCode::OK,
+                Json(json!({"message": "API key deleted successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(key_id = id, error = %e, "Failed to delete auth key");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }

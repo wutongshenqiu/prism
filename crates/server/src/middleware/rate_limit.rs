@@ -31,6 +31,11 @@ pub async fn rate_limit_middleware(
     let info = state.rate_limiter.check(api_key.as_deref());
 
     if !info.allowed {
+        tracing::warn!(
+            api_key = api_key.as_deref().unwrap_or("none"),
+            reset_secs = info.reset_secs,
+            "Global rate limit exceeded"
+        );
         return Err(ProxyError::RateLimited {
             message: format!("Rate limit exceeded. Retry after {}s", info.reset_secs),
             retry_after_secs: info.reset_secs,
@@ -46,6 +51,11 @@ pub async fn rate_limit_middleware(
         if let Some(ref rl) = auth_entry.rate_limit {
             let key_info = state.rate_limiter.check_key_overrides(key, rl);
             if !key_info.allowed {
+                tracing::warn!(
+                    api_key = %key,
+                    reset_secs = key_info.reset_secs,
+                    "Per-key rate limit exceeded"
+                );
                 return Err(ProxyError::RateLimited {
                     message: format!(
                         "Per-key rate limit exceeded. Retry after {}s",
@@ -59,6 +69,11 @@ pub async fn rate_limit_middleware(
         if let Some(ref budget) = auth_entry.budget {
             let budget_info = state.rate_limiter.check_budget(key, budget);
             if !budget_info.allowed {
+                tracing::warn!(
+                    api_key = %key,
+                    reset_secs = budget_info.reset_secs,
+                    "Per-key budget limit exceeded"
+                );
                 return Err(ProxyError::RateLimited {
                     message: format!(
                         "Budget limit exceeded. Retry after {}s",

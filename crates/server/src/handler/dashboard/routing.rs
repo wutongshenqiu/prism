@@ -57,14 +57,20 @@ pub async fn update_routing(
     })
     .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"message": "Routing configuration updated successfully"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e})),
-        ),
+        Ok(()) => {
+            tracing::info!("Routing configuration updated via dashboard");
+            (
+                StatusCode::OK,
+                Json(json!({"message": "Routing configuration updated successfully"})),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update routing configuration");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "write_failed", "message": e})),
+            )
+        }
     }
 }
 

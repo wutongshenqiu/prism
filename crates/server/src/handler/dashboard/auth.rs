@@ -109,6 +109,10 @@ pub async fn login(
             dashboard.login_lockout_secs,
         )
     {
+        tracing::warn!(
+            client_ip = %client_ip,
+            "Dashboard login rejected: IP locked out due to too many failed attempts"
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({
@@ -120,6 +124,11 @@ pub async fn login(
 
     // Verify username
     if body.username != dashboard.username {
+        tracing::warn!(
+            client_ip = %client_ip,
+            username = %body.username,
+            "Dashboard login failed: invalid username"
+        );
         if dashboard.max_login_attempts > 0 {
             state.login_limiter.record_failure(
                 &client_ip,
@@ -151,6 +160,11 @@ pub async fn login(
         }
     };
     if !password_valid {
+        tracing::warn!(
+            client_ip = %client_ip,
+            username = %body.username,
+            "Dashboard login failed: invalid password"
+        );
         if dashboard.max_login_attempts > 0 {
             state.login_limiter.record_failure(
                 &client_ip,
@@ -169,9 +183,16 @@ pub async fn login(
     // Successful login — clear rate limit attempts
     state.login_limiter.clear(&client_ip);
 
+    tracing::info!(
+        client_ip = %client_ip,
+        username = %body.username,
+        "Dashboard login successful"
+    );
+
     let secret = match dashboard.resolve_jwt_secret() {
         Some(s) => s,
         None => {
+            tracing::error!("Dashboard JWT secret not configured");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "config_error", "message": "JWT secret not configured"})),
@@ -188,10 +209,13 @@ pub async fn login(
                 "token_type": "Bearer",
             })),
         ),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "token_error", "message": "Failed to generate token"})),
-        ),
+        Err(e) => {
+            tracing::error!("Failed to generate JWT token: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "token_error", "message": "Failed to generate token"})),
+            )
+        }
     }
 }
 

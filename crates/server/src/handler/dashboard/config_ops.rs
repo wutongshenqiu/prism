@@ -52,15 +52,19 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
             state.cost_calculator.update_prices(&new_cfg.model_prices);
             state.http_client_pool.clear();
             state.config.store(std::sync::Arc::new(new_cfg));
+            tracing::info!(path = %config_path, "Configuration reloaded via dashboard API");
             (
                 StatusCode::OK,
                 Json(json!({"message": "Configuration reloaded successfully"})),
             )
         }
-        Err(e) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": "reload_failed", "message": e.to_string()})),
-        ),
+        Err(e) => {
+            tracing::error!(path = %config_path, error = %e, "Configuration reload failed");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "reload_failed", "message": e.to_string()})),
+            )
+        }
     }
 }
 
@@ -131,6 +135,7 @@ pub async fn apply_config(
     state.http_client_pool.clear();
     state.config.store(std::sync::Arc::new(runtime_config));
 
+    tracing::info!(path = %config_path, "Configuration applied via dashboard API");
     (
         StatusCode::OK,
         Json(json!({"message": "Configuration applied successfully"})),
