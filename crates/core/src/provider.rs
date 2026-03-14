@@ -184,6 +184,9 @@ pub struct ProviderRequest {
     pub stream: bool,
     pub headers: HashMap<String, String>,
     pub original_request: Option<Bytes>,
+    /// When true, the payload is already in OpenAI Responses API format.
+    /// The executor should forward to `/v1/responses` without conversion.
+    pub responses_passthrough: bool,
 }
 
 /// A non-streaming response from a provider.

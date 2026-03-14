@@ -11,6 +11,17 @@ pub fn map_claude_finish_reason(reason: Option<&str>) -> &'static str {
     }
 }
 
+/// Map OpenAI finish_reason to Claude stop_reason.
+pub fn map_openai_finish_reason_to_claude(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("stop") => "end_turn",
+        Some("length") => "max_tokens",
+        Some("tool_calls") => "tool_use",
+        Some("content_filter") => "end_turn",
+        _ => "end_turn",
+    }
+}
+
 /// Map Gemini finishReason to OpenAI finish_reason.
 pub fn map_gemini_finish_reason(reason: Option<&str>) -> &'static str {
     match reason {
@@ -129,6 +140,24 @@ mod tests {
         assert_eq!(map_claude_finish_reason(Some("stop_sequence")), "stop");
         assert_eq!(map_claude_finish_reason(None), "stop");
         assert_eq!(map_claude_finish_reason(Some("unknown")), "stop");
+    }
+
+    #[test]
+    fn test_map_openai_finish_reason_to_claude() {
+        assert_eq!(map_openai_finish_reason_to_claude(Some("stop")), "end_turn");
+        assert_eq!(
+            map_openai_finish_reason_to_claude(Some("length")),
+            "max_tokens"
+        );
+        assert_eq!(
+            map_openai_finish_reason_to_claude(Some("tool_calls")),
+            "tool_use"
+        );
+        assert_eq!(
+            map_openai_finish_reason_to_claude(Some("content_filter")),
+            "end_turn"
+        );
+        assert_eq!(map_openai_finish_reason_to_claude(None), "end_turn");
     }
 
     #[test]

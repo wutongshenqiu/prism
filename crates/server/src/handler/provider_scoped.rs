@@ -58,8 +58,9 @@ fn source_format_for_path(path_suffix: &str) -> Format {
 
 /// Determine allowed formats from the API path suffix.
 fn allowed_formats_for_path(path_suffix: &str) -> Option<Vec<Format>> {
-    if path_suffix == "messages" {
-        Some(vec![Format::Claude])
+    if path_suffix == "responses" {
+        // Responses API only works with OpenAI-format providers
+        Some(vec![Format::OpenAI])
     } else {
         None
     }
@@ -132,6 +133,7 @@ async fn provider_dispatch(
 
     let source_format = source_format_for_path(path_suffix);
     let allowed_formats = allowed_formats_for_path(path_suffix);
+    let responses_passthrough = path_suffix == "responses";
 
     dispatch(
         state,
@@ -150,6 +152,7 @@ async fn provider_dispatch(
             api_key_id: ctx.api_key_id.clone(),
             tenant_id: ctx.tenant_id.clone(),
             allowed_credentials,
+            responses_passthrough,
         },
     )
     .await
@@ -169,10 +172,10 @@ mod tests {
     #[test]
     fn test_allowed_formats_for_path() {
         assert!(allowed_formats_for_path("chat/completions").is_none());
+        assert!(allowed_formats_for_path("messages").is_none());
         assert_eq!(
-            allowed_formats_for_path("messages"),
-            Some(vec![Format::Claude])
+            allowed_formats_for_path("responses"),
+            Some(vec![Format::OpenAI])
         );
-        assert!(allowed_formats_for_path("responses").is_none());
     }
 }

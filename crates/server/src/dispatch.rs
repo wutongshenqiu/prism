@@ -45,6 +45,9 @@ pub struct DispatchRequest {
     pub tenant_id: Option<String>,
     /// Restrict to specific credentials by name (glob patterns).
     pub allowed_credentials: Vec<String>,
+    /// When true, the request body is already in OpenAI Responses API format.
+    /// The executor should forward it directly to `/v1/responses` without conversion.
+    pub responses_passthrough: bool,
 }
 
 /// Unified dispatch: plans route via RoutePlanner, then executes via ExecutionController.

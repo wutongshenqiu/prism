@@ -88,6 +88,7 @@ async fn dispatch_gemini(
             api_key_id: ctx.api_key_id.clone(),
             tenant_id: ctx.tenant_id.clone(),
             allowed_credentials,
+            responses_passthrough: false,
         },
     )
     .await

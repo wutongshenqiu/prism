@@ -174,7 +174,10 @@ impl ProviderExecutor for OpenAICompatExecutor {
     ) -> Result<ProviderResponse, ProxyError> {
         let base_url = auth.resolved_base_url();
 
-        let (url, body) = if use_responses_api(auth) {
+        let (url, body) = if request.responses_passthrough {
+            // Body is already in Responses API format — forward as-is
+            (format!("{base_url}/v1/responses"), request.payload.to_vec())
+        } else if use_responses_api(auth) {
             (
                 format!("{base_url}/v1/responses"),
                 chat_to_responses(&request.payload)?,
@@ -189,8 +192,10 @@ impl ProviderExecutor for OpenAICompatExecutor {
         let req = self.build_request(auth, &url, &body, &request.headers)?;
         let (resp_body, headers) = common::handle_response(req.send().await?).await?;
 
-        // Convert Responses API response back to Chat Completions format
-        let payload = if use_responses_api(auth) {
+        // Convert response back to Chat Completions format (unless passthrough)
+        let payload = if request.responses_passthrough {
+            resp_body
+        } else if use_responses_api(auth) {
             responses_to_chat(&resp_body)?
         } else {
             resp_body
@@ -204,6 +209,14 @@ impl ProviderExecutor for OpenAICompatExecutor {
         auth: &AuthRecord,
         request: ProviderRequest,
     ) -> Result<StreamResult, ProxyError> {
+        if request.responses_passthrough {
+            // Body is already in Responses API format — forward to /v1/responses for streaming
+            let base_url = auth.resolved_base_url();
+            let url = format!("{base_url}/v1/responses");
+            let req = self.build_request(auth, &url, &request.payload, &request.headers)?;
+            return common::handle_stream_response(req.send().await?).await;
+        }
+
         if use_responses_api(auth) {
             // Responses API: execute non-streaming, then emit as streaming chunks.
             let response = self.execute(auth, request).await?;

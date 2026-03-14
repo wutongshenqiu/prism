@@ -1,8 +1,10 @@
 pub mod claude_to_openai;
+pub mod claude_to_openai_request;
 pub mod common;
 pub mod gemini_to_openai;
 pub mod gemini_to_openai_request;
 pub mod openai_to_claude;
+pub mod openai_to_claude_response;
 pub mod openai_to_gemini;
 pub mod openai_to_gemini_response;
 
@@ -219,6 +221,23 @@ pub fn build_registry() -> TranslatorRegistry {
     reg.register_request(Format::Gemini, Format::Claude, |model, raw, stream| {
         let openai_payload = gemini_to_openai_request::translate_request(model, raw, stream)?;
         openai_to_claude::translate_request(model, &openai_payload, stream)
+    });
+
+    // Claude -> OpenAI request translation, OpenAI -> Claude response translation
+    reg.register(
+        Format::Claude,
+        Format::OpenAI,
+        claude_to_openai_request::translate_request,
+        ResponseTransform {
+            stream: openai_to_claude_response::translate_stream,
+            non_stream: openai_to_claude_response::translate_non_stream,
+        },
+    );
+
+    // Claude -> Gemini (chain: Claude -> OpenAI -> Gemini request only)
+    reg.register_request(Format::Claude, Format::Gemini, |model, raw, stream| {
+        let openai_payload = claude_to_openai_request::translate_request(model, raw, stream)?;
+        openai_to_gemini::translate_request(model, &openai_payload, stream)
     });
 
     reg
@@ -489,13 +508,15 @@ mod tests {
     #[test]
     fn test_build_registry_has_all_paths() {
         let reg = build_registry();
-        // Should have 4 request translators:
+        // Should have 6 request translators:
         // OpenAI→Claude, OpenAI→Gemini,
-        // Gemini→OpenAI, Gemini→Claude
-        assert_eq!(reg.requests.len(), 4);
-        // Should have 3 response translators:
+        // Gemini→OpenAI, Gemini→Claude,
+        // Claude→OpenAI, Claude→Gemini
+        assert_eq!(reg.requests.len(), 6);
+        // Should have 4 response translators:
         // OpenAI→Claude, OpenAI→Gemini,
-        // Gemini→OpenAI
-        assert_eq!(reg.responses.len(), 3);
+        // Gemini→OpenAI,
+        // Claude→OpenAI
+        assert_eq!(reg.responses.len(), 4);
     }
 }

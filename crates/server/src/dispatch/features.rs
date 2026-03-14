@@ -45,6 +45,7 @@ mod tests {
             api_key_id: None,
             tenant_id: None,
             allowed_credentials: Vec::new(),
+            responses_passthrough: false,
         }
     }
 

@@ -273,6 +273,7 @@ impl<'a> ExecutionController<'a> {
             stream: req.stream,
             headers: presentation_result.headers,
             original_request: Some(body.clone()),
+            responses_passthrough: req.responses_passthrough,
         };
 
         // Debug info for headers

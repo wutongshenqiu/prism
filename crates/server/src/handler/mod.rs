@@ -111,6 +111,7 @@ pub(crate) async fn dispatch_api_request(
             api_key_id: ctx.api_key_id.clone(),
             tenant_id: ctx.tenant_id.clone(),
             allowed_credentials,
+            responses_passthrough: false,
         },
     )
     .await

@@ -1,104 +1,50 @@
 use crate::AppState;
+use crate::dispatch::{DispatchRequest, dispatch};
 use axum::Extension;
 use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::http::HeaderMap;
+use axum::response::Response;
 use bytes::Bytes;
 use prism_core::context::RequestContext;
 use prism_core::error::ProxyError;
 use prism_core::provider::Format;
 
-/// OpenAI Responses API passthrough (/v1/responses).
-/// This endpoint forwards directly to upstream since there's no translation layer.
+/// OpenAI Responses API (/v1/responses).
+/// Routes through the unified dispatch pipeline with responses_passthrough=true
+/// so the executor forwards the body directly to upstream /v1/responses.
 pub async fn responses(
     State(state): State<AppState>,
     Extension(ctx): Extension<RequestContext>,
+    headers: HeaderMap,
     body: Bytes,
-) -> Result<impl IntoResponse, ProxyError> {
-    let req_value: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| ProxyError::BadRequest(e.to_string()))?;
+) -> Result<Response, ProxyError> {
+    let parsed = super::parse_request(&headers, &body)?;
 
-    let model = req_value
-        .get("model")
-        .and_then(|m| m.as_str())
-        .ok_or_else(|| ProxyError::BadRequest("missing model field".into()))?
-        .to_string();
+    let allowed_credentials = ctx
+        .auth_key
+        .as_ref()
+        .map(|e| e.allowed_credentials.clone())
+        .unwrap_or_default();
 
-    // Enforce model ACL (same as main dispatch path)
-    if let Some(ref auth_key) = ctx.auth_key
-        && !prism_core::auth_key::AuthKeyStore::check_model_access(auth_key, &model)
-    {
-        return Err(ProxyError::ModelNotAllowed(format!(
-            "model '{}' not allowed for this API key",
-            model
-        )));
-    }
-
-    // Resolve provider - only OpenAI-format providers support this
-    let providers = state.router.resolve_providers(&model);
-    let (provider_name, _target_format) = providers
-        .iter()
-        .find(|(_, f)| matches!(f, Format::OpenAI))
-        .ok_or_else(|| {
-            ProxyError::BadRequest(
-                "responses API only supported by OpenAI-compatible providers".into(),
-            )
-        })?;
-
-    let auth = state
-        .router
-        .pick(
-            provider_name,
-            &model,
-            &[],
-            ctx.client_region.as_deref(),
-            ctx.auth_key
-                .as_ref()
-                .map(|e| e.allowed_credentials.as_slice())
-                .unwrap_or(&[]),
-        )
-        .ok_or_else(|| ProxyError::NoCredentials {
-            provider: provider_name.clone(),
-            model: model.clone(),
-        })?;
-
-    // Build a direct request to /v1/responses
-    let base_url = auth.resolved_base_url();
-    let url = format!("{base_url}/v1/responses");
-
-    let client = state
-        .http_client_pool
-        .get_or_create_default(
-            auth.effective_proxy(state.config.load().proxy_url.as_deref()),
-            state.config.load().proxy_url.as_deref(),
-        )
-        .map_err(|e| ProxyError::Internal(format!("failed to build HTTP client: {e}")))?;
-
-    let mut req = client
-        .post(&url)
-        .header("authorization", format!("Bearer {}", auth.api_key))
-        .header("content-type", "application/json")
-        .body(body.to_vec());
-
-    for (k, v) in &auth.headers {
-        req = req.header(k.as_str(), v.as_str());
-    }
-
-    let resp = req.send().await?;
-    let status = resp.status().as_u16();
-    let headers = prism_provider::extract_headers(&resp);
-    let resp_body = resp.bytes().await?;
-
-    if status >= 400 {
-        return Err(ProxyError::Upstream {
-            status,
-            body: String::from_utf8_lossy(&resp_body).to_string(),
-            retry_after_secs: prism_provider::parse_retry_after(&headers),
-        });
-    }
-
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        resp_body.to_vec(),
+    dispatch(
+        &state,
+        DispatchRequest {
+            source_format: Format::OpenAI,
+            model: parsed.model,
+            models: parsed.models,
+            stream: parsed.stream,
+            body,
+            allowed_formats: Some(vec![Format::OpenAI]),
+            user_agent: parsed.user_agent,
+            debug: parsed.debug,
+            api_key: ctx.auth_key.as_ref().map(|e| e.key.clone()),
+            client_region: ctx.client_region.clone(),
+            request_id: Some(ctx.request_id.clone()),
+            api_key_id: ctx.api_key_id.clone(),
+            tenant_id: ctx.tenant_id.clone(),
+            allowed_credentials,
+            responses_passthrough: true,
+        },
     )
-        .into_response())
+    .await
 }
