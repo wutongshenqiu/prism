@@ -47,12 +47,13 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-063 | Unified Provider Configuration                 | Completed | [completed/SPEC-063/](completed/SPEC-063/) |
 | SPEC-064 | Upstream Presentation Layer                    | Completed | [completed/SPEC-064/](completed/SPEC-064/) |
 | SPEC-065 | Canonical Multi-Protocol Gateway & Control Plane Redesign | Completed | [completed/SPEC-065/](completed/SPEC-065/) |
+| SPEC-042 | Crate Structure Refactoring                    | Deprecated | [completed/SPEC-042/](completed/SPEC-042/) — *4/7 goals achieved (prism-types, prism-lifecycle, zombie deps, translator decoupling); remaining goals (core→provider decoupling, axum removal, TLS migration) too invasive for limited benefit* |
 
 ## Active
 
 | ID       | Title                                          | Status    | Location                        |
 |----------|------------------------------------------------|-----------|---------------------------------|
-| SPEC-042 | Crate Structure Refactoring                    | Draft     | [active/SPEC-042/](active/SPEC-042/) |
+| *(none)* |                                                |           |                                 |
 
 ## Retroactively Completed
 

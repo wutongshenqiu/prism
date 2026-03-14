@@ -5,7 +5,7 @@
 | Spec ID   | SPEC-042                     |
 | Title     | Crate Structure Refactoring  |
 | Author    | AI Agent                     |
-| Status    | Draft                        |
+| Status    | Deprecated                   |
 | Created   | 2026-03-12                   |
 | Updated   | 2026-03-12                   |
 
