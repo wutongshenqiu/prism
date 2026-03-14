@@ -71,6 +71,8 @@ mod tests {
                         weight: 100.0,
                         ..Default::default()
                     },
+                    execution_mode: None,
+                    upstream_protocol: None,
                 },
                 RouteAttemptPlan {
                     model: "gpt-4".to_string(),
@@ -82,6 +84,8 @@ mod tests {
                         weight: 50.0,
                         ..Default::default()
                     },
+                    execution_mode: None,
+                    upstream_protocol: None,
                 },
             ],
             trace: RouteTrace {

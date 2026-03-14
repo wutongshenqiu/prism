@@ -1,5 +1,6 @@
 use prism_core::provider::{AuthRecord, Format};
 use prism_core::routing::planner::{CredentialEntry, InventorySnapshot, ProviderEntry};
+use prism_domain::capability::default_capabilities_for_protocol;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -32,26 +33,31 @@ impl ProviderCatalog {
         InventorySnapshot {
             providers: providers
                 .iter()
-                .map(|p| ProviderEntry {
-                    format: p.format,
-                    name: p.name.clone(),
-                    credentials: p
-                        .credentials
-                        .iter()
-                        .map(|c| CredentialEntry {
-                            id: c.record.id.clone(),
-                            name: c
-                                .record
-                                .credential_name
-                                .clone()
-                                .unwrap_or_else(|| c.record.id.clone()),
-                            models: c.record.models.iter().map(|m| m.id.clone()).collect(),
-                            excluded_models: c.record.excluded_models.clone(),
-                            region: c.record.region.clone(),
-                            weight: c.record.weight,
-                            disabled: c.record.disabled,
-                        })
-                        .collect(),
+                .map(|p| {
+                    let up = prism_core::provider::upstream_protocol(p.format);
+                    ProviderEntry {
+                        format: p.format,
+                        name: p.name.clone(),
+                        credentials: p
+                            .credentials
+                            .iter()
+                            .map(|c| CredentialEntry {
+                                id: c.record.id.clone(),
+                                name: c
+                                    .record
+                                    .credential_name
+                                    .clone()
+                                    .unwrap_or_else(|| c.record.id.clone()),
+                                models: c.record.models.iter().map(|m| m.id.clone()).collect(),
+                                excluded_models: c.record.excluded_models.clone(),
+                                region: c.record.region.clone(),
+                                weight: c.record.weight,
+                                disabled: c.record.disabled,
+                            })
+                            .collect(),
+                        capabilities: default_capabilities_for_protocol(up),
+                        upstream_protocol: up,
+                    }
                 })
                 .collect(),
         }

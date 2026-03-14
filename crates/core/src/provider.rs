@@ -11,6 +11,17 @@ use tokio_stream::Stream;
 // Re-export Format and WireApi from prism-types (canonical source).
 pub use prism_types::format::{Format, WireApi};
 
+use prism_domain::capability::UpstreamProtocol;
+
+/// Convert a wire format to the corresponding upstream protocol.
+pub fn upstream_protocol(format: Format) -> UpstreamProtocol {
+    match format {
+        Format::OpenAI => UpstreamProtocol::OpenAi,
+        Format::Claude => UpstreamProtocol::Anthropic,
+        Format::Gemini => UpstreamProtocol::Gemini,
+    }
+}
+
 /// Credentials for executing a request against a specific provider.
 #[derive(Clone)]
 pub struct AuthRecord {

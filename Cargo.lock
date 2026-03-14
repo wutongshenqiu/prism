@@ -1853,6 +1853,7 @@ dependencies = [
  "futures",
  "moka",
  "notify",
+ "prism-domain",
  "prism-lifecycle",
  "prism-types",
  "rand 0.10.0",
@@ -1872,6 +1873,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prism-domain"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "prism-lifecycle"
 version = "0.1.0"
 dependencies = [
@@ -1887,6 +1898,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prism-protocol"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "prism-domain",
+ "prism-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "prism-provider"
 version = "0.1.0"
 dependencies = [
@@ -1897,6 +1919,7 @@ dependencies = [
  "dashmap",
  "futures",
  "prism-core",
+ "prism-domain",
  "reqwest",
  "serde",
  "serde_json",
@@ -1923,7 +1946,9 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken",
  "prism-core",
+ "prism-domain",
  "prism-lifecycle",
+ "prism-protocol",
  "prism-provider",
  "prism-translator",
  "rand 0.10.0",

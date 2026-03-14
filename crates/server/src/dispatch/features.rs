@@ -20,6 +20,7 @@ pub(super) fn extract_features(req: &DispatchRequest) -> RouteRequestFeatures {
         region: req.client_region.clone(),
         stream: req.stream,
         headers: BTreeMap::new(),
+        required_capabilities: None,
     }
 }
 

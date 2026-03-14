@@ -192,10 +192,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/dashboard/routing/preview",
             axum::routing::post(handler::dashboard::routing::preview_route),
         )
-        .route(
-            "/api/dashboard/routing/explain",
-            axum::routing::post(handler::dashboard::routing::explain_route),
-        )
         // Config operations
         .route(
             "/api/dashboard/config/validate",
@@ -251,6 +247,19 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/dashboard/tenants/{id}/metrics",
             axum::routing::get(handler::dashboard::tenant::tenant_metrics),
+        )
+        // Control Plane (SPEC-065)
+        .route(
+            "/api/dashboard/protocols/matrix",
+            axum::routing::get(handler::dashboard::control_plane::protocol_matrix),
+        )
+        .route(
+            "/api/dashboard/providers/capabilities",
+            axum::routing::get(handler::dashboard::control_plane::provider_capabilities),
+        )
+        .route(
+            "/api/dashboard/routing/explain",
+            axum::routing::post(handler::dashboard::control_plane::route_explain),
         )
         .layer(axum_mw::from_fn_with_state(
             state.clone(),

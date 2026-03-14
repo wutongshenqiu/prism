@@ -159,6 +159,7 @@ impl PreviewRequest {
             region: self.region,
             stream: self.stream,
             headers: self.headers,
+            required_capabilities: None,
         }
     }
 }

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod auth_keys;
 pub mod config_ops;
+pub mod control_plane;
 pub mod logs;
 pub mod providers;
 pub mod routing;

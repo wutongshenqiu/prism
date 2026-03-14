@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/types",
     "crates/lifecycle",
+    "crates/domain",
+    "crates/protocol",
     "crates/core",
     "crates/provider",
     "crates/translator",
@@ -66,6 +68,8 @@ moka = { version = "0.12", features = ["future"] }
 dashmap = "6"
 
 # workspace internal
+prism-domain = { path = "crates/domain" }
+prism-protocol = { path = "crates/protocol" }
 prism-types = { path = "crates/types", default-features = false }
 prism-lifecycle = { path = "crates/lifecycle" }
 prism-core = { path = "crates/core" }

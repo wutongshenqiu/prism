@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+prism-domain = { workspace = true }
 prism-types = { workspace = true, features = ["reqwest", "axum"] }
 prism-lifecycle = { workspace = true }
 tokio = { workspace = true }

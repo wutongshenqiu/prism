@@ -1,4 +1,7 @@
 use crate::provider::Format;
+use prism_domain::capability::UpstreamProtocol;
+use prism_domain::operation::ExecutionMode;
+use prism_domain::request::RequiredCapabilities;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -16,6 +19,10 @@ pub struct RouteRequestFeatures {
     pub stream: bool,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Capabilities required by the canonical request.
+    /// When set, the planner filters out providers that cannot satisfy them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_capabilities: Option<RequiredCapabilities>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +31,8 @@ pub enum RouteEndpoint {
     ChatCompletions,
     Messages,
     Responses,
+    GenerateContent,
+    StreamGenerateContent,
     Models,
 }
 
@@ -47,6 +56,12 @@ pub struct RouteAttemptPlan {
     pub credential_name: String,
     pub rank: u32,
     pub score: RouteScore,
+    /// How this route will execute relative to the ingress protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<ExecutionMode>,
+    /// The provider's upstream protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_protocol: Option<UpstreamProtocol>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -120,7 +135,7 @@ pub struct RouteRejection {
     pub reason: RejectReason,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectReason {
     ModelNotSupported,
@@ -131,6 +146,10 @@ pub enum RejectReason {
     CredentialDisabled,
     AccessDenied,
     CooldownActive,
+    /// Provider is missing one or more required capabilities.
+    MissingCapability {
+        capabilities: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +263,8 @@ mod tests {
                     weight: 100.0,
                     ..Default::default()
                 },
+                execution_mode: None,
+                upstream_protocol: None,
             }],
             trace: RouteTrace {
                 resolved_profile: "balanced".to_string(),

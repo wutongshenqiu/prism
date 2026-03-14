@@ -1200,8 +1200,10 @@ async fn test_explain_route_empty_inventory() {
     );
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
-    assert_eq!(body["profile"], "balanced");
+    // New control-plane explain returns structured ExplainResponse
     assert!(body["selected"].is_null());
+    assert!(body["alternates"].as_array().unwrap().is_empty());
+    assert!(body["required_capabilities"].is_object());
 }
 
 #[tokio::test]
@@ -1267,7 +1269,7 @@ async fn test_preview_route_invalid_body() {
 }
 
 #[tokio::test]
-async fn test_explain_includes_scoring() {
+async fn test_explain_with_provider() {
     let harness = create_test_harness();
     let token = login_and_get_token(&harness).await;
 
@@ -1294,7 +1296,7 @@ async fn test_explain_includes_scoring() {
         .update_from_credentials(&harness.state.router.credential_map());
     harness.state.config.store(Arc::new(new_config));
 
-    // Explain should include scoring (not cleared like preview)
+    // Explain returns structured response with selected route and capabilities
     let req = authed_post(
         "/api/dashboard/routing/explain",
         &token,
@@ -1302,8 +1304,10 @@ async fn test_explain_includes_scoring() {
     );
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
-    // scoring field should be present (may be empty if no candidates scored, but present)
-    assert!(body["scoring"].is_array());
+    // New control-plane explain returns required_capabilities and route info
+    assert!(body["required_capabilities"].is_object());
+    assert!(body["alternates"].is_array());
+    assert!(body["rejections"].is_array());
 }
 
 #[tokio::test]

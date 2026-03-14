@@ -4,6 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+prism-domain = { workspace = true }
+prism-protocol = { workspace = true }
 prism-core = { workspace = true }
 prism-provider = { workspace = true }
 prism-translator = { workspace = true }

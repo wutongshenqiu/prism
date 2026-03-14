@@ -20,6 +20,10 @@ pub struct ProviderEntry {
     pub format: Format,
     pub name: String,
     pub credentials: Vec<CredentialEntry>,
+    /// Declared capabilities for this provider (default derived from format).
+    pub capabilities: prism_domain::capability::ProviderCapabilities,
+    /// The upstream protocol this provider speaks.
+    pub upstream_protocol: prism_domain::capability::UpstreamProtocol,
 }
 
 #[derive(Debug, Clone)]
@@ -146,15 +150,31 @@ impl RoutePlanner {
             .collect();
 
         // 5. Build attempt list
+        // Derive execution mode from ingress protocol vs upstream protocol
+        let ingress = match features.endpoint {
+            RouteEndpoint::ChatCompletions | RouteEndpoint::Responses | RouteEndpoint::Models => {
+                prism_domain::operation::IngressProtocol::OpenAi
+            }
+            RouteEndpoint::Messages => prism_domain::operation::IngressProtocol::Claude,
+            RouteEndpoint::GenerateContent | RouteEndpoint::StreamGenerateContent => {
+                prism_domain::operation::IngressProtocol::Gemini
+            }
+        };
+
         let attempts: Vec<RouteAttemptPlan> = scored
             .iter()
-            .map(|s| RouteAttemptPlan {
-                model: s.model.clone(),
-                provider: s.format,
-                credential_id: s.credential_id.clone(),
-                credential_name: s.credential_name.clone(),
-                rank: s.rank,
-                score: s.score.clone(),
+            .map(|s| {
+                let exec_mode = s.upstream_protocol.execution_mode_for(ingress);
+                RouteAttemptPlan {
+                    model: s.model.clone(),
+                    provider: s.format,
+                    credential_id: s.credential_id.clone(),
+                    credential_name: s.credential_name.clone(),
+                    rank: s.rank,
+                    score: s.score.clone(),
+                    execution_mode: Some(exec_mode),
+                    upstream_protocol: Some(s.upstream_protocol),
+                }
             })
             .collect();
 
@@ -178,6 +198,7 @@ struct CandidateInfo {
     model: String,
     weight: u32,
     _region: Option<String>,
+    upstream_protocol: prism_domain::capability::UpstreamProtocol,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +210,7 @@ struct ScoredCandidate {
     model: String,
     score: RouteScore,
     rank: u32,
+    upstream_protocol: prism_domain::capability::UpstreamProtocol,
 }
 
 fn collect_candidates(
@@ -213,13 +235,29 @@ fn collect_candidates(
             continue;
         }
 
+        // Capability check: if required capabilities are specified, filter out providers
+        // that cannot satisfy them.
+        if let Some(ref required) = features.required_capabilities {
+            let missing = provider.capabilities.missing_capabilities(required);
+            if !missing.is_empty() {
+                rejections.push(RouteRejection {
+                    candidate: provider.name.clone(),
+                    reason: RejectReason::MissingCapability {
+                        capabilities: missing,
+                    },
+                });
+                continue;
+            }
+        }
+
         for cred in &provider.credentials {
-            let cand_label = format!("{}/{}", provider.name, cred.name);
+            // Lazy label — only computed on first rejection
+            let cand_label = || format!("{}/{}", provider.name, cred.name);
 
             // Disabled
             if cred.disabled {
                 rejections.push(RouteRejection {
-                    candidate: cand_label,
+                    candidate: cand_label(),
                     reason: RejectReason::CredentialDisabled,
                 });
                 continue;
@@ -231,7 +269,7 @@ fn collect_candidates(
             let excluded = cred.excluded_models.iter().any(|m| glob_match(m, model));
             if !supports || excluded {
                 rejections.push(RouteRejection {
-                    candidate: cand_label,
+                    candidate: cand_label(),
                     reason: RejectReason::ModelNotSupported,
                 });
                 continue;
@@ -243,7 +281,7 @@ fn collect_candidates(
                 && !glob_match(req_region, cred_region)
             {
                 rejections.push(RouteRejection {
-                    candidate: cand_label,
+                    candidate: cand_label(),
                     reason: RejectReason::RegionMismatch,
                 });
                 continue;
@@ -253,21 +291,21 @@ fn collect_candidates(
             if let Some(ch) = health.credentials.get(&cred.id) {
                 if ch.circuit_open {
                     rejections.push(RouteRejection {
-                        candidate: cand_label,
+                        candidate: cand_label(),
                         reason: RejectReason::CircuitBreakerOpen,
                     });
                     continue;
                 }
                 if ch.ejected {
                     rejections.push(RouteRejection {
-                        candidate: cand_label,
+                        candidate: cand_label(),
                         reason: RejectReason::OutlierEjected,
                     });
                     continue;
                 }
                 if ch.cooldown_active {
                     rejections.push(RouteRejection {
-                        candidate: cand_label,
+                        candidate: cand_label(),
                         reason: RejectReason::CooldownActive,
                     });
                     continue;
@@ -282,6 +320,7 @@ fn collect_candidates(
                 model: model.to_string(),
                 weight: cred.weight,
                 _region: cred.region.clone(),
+                upstream_protocol: provider.upstream_protocol,
             });
         }
     }
@@ -315,6 +354,7 @@ fn score_candidates(
                     health_penalty: 0.0,
                 },
                 rank: 0,
+                upstream_protocol: c.upstream_protocol,
             }
         })
         .collect()
@@ -381,10 +421,12 @@ mod tests {
             region: None,
             stream: false,
             headers: BTreeMap::new(),
+            required_capabilities: None,
         }
     }
 
     fn test_inventory() -> InventorySnapshot {
+        use prism_domain::capability::{UpstreamProtocol, default_capabilities_for_protocol};
         InventorySnapshot {
             providers: vec![
                 ProviderEntry {
@@ -399,6 +441,8 @@ mod tests {
                         weight: 100,
                         disabled: false,
                     }],
+                    capabilities: default_capabilities_for_protocol(UpstreamProtocol::OpenAi),
+                    upstream_protocol: UpstreamProtocol::OpenAi,
                 },
                 ProviderEntry {
                     format: Format::Claude,
@@ -412,6 +456,8 @@ mod tests {
                         weight: 100,
                         disabled: false,
                     }],
+                    capabilities: default_capabilities_for_protocol(UpstreamProtocol::Anthropic),
+                    upstream_protocol: UpstreamProtocol::Anthropic,
                 },
             ],
         }
@@ -646,6 +692,10 @@ mod tests {
                         disabled: false,
                     },
                 ],
+                capabilities: prism_domain::capability::default_capabilities_for_protocol(
+                    prism_domain::capability::UpstreamProtocol::OpenAi,
+                ),
+                upstream_protocol: prism_domain::capability::UpstreamProtocol::OpenAi,
             }],
         };
 
@@ -710,6 +760,10 @@ mod tests {
                     weight: 100,
                     disabled: false,
                 }],
+                capabilities: prism_domain::capability::default_capabilities_for_protocol(
+                    prism_domain::capability::UpstreamProtocol::OpenAi,
+                ),
+                upstream_protocol: prism_domain::capability::UpstreamProtocol::OpenAi,
             }],
         };
         let health = healthy();
