@@ -42,14 +42,14 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-047 | OAuth & Auth-File Upstream Onboarding           | Deprecated | [active/SPEC-047/](active/SPEC-047/) — *Superseded by SPEC-057* |
 | SPEC-053 | Thinking Signature Cache                       | Completed | [active/SPEC-053/](active/SPEC-053/) |
 | SPEC-054 | Extended Thinking Cross-Provider Translation   | Completed | [active/SPEC-054/](active/SPEC-054/) |
-| SPEC-055 | Gemini Native API Endpoints                    | Active    | [active/SPEC-055/](active/SPEC-055/) |
-| SPEC-056 | Gemini Multimodal Enhancement                  | Draft     | [active/SPEC-056/](active/SPEC-056/) |
-| SPEC-057 | OAuth & Auth-File Provider Authentication      | Draft     | [active/SPEC-057/](active/SPEC-057/) |
+| SPEC-055 | Gemini Native API Endpoints                    | Completed | [active/SPEC-055/](active/SPEC-055/) |
+| SPEC-056 | Gemini Multimodal Enhancement                  | Completed | [active/SPEC-056/](active/SPEC-056/) |
+| SPEC-057 | OAuth & Auth-File Provider Authentication      | Completed | [active/SPEC-057/](active/SPEC-057/) |
 | SPEC-058 | Provider-Scoped Routing & Amp Integration      | Completed | [active/SPEC-058/](active/SPEC-058/) |
-| SPEC-059 | Structured Output Translation                  | Active    | [active/SPEC-059/](active/SPEC-059/) |
-| SPEC-060 | Reverse Translation Paths                      | Draft     | [active/SPEC-060/](active/SPEC-060/) |
+| SPEC-059 | Structured Output Translation                  | Completed | [active/SPEC-059/](active/SPEC-059/) |
+| SPEC-060 | Reverse Translation Paths                      | Completed | [active/SPEC-060/](active/SPEC-060/) |
 | SPEC-061 | Quota-Aware Credential Switching               | Completed | [active/SPEC-061/](active/SPEC-061/) |
-| SPEC-062 | Vertex AI Provider                             | Draft     | [active/SPEC-062/](active/SPEC-062/) |
+| SPEC-062 | Vertex AI Provider                             | Completed | [active/SPEC-062/](active/SPEC-062/) |
 
 ## Retroactively Completed
 
