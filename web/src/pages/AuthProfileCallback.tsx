@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { LoaderCircle, ShieldCheck, ShieldX } from 'lucide-react';
 import { authProfilesApi } from '../services/api';
 import type { AuthProfile } from '../types';
+import { extractApiErrorMessage } from '../utils/apiError';
 
 const completionRequests = new Map<string, Promise<AuthProfile>>();
 
@@ -52,7 +53,7 @@ export default function AuthProfileCallback() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setState('error');
-        setMessage(err instanceof Error ? err.message : 'Failed to complete OAuth login.');
+        setMessage(extractApiErrorMessage(err, 'Failed to complete OAuth login.'));
       })
       .finally(() => {
         completionRequests.delete(operationKey);

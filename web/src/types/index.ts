@@ -208,6 +208,16 @@ export interface CodexDevicePollResponse {
   profile?: AuthProfile;
 }
 
+export interface CodexLocalImportRequest {
+  path?: string | null;
+}
+
+export interface ManagedAuthRuntimeStatus {
+  storage_dir: string | null;
+  codex_auth_file: string | null;
+  proxy_url: string | null;
+}
+
 export interface ConnectAuthProfileRequest {
   secret: string;
 }

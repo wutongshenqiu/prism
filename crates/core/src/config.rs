@@ -90,6 +90,9 @@ pub struct Config {
     // Dashboard
     pub dashboard: DashboardConfig,
 
+    // Managed auth runtime
+    pub managed_auth: ManagedAuthConfig,
+
     // Daemon
     pub daemon: DaemonConfig,
 
@@ -135,6 +138,7 @@ impl Default for Config {
             cache: CacheConfig::default(),
             log_store: LogStoreConfig::default(),
             dashboard: DashboardConfig::default(),
+            managed_auth: ManagedAuthConfig::default(),
             daemon: DaemonConfig::default(),
             thinking_cache: ThinkingCacheConfig::default(),
             quota_cooldown_default_secs: 60,
@@ -194,6 +198,9 @@ impl Config {
         if let Some(ref proxy) = self.proxy_url {
             crate::proxy::validate_proxy_url(proxy)?;
         }
+        if let Some(ref proxy) = self.managed_auth.proxy_url {
+            crate::proxy::validate_proxy_url(proxy)?;
+        }
         // Provider name uniqueness
         let mut seen_names = std::collections::HashSet::new();
         for entry in &self.providers {
@@ -234,6 +241,9 @@ impl Config {
     /// Safe for the persistence path (dashboard config writes).
     fn normalize(&mut self) {
         sanitize_entries(&mut self.providers);
+        normalize_optional_string(&mut self.managed_auth.storage_dir);
+        normalize_optional_string(&mut self.managed_auth.codex_auth_file);
+        normalize_optional_string(&mut self.managed_auth.proxy_url);
         self.migrate_legacy_presentation();
     }
 
@@ -377,6 +387,18 @@ fn sanitize_entries(entries: &mut [ProviderKeyEntry]) {
     }
 }
 
+fn normalize_optional_string(value: &mut Option<String>) {
+    let Some(current) = value.as_mut() else {
+        return;
+    };
+    let trimmed = current.trim();
+    if trimmed.is_empty() {
+        *value = None;
+    } else if trimmed != current {
+        *current = trimmed.to_string();
+    }
+}
+
 // ─── Rate limit config ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +465,19 @@ impl Default for LogStoreConfig {
 pub enum LogStoreBackend {
     #[default]
     Memory,
+}
+
+// ─── Managed auth config ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct ManagedAuthConfig {
+    /// Directory for runtime-managed auth state files.
+    pub storage_dir: Option<String>,
+    /// Default server-local Codex CLI auth bundle path for import.
+    pub codex_auth_file: Option<String>,
+    /// Dedicated proxy for managed auth exchange/refresh/device flows.
+    pub proxy_url: Option<String>,
 }
 
 // ─── Dashboard config ──────────────────────────────────────────────────────

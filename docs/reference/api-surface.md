@@ -387,6 +387,10 @@ Returns the dashboard protocol control-plane payload. This endpoint is no longer
 
 Lists flattened auth profile state across all providers. This includes mode, header kind, masked secret or runtime access-token state, refresh-token presence, expiry, account metadata, and upstream presentation config.
 
+#### GET /api/dashboard/auth-profiles/runtime
+
+Returns managed-auth runtime truth for the dashboard: `{ storage_dir, codex_auth_file, proxy_url }`. The frontend uses this to show the actual runtime token directory, default local import path, and the server egress used for Codex auth exchange/device/refresh requests.
+
 #### POST /api/dashboard/auth-profiles
 
 Creates a new auth profile under an existing provider.
@@ -405,27 +409,27 @@ Starts a Codex OAuth PKCE flow and returns `{ state, auth_url, provider, profile
 
 #### POST /api/dashboard/auth-profiles/codex/oauth/complete
 
-Completes the OAuth code exchange, hydrates the auth profile, and persists runtime OAuth tokens into the auth runtime sidecar store (`*.auth-runtime.json`) rather than the YAML config.
+Completes the OAuth code exchange, hydrates the auth profile, and persists runtime OAuth tokens into the managed auth runtime directory (`*.managed-auth.d/*.json`) rather than the YAML config. The token exchange uses `managed-auth.proxy-url` when configured.
 
 #### POST /api/dashboard/auth-profiles/codex/device/start
 
-Starts a Codex device authorization flow and returns `{ state, verification_url, user_code, interval_secs, expires_in }`.
+Starts a Codex device authorization flow and returns `{ state, verification_url, user_code, interval_secs, expires_in }`. The device flow request uses `managed-auth.proxy-url` when configured.
 
 #### POST /api/dashboard/auth-profiles/codex/device/poll
 
-Polls a pending device authorization session. Returns `{ status: "pending" }` while waiting and `{ status: "completed", profile }` after the token exchange succeeds.
+Polls a pending device authorization session. Returns `{ status: "pending" }` while waiting and `{ status: "completed", profile }` after the token exchange succeeds. The token exchange step uses `managed-auth.proxy-url` when configured.
 
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/connect
 
-Connects a managed auth profile that expects operator-supplied runtime credentials. Prism currently supports `anthropic-claude-subscription` here by accepting a Claude setup-token, validating the provider/base URL constraints, and storing the token only in the auth runtime sidecar store.
+Connects a managed auth profile that expects operator-supplied runtime credentials. Prism currently supports `anthropic-claude-subscription` here by accepting a Claude setup-token, validating the provider/base URL constraints, and storing the token only in the managed auth runtime directory.
 
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/import-local
 
-Imports a server-local Codex CLI auth bundle from `~/.codex/auth.json` (or the runtime-configured override) into the managed auth runtime store. This endpoint only supports `codex-oauth` profiles.
+Imports a server-local Codex CLI auth bundle into the managed auth runtime directory. The request body may optionally provide `{ "path": "/abs/path/auth.json" }`; when omitted, Prism falls back to `managed-auth.codex-auth-file`, then `PRISM_CODEX_AUTH_FILE`, then `~/.codex/auth.json`. This endpoint only supports `codex-oauth` profiles.
 
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/refresh
 
-Refreshes an existing refreshable managed auth profile. Prism currently supports `codex-oauth` here and persists the updated runtime tokens into the auth runtime sidecar store.
+Refreshes an existing refreshable managed auth profile. Prism currently supports `codex-oauth` here and persists the updated runtime tokens into the managed auth runtime directory. The refresh request uses `managed-auth.proxy-url` when configured.
 
 **Source:** `crates/server/src/handler/dashboard/auth_profiles.rs`
 

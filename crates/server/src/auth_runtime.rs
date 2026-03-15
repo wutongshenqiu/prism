@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -70,6 +71,7 @@ pub struct CodexOAuthTokens {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedOAuthProfileState {
+    version: u32,
     provider: String,
     profile_id: String,
     access_token: String,
@@ -81,12 +83,6 @@ struct PersistedOAuthProfileState {
     last_refresh: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct RuntimeAuthStoreFile {
-    version: u32,
-    oauth_profiles: Vec<PersistedOAuthProfileState>,
-}
-
 pub struct AuthRuntimeManager {
     refresh_skew_seconds: i64,
     codex_auth_url: String,
@@ -95,8 +91,10 @@ pub struct AuthRuntimeManager {
     codex_device_user_code_url: String,
     codex_device_token_url: String,
     codex_device_verification_url: String,
-    codex_auth_file: Option<PathBuf>,
-    store_path: RwLock<Option<PathBuf>>,
+    env_codex_auth_file: Option<PathBuf>,
+    config_path: RwLock<Option<PathBuf>>,
+    storage_dir: RwLock<Option<PathBuf>>,
+    configured_codex_auth_file: RwLock<Option<PathBuf>>,
     persist_lock: Mutex<()>,
     oauth_profiles: DashMap<String, SharedOAuthTokenState>,
 }
@@ -121,7 +119,7 @@ impl AuthRuntimeManager {
             .unwrap_or_else(|_| CODEX_DEVICE_TOKEN_URL.to_string());
         let codex_device_verification_url = std::env::var("PRISM_CODEX_DEVICE_VERIFICATION_URL")
             .unwrap_or_else(|_| CODEX_DEVICE_VERIFICATION_URL.to_string());
-        let codex_auth_file = std::env::var_os("PRISM_CODEX_AUTH_FILE").map(PathBuf::from);
+        let env_codex_auth_file = std::env::var_os("PRISM_CODEX_AUTH_FILE").map(PathBuf::from);
         Self {
             refresh_skew_seconds: 120,
             codex_auth_url,
@@ -130,8 +128,10 @@ impl AuthRuntimeManager {
             codex_device_user_code_url,
             codex_device_token_url,
             codex_device_verification_url,
-            codex_auth_file,
-            store_path: RwLock::new(None),
+            env_codex_auth_file,
+            config_path: RwLock::new(None),
+            storage_dir: RwLock::new(None),
+            configured_codex_auth_file: RwLock::new(None),
             persist_lock: Mutex::new(()),
             oauth_profiles: DashMap::new(),
         }
@@ -164,33 +164,37 @@ impl AuthRuntimeManager {
             codex_device_user_code_url: device_user_code_url,
             codex_device_token_url: device_token_url,
             codex_device_verification_url: device_verification_url,
-            codex_auth_file: None,
-            store_path: RwLock::new(None),
+            env_codex_auth_file: None,
+            config_path: RwLock::new(None),
+            storage_dir: RwLock::new(None),
+            configured_codex_auth_file: RwLock::new(None),
             persist_lock: Mutex::new(()),
             oauth_profiles: DashMap::new(),
         }
     }
 
     pub fn with_codex_auth_file(mut self, path: PathBuf) -> Self {
-        self.codex_auth_file = Some(path);
+        self.env_codex_auth_file = Some(path);
         self
     }
 
     pub fn initialize(&self, config_path: &str, config: &Config) -> Result<(), String> {
         {
             let mut guard = self
-                .store_path
+                .config_path
                 .write()
-                .map_err(|e| format!("auth runtime store path lock poisoned: {e}"))?;
-            *guard = Some(Self::store_path_for_config(config_path));
+                .map_err(|e| format!("auth runtime config path lock poisoned: {e}"))?;
+            *guard = Some(PathBuf::from(config_path));
         }
-        self.load_store_file()?;
         self.sync_with_config(config)
     }
 
     pub fn sync_with_config(&self, config: &Config) -> Result<(), String> {
+        self.refresh_runtime_paths(config)?;
+        self.load_store_dir()?;
+
         let mut valid_keys = HashSet::new();
-        let mut dirty = false;
+        let mut imported_states = Vec::new();
 
         for entry in &config.providers {
             for profile in &entry.auth_profiles {
@@ -203,8 +207,8 @@ impl AuthRuntimeManager {
                     && let Some(state) = OAuthTokenState::from_profile(profile)
                 {
                     self.oauth_profiles
-                        .insert(key, Arc::new(RwLock::new(state)));
-                    dirty = true;
+                        .insert(key, Arc::new(RwLock::new(state.clone())));
+                    imported_states.push((entry.name.clone(), profile.id.clone(), state));
                 }
             }
         }
@@ -217,11 +221,13 @@ impl AuthRuntimeManager {
             .collect::<Vec<_>>();
         for key in stale_keys {
             self.oauth_profiles.remove(&key);
-            dirty = true;
+            if let Some((provider, profile_id)) = split_profile_key(&key) {
+                self.remove_persisted_state(provider, profile_id)?;
+            }
         }
 
-        if dirty {
-            self.persist_store_file()?;
+        for (provider, profile_id, state) in imported_states {
+            self.persist_state(&provider, &profile_id, &state)?;
         }
         Ok(())
     }
@@ -241,6 +247,20 @@ impl AuthRuntimeManager {
                     .map(|state| (entry.key().clone(), state.clone()))
             })
             .collect()
+    }
+
+    pub fn storage_dir(&self) -> Result<Option<PathBuf>, String> {
+        self.storage_dir
+            .read()
+            .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))
+            .map(|value| value.clone())
+    }
+
+    pub fn codex_auth_file_path(&self) -> Result<Option<PathBuf>, String> {
+        self.configured_codex_auth_file
+            .read()
+            .map_err(|e| format!("auth runtime auth file lock poisoned: {e}"))
+            .map(|value| value.clone())
     }
 
     pub fn state_for_profile(
@@ -278,26 +298,6 @@ impl AuthRuntimeManager {
         hydrated.email = state.email;
         hydrated.last_refresh = state.last_refresh.map(|dt| dt.to_rfc3339());
         Ok(hydrated)
-    }
-
-    pub fn ensure_profile_placeholder(
-        &self,
-        provider: &str,
-        profile_id: &str,
-    ) -> Result<(), String> {
-        let key = Self::profile_key(provider, profile_id);
-        self.oauth_profiles.entry(key).or_insert_with(|| {
-            Arc::new(RwLock::new(OAuthTokenState {
-                access_token: String::new(),
-                refresh_token: String::new(),
-                id_token: None,
-                account_id: None,
-                email: None,
-                expires_at: None,
-                last_refresh: None,
-            }))
-        });
-        self.persist_store_file()
     }
 
     pub fn store_codex_tokens(
@@ -353,18 +353,18 @@ impl AuthRuntimeManager {
             let mut guard = existing
                 .write()
                 .map_err(|e| format!("oauth state lock poisoned: {e}"))?;
-            *guard = state;
+            *guard = state.clone();
         } else {
             self.oauth_profiles
-                .insert(key, Arc::new(RwLock::new(state)));
+                .insert(key, Arc::new(RwLock::new(state.clone())));
         }
-        self.persist_store_file()
+        self.persist_state(provider, profile_id, &state)
     }
 
     pub fn clear_profile_state(&self, provider: &str, profile_id: &str) -> Result<(), String> {
         let key = Self::profile_key(provider, profile_id);
         self.oauth_profiles.remove(&key);
-        self.persist_store_file()
+        self.remove_persisted_state(provider, profile_id)
     }
 
     pub async fn prepare_auth(
@@ -388,11 +388,11 @@ impl AuthRuntimeManager {
             return Ok(());
         }
 
-        let global_proxy = state.config.load().proxy_url.clone();
+        let auth_proxy = state.config.load().managed_auth.proxy_url.clone();
         let refreshed = self
             .refresh_codex_tokens(
                 &state.http_client_pool,
-                global_proxy.as_deref(),
+                auth_proxy.as_deref(),
                 shared.clone(),
             )
             .await?;
@@ -593,7 +593,13 @@ impl AuthRuntimeManager {
 
         let path = path_override
             .map(PathBuf::from)
-            .or_else(|| self.codex_auth_file.clone())
+            .or_else(|| {
+                self.configured_codex_auth_file
+                    .read()
+                    .ok()
+                    .and_then(|value| value.clone())
+            })
+            .or_else(|| self.env_codex_auth_file.clone())
             .or_else(default_codex_auth_path)
             .ok_or_else(|| "unable to resolve ~/.codex/auth.json".to_string())?;
         let raw = std::fs::read_to_string(&path)
@@ -746,43 +752,103 @@ impl AuthRuntimeManager {
         })
     }
 
-    fn store_path_for_config(config_path: &str) -> PathBuf {
-        let path = PathBuf::from(config_path);
-        let file_name = path
+    pub fn default_storage_dir_for_config(config_path: &Path) -> PathBuf {
+        let file_name = config_path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("config.yaml");
-        path.with_file_name(format!("{file_name}.auth-runtime.json"))
+        config_path.with_file_name(format!("{file_name}.managed-auth.d"))
     }
 
-    fn load_store_file(&self) -> Result<(), String> {
-        let Some(path) = self
-            .store_path
+    fn refresh_runtime_paths(&self, config: &Config) -> Result<(), String> {
+        let config_path = self
+            .config_path
             .read()
-            .map_err(|e| format!("auth runtime store path lock poisoned: {e}"))?
+            .map_err(|e| format!("auth runtime config path lock poisoned: {e}"))?
+            .clone()
+            .ok_or_else(|| "auth runtime config path not initialized".to_string())?;
+        let storage_dir = config
+            .managed_auth
+            .storage_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Self::default_storage_dir_for_config(&config_path));
+        let codex_auth_file = config
+            .managed_auth
+            .codex_auth_file
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| self.env_codex_auth_file.clone())
+            .or_else(default_codex_auth_path);
+        let previous_storage_dir = self
+            .storage_dir
+            .read()
+            .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))?
+            .clone();
+        if previous_storage_dir.as_ref() != Some(&storage_dir) {
+            migrate_storage_dir(previous_storage_dir.as_deref(), &storage_dir)?;
+        }
+
+        {
+            let mut guard = self
+                .storage_dir
+                .write()
+                .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))?;
+            *guard = Some(storage_dir);
+        }
+        {
+            let mut guard = self
+                .configured_codex_auth_file
+                .write()
+                .map_err(|e| format!("auth runtime auth file lock poisoned: {e}"))?;
+            *guard = codex_auth_file;
+        }
+        Ok(())
+    }
+
+    fn load_store_dir(&self) -> Result<(), String> {
+        let Some(dir) = self
+            .storage_dir
+            .read()
+            .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))?
             .clone()
         else {
             return Ok(());
         };
 
         self.oauth_profiles.clear();
-        if !path.exists() {
+        if !dir.exists() {
             return Ok(());
         }
 
-        let contents = std::fs::read_to_string(&path).map_err(|e| {
-            format!(
-                "failed to read auth runtime store '{}': {e}",
-                path.display()
-            )
-        })?;
-        let file: RuntimeAuthStoreFile = serde_json::from_str(&contents).map_err(|e| {
-            format!(
-                "failed to parse auth runtime store '{}': {e}",
-                path.display()
-            )
-        })?;
-        for profile in file.oauth_profiles {
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| format!("failed to read auth runtime dir '{}': {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("failed to inspect auth runtime dir: {e}"))?;
+            let path = entry.path();
+            if path.extension() != Some(OsStr::new("json")) {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&path).map_err(|e| {
+                format!(
+                    "failed to read auth runtime store '{}': {e}",
+                    path.display()
+                )
+            })?;
+            let profile: PersistedOAuthProfileState =
+                serde_json::from_str(&contents).map_err(|e| {
+                    format!(
+                        "failed to parse auth runtime store '{}': {e}",
+                        path.display()
+                    )
+                })?;
+            if profile.version != AUTH_STORE_VERSION {
+                return Err(format!(
+                    "unsupported auth runtime store version {} in '{}'",
+                    profile.version,
+                    path.display()
+                ));
+            }
             let key = Self::profile_key(&profile.provider, &profile.profile_id);
             self.oauth_profiles.insert(
                 key,
@@ -800,11 +866,16 @@ impl AuthRuntimeManager {
         Ok(())
     }
 
-    fn persist_store_file(&self) -> Result<(), String> {
-        let Some(path) = self
-            .store_path
+    fn persist_state(
+        &self,
+        provider: &str,
+        profile_id: &str,
+        state: &OAuthTokenState,
+    ) -> Result<(), String> {
+        let Some(dir) = self
+            .storage_dir
             .read()
-            .map_err(|e| format!("auth runtime store path lock poisoned: {e}"))?
+            .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))?
             .clone()
         else {
             return Ok(());
@@ -814,41 +885,112 @@ impl AuthRuntimeManager {
             .persist_lock
             .lock()
             .map_err(|e| format!("auth runtime persist lock poisoned: {e}"))?;
-
-        let profiles = self
-            .oauth_profiles
-            .iter()
-            .filter_map(|entry| {
-                let state = entry.value().read().ok()?;
-                let (provider, profile_id) = split_profile_key(entry.key())?;
-                Some(PersistedOAuthProfileState {
-                    provider: provider.to_string(),
-                    profile_id: profile_id.to_string(),
-                    access_token: state.access_token.clone(),
-                    refresh_token: state.refresh_token.clone(),
-                    id_token: state.id_token.clone(),
-                    expires_at: state.expires_at.map(|dt| dt.to_rfc3339()),
-                    account_id: state.account_id.clone(),
-                    email: state.email.clone(),
-                    last_refresh: state.last_refresh.map(|dt| dt.to_rfc3339()),
-                })
-            })
-            .collect::<Vec<_>>();
-        let file = RuntimeAuthStoreFile {
+        ensure_secure_dir(&dir)?;
+        let file = PersistedOAuthProfileState {
             version: AUTH_STORE_VERSION,
-            oauth_profiles: profiles,
+            provider: provider.to_string(),
+            profile_id: profile_id.to_string(),
+            access_token: state.access_token.clone(),
+            refresh_token: state.refresh_token.clone(),
+            id_token: state.id_token.clone(),
+            expires_at: state.expires_at.map(|dt| dt.to_rfc3339()),
+            account_id: state.account_id.clone(),
+            email: state.email.clone(),
+            last_refresh: state.last_refresh.map(|dt| dt.to_rfc3339()),
         };
-
         let bytes = serde_json::to_vec_pretty(&file)
             .map_err(|e| format!("failed to serialize auth runtime store: {e}"))?;
+        let path = self.profile_store_path(&dir, provider, profile_id);
         write_atomic(&path, &bytes)
     }
+
+    fn remove_persisted_state(&self, provider: &str, profile_id: &str) -> Result<(), String> {
+        let Some(dir) = self
+            .storage_dir
+            .read()
+            .map_err(|e| format!("auth runtime storage dir lock poisoned: {e}"))?
+            .clone()
+        else {
+            return Ok(());
+        };
+        let _guard = self
+            .persist_lock
+            .lock()
+            .map_err(|e| format!("auth runtime persist lock poisoned: {e}"))?;
+        let path = self.profile_store_path(&dir, provider, profile_id);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| {
+                format!(
+                    "failed to remove auth runtime store '{}': {e}",
+                    path.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    fn profile_store_path(&self, storage_dir: &Path, provider: &str, profile_id: &str) -> PathBuf {
+        storage_dir.join(profile_store_file_name(provider, profile_id))
+    }
+}
+
+fn ensure_secure_dir(path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path)
+        .map_err(|e| format!("failed to create auth runtime store dir: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o700);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+    Ok(())
+}
+
+fn migrate_storage_dir(previous: Option<&Path>, next: &Path) -> Result<(), String> {
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    if previous == next || !previous.exists() {
+        return Ok(());
+    }
+    ensure_secure_dir(next)?;
+    let entries = std::fs::read_dir(previous).map_err(|e| {
+        format!(
+            "failed to read previous auth runtime dir '{}': {e}",
+            previous.display()
+        )
+    })?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| format!("failed to inspect previous auth runtime dir: {e}"))?;
+        let source = entry.path();
+        if source.extension() != Some(OsStr::new("json")) {
+            continue;
+        }
+        let target = next.join(entry.file_name());
+        if target.exists() {
+            continue;
+        }
+        std::fs::copy(&source, &target).map_err(|e| {
+            format!(
+                "failed to migrate auth runtime store '{}' to '{}': {e}",
+                source.display(),
+                target.display()
+            )
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            let _ = std::fs::set_permissions(&target, perms);
+        }
+    }
+    Ok(())
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create auth runtime store dir: {e}"))?;
+        ensure_secure_dir(parent)?;
     }
     let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
     std::fs::write(&tmp_path, bytes)
@@ -867,6 +1009,36 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 fn split_profile_key(value: &str) -> Option<(&str, &str)> {
     let (provider, profile_id) = value.split_once('/')?;
     Some((provider, profile_id))
+}
+
+fn profile_store_file_name(provider: &str, profile_id: &str) -> String {
+    let key = AuthRuntimeManager::profile_key(provider, profile_id);
+    let digest = URL_SAFE_NO_PAD.encode(Sha256::digest(key.as_bytes()));
+    format!(
+        "{}--{}--{}.json",
+        sanitize_file_component(provider),
+        sanitize_file_component(profile_id),
+        &digest[..16]
+    )
+}
+
+fn sanitize_file_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .take(48)
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "profile".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn default_codex_auth_path() -> Option<PathBuf> {

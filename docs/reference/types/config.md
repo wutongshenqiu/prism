@@ -40,6 +40,7 @@ pub struct Config {
     pub cache: CacheConfig,
     pub log_store: LogStoreConfig,
     pub dashboard: DashboardConfig,
+    pub managed_auth: ManagedAuthConfig,
     pub daemon: DaemonConfig,
     pub thinking_cache: ThinkingCacheConfig,
     pub quota_cooldown_default_secs: u64,
@@ -78,6 +79,7 @@ pub struct Config {
 | `cache` | `CacheConfig` | disabled | `cache` |
 | `log_store` | `LogStoreConfig` | memory backend | `log-store` (`audit` accepted as alias) |
 | `dashboard` | `DashboardConfig` | disabled | `dashboard` |
+| `managed_auth` | `ManagedAuthConfig` | defaults below | `managed-auth` |
 | `daemon` | `DaemonConfig` | see below | `daemon` |
 | `thinking_cache` | `ThinkingCacheConfig` | disabled | `thinking-cache` |
 | `quota_cooldown_default_secs` | `u64` | `60` | `quota-cooldown-default-secs` |
@@ -105,7 +107,40 @@ pub struct Config {
 
 - Provider names must be unique within `providers[]`.
 - Auth profile IDs must be unique within each provider.
-- Provider and global proxy URLs are validated at load time.
+- Provider, global, and `managed-auth.proxy-url` values are validated at load time.
+
+---
+
+## ManagedAuthConfig
+
+**Source:** `crates/core/src/config.rs`
+
+Runtime configuration for managed auth profiles such as Codex OAuth and Claude subscription tokens.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct ManagedAuthConfig {
+    pub storage_dir: Option<String>,
+    pub codex_auth_file: Option<String>,
+    pub proxy_url: Option<String>,
+}
+```
+
+| Field | Type | Default | YAML key | Description |
+|-------|------|---------|----------|-------------|
+| `storage_dir` | `Option<String>` | `None` | `storage-dir` | Directory used for runtime-managed auth state files. When unset, Prism derives `<config-file>.managed-auth.d`. |
+| `codex_auth_file` | `Option<String>` | `None` | `codex-auth-file` | Default server-local Codex CLI auth bundle path for `import-local`. Falls back to `PRISM_CODEX_AUTH_FILE` or `~/.codex/auth.json`. |
+| `proxy_url` | `Option<String>` | `None` | `proxy-url` | Dedicated proxy used only for managed auth exchange, device flow, and refresh requests. |
+
+### YAML example
+
+```yaml
+managed-auth:
+  storage-dir: "./config.yaml.managed-auth.d"
+  codex-auth-file: "/home/prism/.codex/auth.json"
+  proxy-url: "socks5://127.0.0.1:1080"
+```
 
 ---
 
@@ -500,7 +535,9 @@ pub struct DashboardConfig {
     pub password_hash: String,
     pub jwt_secret: Option<String>,
     pub jwt_ttl_secs: u64,
-    pub request_log_capacity: usize,
+    pub max_login_attempts: u32,
+    pub login_lockout_secs: u64,
+    pub localhost_only: bool,
 }
 ```
 
@@ -511,7 +548,9 @@ pub struct DashboardConfig {
 | `password_hash` | `String` | `""` | `password-hash` | bcrypt-hashed admin password (e.g., `"$2b$12$..."`). |
 | `jwt_secret` | `Option<String>` | `None` | `jwt-secret` | JWT signing secret. Falls back to env `DASHBOARD_JWT_SECRET`. |
 | `jwt_ttl_secs` | `u64` | `3600` | `jwt-ttl-secs` | JWT token TTL in seconds. |
-| `request_log_capacity` | `usize` | `10_000` | `request-log-capacity` | Request log ring buffer capacity. |
+| `max_login_attempts` | `u32` | `5` | `max-login-attempts` | Maximum failed logins allowed per IP during the lockout window. |
+| `login_lockout_secs` | `u64` | `300` | `login-lockout-secs` | Lockout window in seconds for login brute-force protection. |
+| `localhost_only` | `bool` | `true` | `localhost-only` | Restrict dashboard access to localhost only. |
 
 ### Key methods
 
@@ -527,7 +566,9 @@ dashboard:
   username: admin
   password-hash: "$2b$12$..."
   jwt-ttl-secs: 3600
-  request-log-capacity: 10000
+  max-login-attempts: 5
+  login-lockout-secs: 300
+  localhost-only: false
 ```
 
 ---
@@ -830,8 +871,8 @@ pub struct AuthProfileEntry {
 | `mode` | `AuthMode` | `api-key` | `mode` | Auth material type. |
 | `header` | `AuthHeaderKind` | `auto` | `header` | Explicit upstream auth header strategy, or `auto` to derive from mode and provider format. |
 | `secret` | `Option<String>` | `None` | `secret` | Static API key or bearer token. Required for `api-key` and `bearer-token` modes unless the profile is disabled. |
-| `access_token` | `Option<String>` | `None` | `access-token` | Runtime OAuth access token. Persisted in the auth runtime sidecar store for Codex OAuth profiles. |
-| `refresh_token` | `Option<String>` | `None` | `refresh-token` | Runtime OAuth refresh token. Persisted in the auth runtime sidecar store for Codex OAuth profiles. |
+| `access_token` | `Option<String>` | `None` | `access-token` | Runtime OAuth access token. Persisted in the managed auth runtime directory for managed profiles. |
+| `refresh_token` | `Option<String>` | `None` | `refresh-token` | Runtime OAuth refresh token. Persisted in the managed auth runtime directory for refreshable managed profiles. |
 | `id_token` | `Option<String>` | `None` | `id-token` | Optional OpenID token returned by the provider. |
 | `expires_at` | `Option<String>` | `None` | `expires-at` | RFC3339 token expiry timestamp. |
 | `account_id` | `Option<String>` | `None` | `account-id` | Upstream account identifier captured during OAuth completion. |
@@ -868,8 +909,8 @@ pub enum AuthMode {
 |---------|------------|---------|
 | `ApiKey` | `api-key` | Static key sent with a provider-specific auth header. |
 | `BearerToken` | `bearer-token` | Static bearer token, used for subscription/setup-token style flows. |
-| `CodexOAuth` | `codex-oauth` | Refreshable Codex OAuth profile managed through the auth runtime store and restricted to Codex upstreams. |
-| `AnthropicClaudeSubscription` | `anthropic-claude-subscription` | Managed Claude setup-token profile stored only in the auth runtime sidecar and always sent as `x-api-key`. |
+| `CodexOAuth` | `codex-oauth` | Refreshable Codex OAuth profile managed through the managed auth runtime directory and restricted to Codex upstreams. |
+| `AnthropicClaudeSubscription` | `anthropic-claude-subscription` | Managed Claude setup-token profile stored only in the managed auth runtime directory and always sent as `x-api-key`. |
 
 ---
 

@@ -36,6 +36,13 @@ auth-keys: []
 # proxy-url: "socks5://127.0.0.1:1080"
 # proxy-url: "http://proxy.company.com:8080"
 
+# ─── Managed Auth ───────────────────────────────────────────────────────────
+# Dedicated runtime storage and egress for managed auth profiles such as Codex.
+# managed-auth:
+#   storage-dir: "./config.yaml.managed-auth.d"   # One runtime file per managed profile
+#   codex-auth-file: "/home/prism/.codex/auth.json"
+#   proxy-url: "socks5://127.0.0.1:1080"          # Used only for OAuth/device/refresh
+
 # ─── Debug & Logging ────────────────────────────────────────────────────────
 debug: false
 logging-to-file: false

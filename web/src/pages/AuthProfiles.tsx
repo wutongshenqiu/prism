@@ -7,8 +7,10 @@ import type {
   AuthProfile,
   AuthProfileUpsertRequest,
   CodexDeviceStartResponse,
+  ManagedAuthRuntimeStatus,
   Provider,
 } from '../types';
+import { extractApiErrorMessage } from '../utils/apiError';
 import StatusBadge from '../components/StatusBadge';
 
 interface FormState {
@@ -64,6 +66,7 @@ function modeLabel(mode: AuthMode) {
 export default function AuthProfiles() {
   const [profiles, setProfiles] = useState<AuthProfile[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [managedAuthRuntime, setManagedAuthRuntime] = useState<ManagedAuthRuntimeStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<AuthProfile | null>(null);
@@ -75,6 +78,7 @@ export default function AuthProfiles() {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [connectProfile, setConnectProfile] = useState<AuthProfile | null>(null);
   const [connectSecret, setConnectSecret] = useState('');
+  const [connectImportPath, setConnectImportPath] = useState('');
   const [connectError, setConnectError] = useState('');
   const [codexDevice, setCodexDevice] = useState<CodexDeviceState | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -108,16 +112,18 @@ export default function AuthProfiles() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [profilesResp, providersResp] = await Promise.all([
+      const [profilesResp, providersResp, runtimeResp] = await Promise.all([
         authProfilesApi.list(),
         providersApi.list(),
+        authProfilesApi.runtime(),
       ]);
       setProfiles(profilesResp.data);
       setProviders(providersResp.data);
+      setManagedAuthRuntime(runtimeResp);
     } catch (err) {
       setNotice({
         type: 'error',
-        message: err instanceof Error ? err.message : 'Failed to load auth profiles',
+        message: extractApiErrorMessage(err, 'Failed to load auth profiles'),
       });
     } finally {
       setIsLoading(false);
@@ -148,6 +154,8 @@ export default function AuthProfiles() {
       !providerFilter || profile.provider === providerFilter
     );
   }, [profiles, providerFilter]);
+  const defaultCodexAuthFile = managedAuthRuntime?.codex_auth_file ?? '~/.codex/auth.json';
+  const authEgressLabel = managedAuthRuntime?.proxy_url || 'direct';
 
   const openCreate = () => {
     const provider = providerFilter || providers[0]?.name || '';
@@ -183,6 +191,7 @@ export default function AuthProfiles() {
   const closeConnectModal = () => {
     setConnectProfile(null);
     setConnectSecret('');
+    setConnectImportPath('');
     setConnectError('');
     setCodexDevice(null);
     setConnecting(null);
@@ -228,7 +237,7 @@ export default function AuthProfiles() {
       closeModal();
       await fetchData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save auth profile');
+      setError(extractApiErrorMessage(err, 'Failed to save auth profile'));
     } finally {
       setSaving(false);
     }
@@ -245,7 +254,7 @@ export default function AuthProfiles() {
     } catch (err) {
       setNotice({
         type: 'error',
-        message: err instanceof Error ? err.message : 'Failed to delete auth profile',
+        message: extractApiErrorMessage(err, 'Failed to delete auth profile'),
       });
     }
   };
@@ -253,6 +262,7 @@ export default function AuthProfiles() {
   const handleConnect = async (profile: AuthProfile) => {
     setConnectProfile(profile);
     setConnectSecret('');
+    setConnectImportPath(managedAuthRuntime?.codex_auth_file ?? '');
     setConnectError('');
     setCodexDevice(null);
   };
@@ -277,7 +287,7 @@ export default function AuthProfiles() {
       closeConnectModal();
       await fetchData();
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : 'Failed to connect auth profile');
+      setConnectError(extractApiErrorMessage(err, 'Failed to connect auth profile'));
     } finally {
       setConnecting(null);
     }
@@ -288,15 +298,20 @@ export default function AuthProfiles() {
     setConnecting(connectProfile.qualified_name);
     setConnectError('');
     try {
-      await authProfilesApi.importLocal(connectProfile.provider, connectProfile.id);
+      const requestedPath = connectImportPath.trim();
+      await authProfilesApi.importLocal(connectProfile.provider, connectProfile.id, {
+        path: requestedPath || undefined,
+      });
       setNotice({
         type: 'success',
-        message: `Imported local Codex auth for "${connectProfile.qualified_name}".`,
+        message: requestedPath
+          ? `Imported server-local Codex auth for "${connectProfile.qualified_name}" from ${requestedPath}.`
+          : `Imported server-local Codex auth for "${connectProfile.qualified_name}".`,
       });
       closeConnectModal();
       await fetchData();
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : 'Failed to import local auth.json');
+      setConnectError(extractApiErrorMessage(err, 'Failed to import local auth.json'));
     } finally {
       setConnecting(null);
     }
@@ -314,7 +329,7 @@ export default function AuthProfiles() {
       });
       window.location.assign(start.auth_url);
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : 'Failed to start OAuth login');
+      setConnectError(extractApiErrorMessage(err, 'Failed to start OAuth login'));
       setConnecting(null);
     }
   };
@@ -330,7 +345,7 @@ export default function AuthProfiles() {
       });
       setCodexDevice({ ...device, status: 'pending' });
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : 'Failed to start device flow');
+      setConnectError(extractApiErrorMessage(err, 'Failed to start device flow'));
     } finally {
       setConnecting(null);
     }
@@ -345,7 +360,7 @@ export default function AuthProfiles() {
     } catch (err) {
       setNotice({
         type: 'error',
-        message: err instanceof Error ? err.message : 'Failed to refresh auth profile',
+        message: extractApiErrorMessage(err, 'Failed to refresh auth profile'),
       });
     } finally {
       setRefreshing(null);
@@ -372,7 +387,7 @@ export default function AuthProfiles() {
         })
         .catch((err) => {
           if (cancelled) return;
-          setConnectError(err instanceof Error ? err.message : 'Device flow polling failed');
+          setConnectError(extractApiErrorMessage(err, 'Device flow polling failed'));
         });
     }, Math.max(codexDevice.interval_secs, 2) * 1000);
 
@@ -657,7 +672,7 @@ export default function AuthProfiles() {
               <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
                 {connectProfile.mode === 'anthropic-claude-subscription'
                   ? <>Paste a Claude setup-token for <strong>{connectProfile.qualified_name}</strong>. The token is stored in the runtime auth sidecar, not in config.</>
-                  : <>Connect <strong>{connectProfile.qualified_name}</strong> with a browser OAuth flow, device code flow, or server-local <code>~/.codex/auth.json</code> import.</>}
+                  : <>Connect <strong>{connectProfile.qualified_name}</strong> with a browser OAuth flow, device code flow, or a server-local Codex auth bundle import.</>}
               </p>
               {connectError && <div className="form-error">{connectError}</div>}
               {connectProfile.mode === 'anthropic-claude-subscription' ? (
@@ -673,7 +688,26 @@ export default function AuthProfiles() {
               ) : (
                 <div style={{ display: 'grid', gap: 16 }}>
                   <div className="alert alert-warning">
-                    Codex managed auth is pinned to official OpenAI hosts. Browser automation is not used for login completion; device flow is safer on remote servers.
+                    Codex managed auth is pinned to official OpenAI hosts. Browser OAuth completes in your browser, but token exchange, device flow, and refresh run from Prism server egress <code>{authEgressLabel}</code>. If that egress is blocked or in an unsupported region, auth will fail even with a valid auth.json.
+                  </div>
+                  <div className="card" style={{ marginTop: 4 }}>
+                    <div className="card-body" style={{ display: 'grid', gap: 8 }}>
+                      <div><strong>Runtime auth dir:</strong> <code>{managedAuthRuntime?.storage_dir ?? 'unavailable'}</code></div>
+                      <div><strong>Default import file:</strong> <code>{defaultCodexAuthFile}</code></div>
+                      <div><strong>Auth egress:</strong> <code>{authEgressLabel}</code></div>
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Server-local auth.json path</label>
+                    <input
+                      type="text"
+                      value={connectImportPath}
+                      onChange={(event) => setConnectImportPath(event.target.value)}
+                      placeholder={defaultCodexAuthFile}
+                    />
+                    <div className="text-muted" style={{ fontSize: '0.85rem' }}>
+                      Leave this as-is to import from the configured default path, or replace it with any server-local file Prism can read.
+                    </div>
                   </div>
                   <div style={{ display: 'grid', gap: 12 }}>
                     <button
@@ -682,7 +716,7 @@ export default function AuthProfiles() {
                       disabled={connecting === connectProfile.qualified_name}
                     >
                       <Laptop size={16} />
-                      Import server-local <code>~/.codex/auth.json</code>
+                      Import server-local auth.json
                     </button>
                     <button
                       className="btn btn-secondary"

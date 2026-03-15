@@ -13,6 +13,7 @@ use prism_core::presentation::UpstreamPresentationConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::Path as FsPath;
 use std::sync::{Arc, RwLock};
 
 const OAUTH_SESSION_TTL_MINUTES: i64 = 10;
@@ -111,6 +112,12 @@ pub struct PollCodexDeviceRequest {
     pub state: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct ImportLocalAuthProfileRequest {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ConnectAuthProfileRequest {
     pub secret: String,
@@ -130,6 +137,10 @@ struct AuthProfileDraft {
 
 fn default_weight() -> u32 {
     1
+}
+
+fn managed_auth_proxy_url(state: &AppState) -> Option<String> {
+    state.config.load().managed_auth.proxy_url.clone()
 }
 
 fn mask_key(key: &str) -> String {
@@ -445,6 +456,27 @@ pub async fn list_auth_profiles(State(state): State<AppState>) -> impl IntoRespo
     (StatusCode::OK, Json(json!({ "profiles": profiles })))
 }
 
+/// GET /api/dashboard/auth-profiles/runtime
+pub async fn auth_profiles_runtime(State(state): State<AppState>) -> impl IntoResponse {
+    let storage_dir = match state.auth_runtime.storage_dir() {
+        Ok(value) => value.map(|path| path.display().to_string()),
+        Err(message) => return internal_error(message),
+    };
+    let codex_auth_file = match state.auth_runtime.codex_auth_file_path() {
+        Ok(value) => value.map(|path| path.display().to_string()),
+        Err(message) => return internal_error(message),
+    };
+    let proxy_url = managed_auth_proxy_url(&state);
+    (
+        StatusCode::OK,
+        Json(json!({
+            "storage_dir": storage_dir,
+            "codex_auth_file": codex_auth_file,
+            "proxy_url": proxy_url,
+        })),
+    )
+}
+
 /// POST /api/dashboard/auth-profiles
 pub async fn create_auth_profile(
     State(state): State<AppState>,
@@ -505,13 +537,6 @@ pub async fn create_auth_profile(
     .await
     {
         Ok(_) => {
-            if body.mode.is_managed()
-                && let Err(err) = state
-                    .auth_runtime
-                    .ensure_profile_placeholder(&body.provider, &profile_id)
-            {
-                return internal_error(err);
-            }
             rebuild_router_from_state(&state);
             match current_profile_response(&state, &body.provider, &profile_id) {
                 Ok(profile) => (StatusCode::CREATED, Json(json!({ "profile": profile }))),
@@ -599,14 +624,8 @@ pub async fn replace_auth_profile(
     .await
     {
         Ok(_) => {
-            if body.mode.is_managed() {
-                if let Err(err) = state
-                    .auth_runtime
-                    .ensure_profile_placeholder(&provider, &profile_id)
-                {
-                    return internal_error(err);
-                }
-            } else if profile_was_managed
+            if !body.mode.is_managed()
+                && profile_was_managed
                 && let Err(err) = state
                     .auth_runtime
                     .clear_profile_state(&provider, &profile_id)
@@ -754,12 +773,12 @@ pub async fn complete_codex_oauth(
         );
     }
 
-    let global_proxy = state.config.load().proxy_url.clone();
+    let auth_proxy = managed_auth_proxy_url(&state);
     let tokens = match state
         .auth_runtime
         .exchange_codex_code(
             &state.http_client_pool,
-            global_proxy.as_deref(),
+            auth_proxy.as_deref(),
             &body.code,
             &session.redirect_uri,
             &session.code_verifier,
@@ -821,10 +840,10 @@ pub async fn start_codex_device(
         return response;
     }
 
-    let global_proxy = state.config.load().proxy_url.clone();
+    let auth_proxy = managed_auth_proxy_url(&state);
     let start = match state
         .auth_runtime
-        .start_codex_device_flow(&state.http_client_pool, global_proxy.as_deref())
+        .start_codex_device_flow(&state.http_client_pool, auth_proxy.as_deref())
         .await
     {
         Ok(start) => start,
@@ -887,10 +906,10 @@ pub async fn poll_codex_device(
         );
     }
 
-    let global_proxy = state.config.load().proxy_url.clone();
+    let auth_proxy = managed_auth_proxy_url(&state);
     let result = match state
         .auth_runtime
-        .poll_codex_device_flow(&state.http_client_pool, global_proxy.as_deref(), &session)
+        .poll_codex_device_flow(&state.http_client_pool, auth_proxy.as_deref(), &session)
         .await
     {
         Ok(result) => result,
@@ -946,6 +965,7 @@ pub async fn poll_codex_device(
 pub async fn import_local_auth_profile(
     State(state): State<AppState>,
     Path((provider, profile_id)): Path<(String, String)>,
+    Json(body): Json<ImportLocalAuthProfileRequest>,
 ) -> impl IntoResponse {
     if let Err(response) =
         ensure_managed_profile_shape(&state, &provider, &profile_id, AuthMode::CodexOAuth).await
@@ -953,7 +973,13 @@ pub async fn import_local_auth_profile(
         return response;
     }
 
-    let tokens = match state.auth_runtime.load_codex_cli_tokens(None) {
+    let path_override = body
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(FsPath::new);
+    let tokens = match state.auth_runtime.load_codex_cli_tokens(path_override) {
         Ok(tokens) => tokens,
         Err(message) => {
             return (
@@ -1060,12 +1086,12 @@ pub async fn refresh_auth_profile(
     };
     drop(config);
 
-    let global_proxy = state.config.load().proxy_url.clone();
+    let auth_proxy = managed_auth_proxy_url(&state);
     let tokens = match state
         .auth_runtime
         .refresh_codex_tokens(
             &state.http_client_pool,
-            global_proxy.as_deref(),
+            auth_proxy.as_deref(),
             Arc::new(RwLock::new(oauth_state)),
         )
         .await

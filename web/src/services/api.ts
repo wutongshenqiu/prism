@@ -38,7 +38,9 @@ import type {
   CodexDeviceStartRequest,
   CodexDeviceStartResponse,
   CodexDevicePollResponse,
+  CodexLocalImportRequest,
   ConnectAuthProfileRequest,
+  ManagedAuthRuntimeStatus,
   ProviderAuthProfile,
 } from '../types';
 
@@ -286,6 +288,10 @@ export const authProfilesApi = {
       return { ...res, data };
     }) as Promise<{ data: AuthProfile[] } & Record<string, unknown>>,
 
+  runtime: () =>
+    api.get<ManagedAuthRuntimeStatus>('/auth-profiles/runtime')
+      .then((res) => res.data),
+
   create: (data: AuthProfileUpsertRequest & { provider: string; id: string }) =>
     api.post('/auth-profiles', data).then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
@@ -319,8 +325,8 @@ export const authProfilesApi = {
     api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/connect`, data)
       .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
-  importLocal: (provider: string, profileId: string) =>
-    api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/import-local`)
+  importLocal: (provider: string, profileId: string, data?: CodexLocalImportRequest) =>
+    api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/import-local`, data ?? {})
       .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
   refresh: (provider: string, profileId: string) =>

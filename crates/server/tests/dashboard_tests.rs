@@ -131,23 +131,55 @@ fn reload_runtime_config(harness: &TestHarness) {
 }
 
 fn read_auth_runtime_store(harness: &TestHarness) -> Value {
-    let config_path = harness.state.config_path.lock().unwrap().clone();
-    let config_path = std::path::PathBuf::from(config_path);
-    let file_name = config_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("config.yaml");
-    let store_path = config_path.with_file_name(format!("{file_name}.auth-runtime.json"));
-    if !store_path.exists() {
+    let Some(store_dir) = harness
+        .state
+        .auth_runtime
+        .storage_dir()
+        .expect("failed to read auth runtime dir")
+    else {
+        return json!({
+            "version": 1,
+            "oauth_profiles": []
+        });
+    };
+    if !store_dir.exists() {
         return json!({
             "version": 1,
             "oauth_profiles": []
         });
     }
 
-    let contents =
-        std::fs::read_to_string(store_path).expect("failed to read auth runtime store file");
-    serde_json::from_str(&contents).expect("failed to parse auth runtime store file")
+    let mut oauth_profiles = std::fs::read_dir(store_dir)
+        .expect("failed to read auth runtime dir")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("json")).then_some(path)
+        })
+        .map(|path| {
+            let contents =
+                std::fs::read_to_string(&path).expect("failed to read auth runtime store file");
+            serde_json::from_str::<Value>(&contents).expect("failed to parse auth runtime store")
+        })
+        .collect::<Vec<_>>();
+    oauth_profiles.sort_by(|a, b| {
+        let left = format!(
+            "{}/{}",
+            a["provider"].as_str().unwrap_or_default(),
+            a["profile_id"].as_str().unwrap_or_default()
+        );
+        let right = format!(
+            "{}/{}",
+            b["provider"].as_str().unwrap_or_default(),
+            b["profile_id"].as_str().unwrap_or_default()
+        );
+        left.cmp(&right)
+    });
+
+    json!({
+        "version": 1,
+        "oauth_profiles": oauth_profiles,
+    })
 }
 
 #[derive(Clone)]
@@ -890,6 +922,36 @@ async fn test_list_auth_profiles() {
 }
 
 #[tokio::test]
+async fn test_auth_profiles_runtime_reports_runtime_truth() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_get("/api/dashboard/auth-profiles/runtime", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "runtime endpoint failed: {body:?}");
+
+    let expected_dir = harness
+        .state
+        .auth_runtime
+        .storage_dir()
+        .expect("runtime dir")
+        .map(|path| path.display().to_string());
+    let expected_auth_file = harness
+        .state
+        .auth_runtime
+        .codex_auth_file_path()
+        .expect("runtime auth file")
+        .map(|path| path.display().to_string());
+
+    assert_eq!(body["storage_dir"].as_str(), expected_dir.as_deref());
+    assert_eq!(
+        body["codex_auth_file"].as_str(),
+        expected_auth_file.as_deref()
+    );
+    assert!(body["proxy_url"].is_null());
+}
+
+#[tokio::test]
 async fn test_connect_anthropic_subscription_profile_persists_runtime_only() {
     let harness = create_test_harness();
     let token = login_and_get_token(&harness).await;
@@ -1238,6 +1300,48 @@ async fn test_import_local_codex_auth_profile() {
     assert_eq!(oauth_profiles.len(), 1);
     assert_eq!(oauth_profiles[0]["provider"], "codex-local-import");
     assert_eq!(oauth_profiles[0]["profile_id"], "local-user");
+    assert_eq!(oauth_profiles[0]["refresh_token"], "local-refresh-token");
+}
+
+#[tokio::test]
+async fn test_import_local_codex_auth_profile_from_explicit_path() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let auth_file = write_codex_auth_file(temp_dir.path(), "explicit@example.com", "acct_explicit");
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "upstream": "codex",
+            "name": "codex-explicit-import",
+            "wire_api": "responses"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex-explicit-import/explicit-user/import-local",
+        &token,
+        json!({
+            "path": auth_file.display().to_string(),
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "import-local failed: {body:?}");
+    assert_eq!(body["profile"]["email"], "explicit@example.com");
+    assert_eq!(body["profile"]["account_id"], "acct_explicit");
+    assert_eq!(body["profile"]["connected"], true);
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["provider"], "codex-explicit-import");
+    assert_eq!(oauth_profiles[0]["profile_id"], "explicit-user");
     assert_eq!(oauth_profiles[0]["refresh_token"], "local-refresh-token");
 }
 
