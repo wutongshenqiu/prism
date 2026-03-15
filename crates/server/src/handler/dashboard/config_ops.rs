@@ -5,6 +5,29 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde_json::json;
 
+fn config_tx_error_response(
+    error: super::config_tx::ConfigTxError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        super::config_tx::ConfigTxError::Conflict { current_version } => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "config_conflict",
+                "message": "Configuration has been modified by another session. Refresh and retry.",
+                "current_version": current_version,
+            })),
+        ),
+        super::config_tx::ConfigTxError::Validation(message) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "validation_failed", "message": message})),
+        ),
+        super::config_tx::ConfigTxError::Internal(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "write_failed", "message": message})),
+        ),
+    }
+}
+
 /// POST /api/dashboard/config/validate — dry-run config validation.
 /// Accepts either `{"yaml": "..."}` (YAML string) or a raw JSON config object.
 ///
@@ -87,43 +110,44 @@ pub async fn validate_config(
 
 /// POST /api/dashboard/config/reload — trigger hot-reload.
 pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
-    let config_path = match state.config_path.lock() {
-        Ok(path) => path.clone(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "lock_failed", "message": e.to_string()})),
-            );
-        }
-    };
+    let config_path = state
+        .config_path
+        .lock()
+        .map(|path| path.clone())
+        .unwrap_or_default();
 
-    match prism_core::config::Config::load(&config_path) {
-        Ok(new_cfg) => {
-            if let Err(err) = state.auth_runtime.sync_with_config(&new_cfg) {
-                tracing::error!("Dashboard reload auth runtime sync failed: {err}");
-            }
-            state
-                .router
-                .set_oauth_states(state.auth_runtime.oauth_snapshot());
-            state.router.update_from_config(&new_cfg);
-            state
-                .catalog
-                .update_from_credentials(&state.router.credential_map());
-            state.rate_limiter.update_config(&new_cfg.rate_limit);
-            state.cost_calculator.update_prices(&new_cfg.model_prices);
-            state.http_client_pool.clear();
-            state.config.store(std::sync::Arc::new(new_cfg));
+    match super::config_tx::reload_config_from_disk(&state).await {
+        Ok(()) => {
             tracing::info!(path = %config_path, "Configuration reloaded via dashboard API");
             (
                 StatusCode::OK,
                 Json(json!({"message": "Configuration reloaded successfully"})),
             )
         }
-        Err(e) => {
-            tracing::error!(path = %config_path, error = %e, "Configuration reload failed");
+        Err(super::config_tx::ConfigTxError::Validation(message)) => {
+            tracing::error!(path = %config_path, error = %message, "Configuration reload failed");
             (
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": "reload_failed", "message": e.to_string()})),
+                Json(json!({"error": "reload_failed", "message": message})),
+            )
+        }
+        Err(super::config_tx::ConfigTxError::Internal(message)) => {
+            tracing::error!(path = %config_path, error = %message, "Configuration reload failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "reload_failed", "message": message})),
+            )
+        }
+        Err(super::config_tx::ConfigTxError::Conflict { .. }) => {
+            tracing::error!(
+                path = %config_path,
+                "Configuration reload hit an unexpected version conflict"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    json!({"error": "reload_failed", "message": "Unexpected config version conflict during reload"}),
+                ),
             )
         }
     }
@@ -151,108 +175,32 @@ pub async fn apply_config(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // Step 1: Validate
-    let runtime_config = match prism_core::config::Config::load_from_str(&yaml_str) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": "validation_failed", "message": e.to_string()})),
-            );
-        }
-    };
+    let config_path = state
+        .config_path
+        .lock()
+        .map(|path| path.clone())
+        .unwrap_or_default();
 
-    // Step 2: Check version if provided
-    let config_path = match state.config_path.lock() {
-        Ok(path) => path.clone(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "lock_failed", "message": e.to_string()})),
-            );
-        }
-    };
-
-    if let Some(ref expected) = expected_version {
-        let current_contents = match std::fs::read_to_string(&config_path) {
-            Ok(c) => c,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "read_failed", "message": e.to_string()})),
-                );
-            }
-        };
-        let current_version = super::providers::sha256_hex(&current_contents);
-        if &current_version != expected {
-            return (
-                StatusCode::CONFLICT,
+    match super::config_tx::apply_yaml_versioned(&state, &yaml_str, expected_version.as_deref())
+        .await
+    {
+        Ok(new_version) => {
+            tracing::info!(path = %config_path, "Configuration applied via dashboard API");
+            (
+                StatusCode::OK,
                 Json(json!({
-                    "error": "config_conflict",
-                    "message": "Configuration has been modified by another session. Refresh and retry.",
-                    "current_version": current_version,
+                    "message": "Configuration applied successfully",
+                    "config_version": new_version,
                 })),
-            );
+            )
         }
+        Err(error) => config_tx_error_response(error),
     }
-
-    // Step 3: Persist atomically
-    let dir = std::path::Path::new(&config_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-    let tmp_path = dir.join(format!(".config.yaml.tmp.{}", std::process::id()));
-    if let Err(e) = std::fs::write(&tmp_path, &yaml_str) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e.to_string()})),
-        );
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, &config_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "write_failed", "message": e.to_string()})),
-        );
-    }
-
-    // Step 4: Reload runtime
-    if let Err(err) = state.auth_runtime.sync_with_config(&runtime_config) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(
-                json!({"error": "reload_failed", "message": format!("Failed to sync auth runtime: {err}")}),
-            ),
-        );
-    }
-    state
-        .router
-        .set_oauth_states(state.auth_runtime.oauth_snapshot());
-    state.router.update_from_config(&runtime_config);
-    state
-        .catalog
-        .update_from_credentials(&state.router.credential_map());
-    state.rate_limiter.update_config(&runtime_config.rate_limit);
-    state
-        .cost_calculator
-        .update_prices(&runtime_config.model_prices);
-    state.http_client_pool.clear();
-    state.config.store(std::sync::Arc::new(runtime_config));
-
-    let new_version = super::providers::sha256_hex(&yaml_str);
-    tracing::info!(path = %config_path, "Configuration applied via dashboard API");
-    (
-        StatusCode::OK,
-        Json(json!({
-            "message": "Configuration applied successfully",
-            "config_version": new_version,
-        })),
-    )
 }
 
 /// GET /api/dashboard/config/raw — get raw YAML config file contents with version.
 pub async fn get_raw_config(State(state): State<AppState>) -> impl IntoResponse {
-    match super::providers::read_config_versioned(&state) {
+    match super::config_tx::read_config_versioned(&state) {
         Ok((content, version)) => {
             let config_path = state
                 .config_path
@@ -275,7 +223,7 @@ pub async fn get_raw_config(State(state): State<AppState>) -> impl IntoResponse 
 /// Returns a truthful view of all configuration sections. Secrets are masked.
 pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     let config = state.config.load();
-    let version = super::providers::read_config_versioned(&state)
+    let version = super::config_tx::read_config_versioned(&state)
         .map(|(_, v)| v)
         .unwrap_or_default();
 

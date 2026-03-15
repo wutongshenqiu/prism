@@ -137,6 +137,12 @@
   color: var(--color-text-secondary);
 }
 
+.main-header-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
 .mobile-menu-btn {
   display: none;
   background: none;

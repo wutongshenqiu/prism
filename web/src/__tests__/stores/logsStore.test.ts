@@ -39,6 +39,7 @@ describe('logsStore', () => {
       pageSize: 50,
       total: 0,
       totalPages: 0,
+      pendingLiveCount: 0,
       filters: {},
       isLoading: false,
       filterOptions: null,
@@ -55,6 +56,7 @@ describe('logsStore', () => {
     expect(state.logs).toEqual([]);
     expect(state.page).toBe(1);
     expect(state.total).toBe(0);
+    expect(state.pendingLiveCount).toBe(0);
     expect(state.isLoading).toBe(false);
     expect(state.isLive).toBe(true);
     expect(state.isDrawerOpen).toBe(false);
@@ -68,6 +70,7 @@ describe('logsStore', () => {
     expect(state.logs).toHaveLength(1);
     expect(state.logs[0]).toEqual(log);
     expect(state.total).toBe(1);
+    expect(state.pendingLiveCount).toBe(0);
   });
 
   it('should not add log when paused', () => {
@@ -90,6 +93,37 @@ describe('logsStore', () => {
     expect(state.logs[0].request_id).toBe('new-req');
   });
 
+  it('should queue live logs when browsing older pages', () => {
+    useLogsStore.setState({
+      page: 2,
+      logs: [makeLog({ request_id: 'existing' })],
+      total: 10,
+      pendingLiveCount: 0,
+    });
+
+    useLogsStore.getState().addLog(makeLog({ request_id: 'new-live' }));
+
+    const state = useLogsStore.getState();
+    expect(state.logs[0].request_id).toBe('existing');
+    expect(state.total).toBe(11);
+    expect(state.totalPages).toBe(1);
+    expect(state.pendingLiveCount).toBe(1);
+  });
+
+  it('should ignore live logs that do not match active filters', () => {
+    useLogsStore.setState({
+      filters: { provider: 'claude', stream: true },
+      total: 4,
+    });
+
+    useLogsStore.getState().addLog(makeLog({ provider: 'openai', stream: false }));
+
+    const state = useLogsStore.getState();
+    expect(state.logs).toHaveLength(0);
+    expect(state.total).toBe(4);
+    expect(state.pendingLiveCount).toBe(0);
+  });
+
   it('should fetch logs and update state', async () => {
     const { logsApi } = await import('../../services/api');
     vi.mocked(logsApi.list).mockResolvedValueOnce({
@@ -101,12 +135,14 @@ describe('logsStore', () => {
         page_size: 50,
       },
     } as never);
+    useLogsStore.setState({ pendingLiveCount: 3 });
 
     await useLogsStore.getState().fetchLogs();
 
     const state = useLogsStore.getState();
     expect(state.logs).toHaveLength(1);
     expect(state.total).toBe(1);
+    expect(state.pendingLiveCount).toBe(0);
     expect(state.isLoading).toBe(false);
   });
 

@@ -13,7 +13,7 @@ interface ProtocolEndpoint {
   method: string;
   path: string;
   description: string;
-  stream: boolean;
+  streamMode: 'never' | 'runtime';
 }
 
 const PROTOCOLS: {
@@ -27,9 +27,9 @@ const PROTOCOLS: {
     label: 'OpenAI',
     format: 'openai',
     endpoints: [
-      { method: 'POST', path: '/v1/chat/completions', description: 'Chat completions', stream: true },
-      { method: 'POST', path: '/v1/responses', description: 'Responses API', stream: true },
-      { method: 'GET', path: '/v1/models', description: 'List models', stream: false },
+      { method: 'POST', path: '/v1/chat/completions', description: 'Chat completions', streamMode: 'runtime' },
+      { method: 'POST', path: '/v1/responses', description: 'Responses API', streamMode: 'runtime' },
+      { method: 'GET', path: '/v1/models', description: 'List models', streamMode: 'never' },
     ],
   },
   {
@@ -37,7 +37,7 @@ const PROTOCOLS: {
     label: 'Claude (Anthropic)',
     format: 'claude',
     endpoints: [
-      { method: 'POST', path: '/v1/messages', description: 'Messages API', stream: true },
+      { method: 'POST', path: '/v1/messages', description: 'Messages API', streamMode: 'runtime' },
     ],
   },
   {
@@ -45,9 +45,9 @@ const PROTOCOLS: {
     label: 'Gemini (Google)',
     format: 'gemini',
     endpoints: [
-      { method: 'POST', path: '/v1beta/models/{model}:generateContent', description: 'Generate content', stream: false },
-      { method: 'POST', path: '/v1beta/models/{model}:streamGenerateContent', description: 'Stream generate content', stream: true },
-      { method: 'GET', path: '/v1beta/models', description: 'List models', stream: false },
+      { method: 'POST', path: '/v1beta/models/{model}:generateContent', description: 'Generate content', streamMode: 'never' },
+      { method: 'POST', path: '/v1beta/models/{model}:streamGenerateContent', description: 'Stream generate content', streamMode: 'runtime' },
+      { method: 'GET', path: '/v1beta/models', description: 'List models', streamMode: 'never' },
     ],
   },
 ];
@@ -68,6 +68,23 @@ function CoverageBadge({ level }: { level: CoverageLevel }) {
     return <span className="type-badge type-badge--blue"><ArrowRight size={12} /> Adapted</span>;
   }
   return <span className="type-badge type-badge--red"><XCircle size={12} /> None</span>;
+}
+
+function StreamSupportBadge({
+  mode,
+  supported,
+}: {
+  mode: ProtocolEndpoint['streamMode'];
+  supported: boolean;
+}) {
+  if (mode === 'never') {
+    return <span className="text-muted">No</span>;
+  }
+  return supported ? (
+    <span className="type-badge type-badge--green"><CheckCircle size={12} /> Available</span>
+  ) : (
+    <span className="type-badge type-badge--red"><XCircle size={12} /> Unavailable</span>
+  );
 }
 
 export default function Protocols() {
@@ -108,6 +125,18 @@ export default function Protocols() {
   }, [matrixEntries]);
 
   const uniqueFormats = [...new Set(providers.map((p) => p.upstream_protocol))];
+  const streamSupportByIngress = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const protocol of PROTOCOLS) {
+      map.set(protocol.id, false);
+    }
+    for (const entry of matrixEntries) {
+      if (entry.supports_generate && entry.supports_stream) {
+        map.set(entry.ingress_protocol, true);
+      }
+    }
+    return map;
+  }, [matrixEntries]);
 
   return (
     <div className="page">
@@ -133,7 +162,7 @@ export default function Protocols() {
         </div>
         <div className="card-body">
           <p className="text-muted" style={{ marginBottom: '1rem' }}>
-            All public inference endpoints share one canonical runtime pipeline. Requests are parsed by protocol-specific ingress adapters, routed through the capability-aware planner, and translated back via egress adapters.
+            All public inference endpoints share one canonical runtime pipeline. Requests are parsed by protocol-specific ingress adapters, routed through the capability-aware planner, and translated back via egress adapters. Streaming availability below is derived from the currently active provider set, not hardcoded assumptions.
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             {PROTOCOLS.map((proto) => (
@@ -155,7 +184,12 @@ export default function Protocols() {
                           <td><span className="type-badge">{ep.method}</span></td>
                           <td className="text-mono" style={{ fontSize: '0.85rem' }}>{ep.path}</td>
                           <td>{ep.description}</td>
-                          <td>{ep.stream ? <CheckCircle size={14} color="var(--color-success)" /> : <span className="text-muted">-</span>}</td>
+                          <td>
+                            <StreamSupportBadge
+                              mode={ep.streamMode}
+                              supported={streamSupportByIngress.get(proto.id) ?? false}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>

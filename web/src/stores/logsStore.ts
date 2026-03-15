@@ -8,6 +8,7 @@ interface LogsState {
   pageSize: number;
   total: number;
   totalPages: number;
+  pendingLiveCount: number;
   filters: RequestLogFilter;
   isLoading: boolean;
   error: string | null;
@@ -41,6 +42,7 @@ export const useLogsStore = create<LogsState>((set, get) => ({
   pageSize: 50,
   total: 0,
   totalPages: 0,
+  pendingLiveCount: 0,
   filters: {},
   isLoading: false,
   error: null,
@@ -75,6 +77,7 @@ export const useLogsStore = create<LogsState>((set, get) => ({
         logs: data.data,
         total: data.total,
         totalPages: data.total_pages,
+        pendingLiveCount: page === 1 ? 0 : get().pendingLiveCount,
         isLoading: false,
       });
     } catch (err) {
@@ -116,11 +119,25 @@ export const useLogsStore = create<LogsState>((set, get) => ({
       if (!haystack.includes(kw)) return;
     }
     set((state) => {
+      const nextTotal = state.total + 1;
+      const nextTotalPages = Math.max(1, Math.ceil(nextTotal / state.pageSize));
+      if (state.page !== 1) {
+        return {
+          total: nextTotal,
+          totalPages: nextTotalPages,
+          pendingLiveCount: state.pendingLiveCount + 1,
+        };
+      }
       const updated = [log, ...state.logs];
       if (updated.length > state.pageSize) {
         updated.pop();
       }
-      return { logs: updated, total: state.total + 1 };
+      return {
+        logs: updated,
+        total: nextTotal,
+        totalPages: nextTotalPages,
+        pendingLiveCount: 0,
+      };
     });
   },
 

@@ -96,7 +96,7 @@ pub async fn create_auth_key(
     };
 
     let key_name = entry.name.clone();
-    match super::providers::update_config_file_public(&state, move |config| {
+    match super::config_tx::update_config_file_public(&state, move |config| {
         config.auth_keys.push(entry);
         config.auth_key_store = AuthKeyStore::new(config.auth_keys.clone());
     })
@@ -128,7 +128,7 @@ pub async fn update_auth_key(
     Path(id): Path<usize>,
     Json(body): Json<UpdateAuthKeyRequest>,
 ) -> impl IntoResponse {
-    match super::providers::update_config_file_public(&state, move |config| {
+    match super::config_tx::update_config_file_public(&state, move |config| {
         if id < config.auth_keys.len() {
             let entry = &mut config.auth_keys[id];
             if let Some(name) = body.name {
@@ -199,7 +199,7 @@ pub async fn delete_auth_key(
     State(state): State<AppState>,
     Path(id): Path<usize>,
 ) -> impl IntoResponse {
-    match super::providers::update_config_file_public(&state, move |config| {
+    match super::config_tx::update_config_file_public(&state, move |config| {
         if id < config.auth_keys.len() {
             config.auth_keys.remove(id);
             config.auth_key_store = AuthKeyStore::new(config.auth_keys.clone());

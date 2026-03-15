@@ -1,4 +1,4 @@
-use super::providers::{ConfigTxError, update_config_versioned};
+use super::config_tx::{ConfigTxError, update_config_versioned};
 use crate::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -378,6 +378,7 @@ async fn ensure_oauth_profile_shape(
             StatusCode::CONFLICT,
             Json(json!({"error": "config_conflict", "current_version": current_version})),
         )),
+        Err(ConfigTxError::Validation(message)) => Err(validation_error(&message)),
         Err(ConfigTxError::Internal(message)) => Err(internal_error(message)),
     }
 }
@@ -471,6 +472,7 @@ pub async fn create_auth_profile(
             StatusCode::CONFLICT,
             Json(json!({"error": "config_conflict", "current_version": current_version})),
         ),
+        Err(ConfigTxError::Validation(message)) => validation_error(&message),
         Err(ConfigTxError::Internal(message)) => internal_error(message),
     }
 }
@@ -566,6 +568,7 @@ pub async fn replace_auth_profile(
             StatusCode::CONFLICT,
             Json(json!({"error": "config_conflict", "current_version": current_version})),
         ),
+        Err(ConfigTxError::Validation(message)) => validation_error(&message),
         Err(ConfigTxError::Internal(message)) => internal_error(message),
     }
 }
@@ -609,6 +612,7 @@ pub async fn delete_auth_profile(
             StatusCode::CONFLICT,
             Json(json!({"error": "config_conflict", "current_version": current_version})),
         ),
+        Err(ConfigTxError::Validation(message)) => validation_error(&message),
         Err(ConfigTxError::Internal(message)) => internal_error(message),
     }
 }

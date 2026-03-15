@@ -179,6 +179,59 @@ test.describe('Dashboard Pages', () => {
     await expect(page.locator('body')).toContainText(/balanced|lowest-cost|lowest-latency|stable/i);
   });
 
+  test('replay page explains a live route', async ({ page }) => {
+    await page.getByRole('link', { name: /replay/i }).click();
+    await expect(page.getByRole('heading', { name: 'Replay' })).toBeVisible();
+
+    await page.getByPlaceholder('e.g. gpt-4, claude-sonnet-4-5').fill('gpt-5');
+    await page.getByRole('button', { name: /explain route/i }).click();
+
+    await expect(page.locator('body')).toContainText('Route Selected');
+    await expect(page.locator('body')).toContainText('codex-gateway');
+    await expect(page.locator('body')).toContainText('gpt-5');
+  });
+
+  test('protocols page derives streaming support from live matrix', async ({ page }) => {
+    await page.getByRole('link', { name: /protocols/i }).click();
+    await expect(page.getByRole('heading', { name: 'Protocols' })).toBeVisible();
+    await expect(page.locator('body')).toContainText('/v1/responses');
+    await expect(page.locator('body')).toContainText('Streaming availability below is derived from the currently active provider set');
+    await expect(page.locator('body')).toContainText(/codex-gateway|claude-gateway/);
+  });
+
+  test('models page shows runtime capability truth', async ({ page }) => {
+    await page.getByRole('link', { name: /models & capabilities/i }).click();
+    await expect(page.getByRole('heading', { name: 'Models & Capabilities' })).toBeVisible();
+    await expect(page.locator('body')).toContainText('Provider Capabilities');
+    await expect(page.locator('body')).toContainText('gpt-5');
+    await expect(page.locator('body')).toContainText('claude-sonnet-4-20250514');
+    await expect(
+      page.getByRole('table').first().getByRole('row', { name: /codex-gateway openai/i }),
+    ).toContainText(/Yes|Unknown|No/);
+  });
+
+  test('tenants page exposes tenants and embedded auth keys', async ({ page }) => {
+    await page.getByRole('link', { name: /tenants & keys/i }).click();
+    await expect(page.getByRole('heading', { name: 'Tenants & Keys' })).toBeVisible();
+    await expect(page.locator('body')).toContainText(/No tenants found|playwright/i);
+
+    await page.getByRole('button', { name: /^auth keys$/i }).click();
+    await expect(page.getByRole('button', { name: /create key/i })).toBeVisible();
+  });
+
+  test('config page uses runtime snapshot and yaml workspace without fake schema tab', async ({ page }) => {
+    await page.getByRole('link', { name: /config & changes/i }).click();
+    await expect(page.getByRole('heading', { name: 'Config & Changes' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /runtime snapshot/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /config schema/i })).toHaveCount(0);
+    await expect(page.locator('body')).toContainText('Sanitized Runtime Snapshot');
+    await expect(page.locator('body')).toContainText('Provider Inventory');
+
+    await page.getByRole('button', { name: /yaml editor/i }).click();
+    await page.getByRole('button', { name: /^validate$/i }).click();
+    await expect(page.locator('body')).toContainText('Configuration is valid');
+  });
+
   test('system page shows health info', async ({ page }) => {
     await page.getByRole('link', { name: /system/i }).click();
     await expect(page.getByRole('heading', { name: 'System' })).toBeVisible();

@@ -42,7 +42,7 @@ pub async fn update_routing(
         );
     }
 
-    match super::providers::update_config_file_public(&state, move |config| {
+    match super::config_tx::update_config_file_public(&state, move |config| {
         if let Some(dp) = body.default_profile {
             config.routing.default_profile = dp;
         }

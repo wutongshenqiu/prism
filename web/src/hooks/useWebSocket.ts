@@ -1,16 +1,18 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback } from 'react';
 import { getWebSocketManager, destroyWebSocketManager } from '../services/websocket';
 import type { ConnectionState } from '../services/websocket';
 import { useAuthStore } from '../stores/authStore';
 import { useMetricsStore } from '../stores/metricsStore';
 import { useLogsStore } from '../stores/logsStore';
+import { useRealtimeStore } from '../stores/realtimeStore';
 import type { MetricsSnapshot, RequestLog, WsMessage } from '../types';
 
 export function useWebSocket(): { connectionState: ConnectionState } {
   const token = useAuthStore((s) => s.token);
   const setSnapshot = useMetricsStore((s) => s.setSnapshot);
   const addLog = useLogsStore((s) => s.addLog);
-  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const connectionState = useRealtimeStore((s) => s.connectionState);
+  const setConnectionState = useRealtimeStore((s) => s.setConnectionState);
 
   // Stable token provider that always reads the latest token
   const tokenProvider = useCallback(
@@ -29,7 +31,10 @@ export function useWebSocket(): { connectionState: ConnectionState } {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setConnectionState('disconnected');
+      return;
+    }
 
     const manager = getWebSocketManager(tokenProvider, tokenRefresher);
     manager.connect();
@@ -54,7 +59,7 @@ export function useWebSocket(): { connectionState: ConnectionState } {
       unsubscribe();
       unsubscribeState();
     };
-  }, [token, tokenProvider, tokenRefresher, setSnapshot, addLog]);
+  }, [token, tokenProvider, tokenRefresher, setSnapshot, addLog, setConnectionState]);
 
   useEffect(() => {
     return () => {

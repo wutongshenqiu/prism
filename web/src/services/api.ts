@@ -22,6 +22,8 @@ import type {
   SystemHealth,
   SystemLog,
   ConfigValidateResponse,
+  ConfigSnapshot,
+  RawConfigResponse,
   TenantSummary,
   TenantMetricsResponse,
   AuthProfile,
@@ -445,9 +447,9 @@ export const tenantsApi = {
 // ── Config ──
 
 export const configApi = {
-  current: () => api.get<Record<string, unknown> & { config_version?: string }>('/config/current'),
+  current: () => api.get<ConfigSnapshot>('/config/current'),
 
-  raw: () => api.get<{ content: string; path: string; config_version?: string }>('/config/raw'),
+  raw: () => api.get<RawConfigResponse>('/config/raw'),
 
   validate: (yaml: string) =>
     api.post<ConfigValidateResponse>('/config/validate', { yaml }),
