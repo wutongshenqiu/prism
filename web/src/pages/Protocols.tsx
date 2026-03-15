@@ -1,107 +1,153 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { protocolsApi } from '../services/api';
-import type { ProtocolMatrixEntry } from '../services/api';
+import type {
+  ProbeStatus,
+  ProtocolCoverageEntry,
+  ProtocolEndpointEntry,
+} from '../types';
 import {
+  ArrowRight,
+  CheckCircle,
   Network,
   RefreshCw,
-  CheckCircle,
   XCircle,
-  ArrowRight,
 } from 'lucide-react';
 
-interface ProtocolEndpoint {
-  method: string;
-  path: string;
-  description: string;
-  streamMode: 'never' | 'runtime';
+interface ProtocolMatrixState {
+  endpoints: ProtocolEndpointEntry[];
+  coverage: ProtocolCoverageEntry[];
 }
 
-type ProbeState = 'verified' | 'failed' | 'unknown' | 'unsupported';
+const FAMILY_LABELS: Record<ProtocolEndpointEntry['family'], string> = {
+  open_ai: 'OpenAI',
+  claude: 'Claude',
+  gemini: 'Gemini',
+};
 
-const PROTOCOLS: {
-  id: string;
-  label: string;
-  format: string;
-  endpoints: ProtocolEndpoint[];
-}[] = [
-  {
-    id: 'open_ai',
-    label: 'OpenAI',
-    format: 'openai',
-    endpoints: [
-      { method: 'POST', path: '/v1/chat/completions', description: 'Chat completions', streamMode: 'runtime' },
-      { method: 'POST', path: '/v1/responses', description: 'Responses API', streamMode: 'runtime' },
-      { method: 'GET', path: '/v1/models', description: 'List models', streamMode: 'never' },
-    ],
-  },
-  {
-    id: 'claude',
-    label: 'Claude (Anthropic)',
-    format: 'claude',
-    endpoints: [
-      { method: 'POST', path: '/v1/messages', description: 'Messages API', streamMode: 'runtime' },
-    ],
-  },
-  {
-    id: 'gemini',
-    label: 'Gemini (Google)',
-    format: 'gemini',
-    endpoints: [
-      { method: 'POST', path: '/v1beta/models/{model}:generateContent', description: 'Generate content', streamMode: 'never' },
-      { method: 'POST', path: '/v1beta/models/{model}:streamGenerateContent', description: 'Stream generate content', streamMode: 'runtime' },
-      { method: 'GET', path: '/v1beta/models', description: 'List models', streamMode: 'never' },
-    ],
-  },
-];
+const STREAM_LABELS: Record<ProtocolEndpointEntry['stream_transport'], string> = {
+  none: 'No',
+  sse: 'SSE',
+  web_socket_events: 'WebSocket events',
+};
 
-type CoverageLevel = 'native' | 'adapted' | 'none';
+const SCOPE_LABELS: Record<ProtocolEndpointEntry['scope'], string> = {
+  public: 'Public',
+  provider_scoped: 'Provider-scoped',
+};
 
-function executionModeToCoverage(mode: string): CoverageLevel {
+type CoverageLevel = 'native' | 'adapted' | 'unsupported';
+
+function routeOrder(path: string): number {
+  const order = [
+    '/v1/chat/completions',
+    '/v1/completions',
+    '/v1/responses',
+    '/v1/responses/ws',
+    '/v1/models',
+    '/v1/messages',
+    '/v1/messages/count_tokens',
+    '/v1beta/models/{model}:generateContent',
+    '/v1beta/models/{model}:streamGenerateContent',
+    '/v1beta/models',
+    '/api/provider/{provider}/v1/chat/completions',
+    '/api/provider/{provider}/v1/messages',
+    '/api/provider/{provider}/v1/responses',
+    '/api/provider/{provider}/v1/responses/ws',
+  ];
+  const index = order.indexOf(path);
+  return index === -1 ? order.length : index;
+}
+
+function executionModeToCoverage(mode?: ProtocolCoverageEntry['execution_mode']): CoverageLevel {
   if (mode === 'native') return 'native';
-  if (mode === 'lossless_adapted' || mode === 'lossy_adapted') return 'adapted';
-  return 'none';
+  if (mode) return 'adapted';
+  return 'unsupported';
 }
 
-function CoverageBadge({ level }: { level: CoverageLevel }) {
-  if (level === 'native') {
-    return <span className="type-badge type-badge--green"><CheckCircle size={12} /> Native</span>;
-  }
-  if (level === 'adapted') {
-    return <span className="type-badge type-badge--blue"><ArrowRight size={12} /> Adapted</span>;
-  }
-  return <span className="type-badge type-badge--red"><XCircle size={12} /> None</span>;
-}
-
-function StreamSupportBadge({
-  mode,
+function StateBadge({
   state,
 }: {
-  mode: ProtocolEndpoint['streamMode'];
-  state: ProbeState;
+  state: {
+    status: ProbeStatus;
+    message?: string | null;
+  };
 }) {
-  if (mode === 'never') {
-    return <span className="text-muted">No</span>;
+  if (state.status === 'verified') {
+    return (
+      <span className="type-badge type-badge--green" title={state.message ?? undefined}>
+        <CheckCircle size={12} />
+        Verified
+      </span>
+    );
   }
-  if (state === 'verified') {
-    return <span className="type-badge type-badge--green"><CheckCircle size={12} /> Verified</span>;
+  if (state.status === 'failed') {
+    return (
+      <span className="type-badge type-badge--red" title={state.message ?? undefined}>
+        <XCircle size={12} />
+        Failed
+      </span>
+    );
   }
-  if (state === 'failed') {
-    return <span className="type-badge type-badge--red"><XCircle size={12} /> Failed</span>;
+  if (state.status === 'unsupported') {
+    return (
+      <span className="type-badge" title={state.message ?? undefined}>
+        Unsupported
+      </span>
+    );
   }
-  if (state === 'unsupported') {
-    return <span className="type-badge">Unsupported</span>;
+  return (
+    <span className="type-badge" title={state.message ?? undefined}>
+      Unknown
+    </span>
+  );
+}
+
+function CoverageCell({ entry }: { entry?: ProtocolCoverageEntry }) {
+  if (!entry) {
+    return <span className="type-badge">Not exposed</span>;
   }
-  return <span className="type-badge">Unknown</span>;
+
+  if (entry.state.status === 'unsupported' || !entry.execution_mode) {
+    return (
+      <span className="type-badge" title={entry.state.message ?? undefined}>
+        Unsupported
+      </span>
+    );
+  }
+
+  const label = executionModeToCoverage(entry.execution_mode) === 'native' ? 'Native' : 'Adapted';
+  if (entry.state.status === 'verified') {
+    return (
+      <span className="type-badge type-badge--green" title={entry.state.message ?? undefined}>
+        {label}
+      </span>
+    );
+  }
+  if (entry.state.status === 'failed') {
+    return (
+      <span className="type-badge type-badge--red" title={entry.state.message ?? undefined}>
+        {label} failed
+      </span>
+    );
+  }
+  return (
+    <span className="type-badge type-badge--blue" title={entry.state.message ?? undefined}>
+      {label} unknown
+    </span>
+  );
 }
 
 export default function Protocols() {
-  const [matrixEntries, setMatrixEntries] = useState<ProtocolMatrixEntry[]>([]);
+  const [matrix, setMatrix] = useState<ProtocolMatrixState>({
+    endpoints: [],
+    coverage: [],
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchMatrix = useCallback(async () => {
     try {
-      const entries = await protocolsApi.matrix();
-      setMatrixEntries(entries);
+      const next = await protocolsApi.matrix();
+      setMatrix(next);
     } catch (err) {
       console.error('Failed to fetch protocol matrix:', err);
     } finally {
@@ -110,49 +156,50 @@ export default function Protocols() {
   }, []);
 
   useEffect(() => {
-    fetchMatrix();
+    void fetchMatrix();
   }, [fetchMatrix]);
 
-  // Derive unique providers from the matrix
-  const providers = useMemo(() => {
-    const seen = new Set<string>();
-    return matrixEntries
-      .filter((e) => e.supports_generate)
-      .filter((e) => { if (seen.has(e.provider)) return false; seen.add(e.provider); return true; })
-      .map((e) => ({ name: e.provider, upstream_protocol: e.upstream_protocol }));
-  }, [matrixEntries]);
-
-  // Build a coverage lookup: (provider, ingress_protocol) → execution_mode
-  const coverageLookup = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const e of matrixEntries) {
-      map.set(`${e.provider}::${e.ingress_protocol}`, e.execution_mode);
-    }
-    return map;
-  }, [matrixEntries]);
-
-  const uniqueFormats = [...new Set(providers.map((p) => p.upstream_protocol))];
-  const streamSupportByIngress = useMemo(() => {
-    const rank: Record<ProbeState, number> = {
-      verified: 4,
-      failed: 3,
-      unsupported: 2,
-      unknown: 1,
+  const endpointsByScope = useMemo(() => {
+    const sorted = [...matrix.endpoints].sort((a, b) => routeOrder(a.path) - routeOrder(b.path));
+    return {
+      public: sorted.filter((entry) => entry.scope === 'public'),
+      providerScoped: sorted.filter((entry) => entry.scope === 'provider_scoped'),
     };
-    const map = new Map<string, ProbeState>();
-    for (const protocol of PROTOCOLS) {
-      map.set(protocol.id, 'unknown');
-    }
-    for (const entry of matrixEntries) {
-      if (!entry.supports_generate) continue;
-      const current = map.get(entry.ingress_protocol) ?? 'unknown';
-      const next = entry.stream_state?.status ?? 'unknown';
-      if (rank[next] > rank[current]) {
-        map.set(entry.ingress_protocol, next);
+  }, [matrix.endpoints]);
+
+  const activeCoverage = useMemo(
+    () => matrix.coverage.filter((entry) => !entry.disabled),
+    [matrix.coverage],
+  );
+
+  const surfaces = useMemo(() => {
+    const seen = new Set<string>();
+    return activeCoverage.filter((entry) => {
+      if (seen.has(entry.surface_id)) return false;
+      seen.add(entry.surface_id);
+      return true;
+    });
+  }, [activeCoverage]);
+
+  const providers = useMemo(() => {
+    const byProvider = new Map<string, { meta: ProtocolCoverageEntry; cells: Map<string, ProtocolCoverageEntry> }>();
+    for (const entry of activeCoverage) {
+      const existing = byProvider.get(entry.provider);
+      if (existing) {
+        existing.cells.set(entry.surface_id, entry);
+        continue;
       }
+      byProvider.set(entry.provider, {
+        meta: entry,
+        cells: new Map([[entry.surface_id, entry]]),
+      });
     }
-    return map;
-  }, [matrixEntries]);
+    return [...byProvider.values()];
+  }, [activeCoverage]);
+
+  const hiddenDisabledProviders = new Set(
+    matrix.coverage.filter((entry) => entry.disabled).map((entry) => entry.provider),
+  ).size;
 
   return (
     <div className="page">
@@ -160,7 +207,7 @@ export default function Protocols() {
         <div>
           <h2>Protocols</h2>
           <p className="page-subtitle">
-            Public ingress protocols, endpoint semantics, and provider coverage
+            Runtime route inventory and provider surface coverage
           </p>
         </div>
         <div className="page-header-actions">
@@ -171,40 +218,72 @@ export default function Protocols() {
         </div>
       </div>
 
-      {/* Protocol Endpoint Reference */}
       <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div className="card-header">
-          <h3><Network size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Public Endpoints</h3>
+          <h3>
+            <Network size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+            Route Inventory
+          </h3>
         </div>
         <div className="card-body">
           <p className="text-muted" style={{ marginBottom: '1rem' }}>
-            All public inference endpoints share one canonical runtime pipeline. Requests are parsed by protocol-specific ingress adapters, routed through the capability-aware planner, and translated back via egress adapters. Streaming availability below is derived from the currently active provider set, not hardcoded assumptions.
+            This table is built from the current backend router and cached probe truth. WebSocket routes,
+            provider-scoped routes, and non-generation operations are listed explicitly instead of being
+            collapsed into three protocol families.
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {PROTOCOLS.map((proto) => (
-              <div key={proto.id}>
-                <h4 style={{ marginBottom: '0.5rem' }}>{proto.label}</h4>
+          {(['public', 'providerScoped'] as const).map((scopeKey) => {
+            const entries = scopeKey === 'public' ? endpointsByScope.public : endpointsByScope.providerScoped;
+            return (
+              <div key={scopeKey} style={{ marginBottom: scopeKey === 'public' ? '1.5rem' : 0 }}>
+                <h4 style={{ marginBottom: '0.75rem' }}>
+                  {scopeKey === 'public' ? 'Public Routes' : 'Provider-scoped Routes'}
+                </h4>
                 <div className="table-wrapper">
                   <table className="table">
                     <thead>
                       <tr>
+                        <th>Family</th>
                         <th style={{ width: 80 }}>Method</th>
                         <th>Path</th>
+                        <th style={{ width: 120 }}>Transport</th>
+                        <th style={{ width: 140 }}>Streaming</th>
+                        <th style={{ width: 120 }}>State</th>
                         <th>Description</th>
-                        <th style={{ width: 90 }}>Stream</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {proto.endpoints.map((ep) => (
-                        <tr key={ep.path}>
-                          <td><span className="type-badge">{ep.method}</span></td>
-                          <td className="text-mono" style={{ fontSize: '0.85rem' }}>{ep.path}</td>
-                          <td>{ep.description}</td>
+                      {entries.map((entry) => (
+                        <tr key={entry.id}>
                           <td>
-                            <StreamSupportBadge
-                              mode={ep.streamMode}
-                              state={streamSupportByIngress.get(proto.id) ?? 'unknown'}
-                            />
+                            <span className="type-badge">{FAMILY_LABELS[entry.family]}</span>
+                            <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: 4 }}>
+                              {SCOPE_LABELS[entry.scope]}
+                            </div>
+                          </td>
+                          <td>
+                            <span className="type-badge">{entry.method}</span>
+                          </td>
+                          <td className="text-mono" style={{ fontSize: '0.85rem' }}>
+                            {entry.path}
+                          </td>
+                          <td>
+                            <span className="type-badge">
+                              {entry.transport === 'web_socket' ? 'WebSocket' : 'HTTP'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="type-badge">{STREAM_LABELS[entry.stream_transport]}</span>
+                          </td>
+                          <td>
+                            <StateBadge state={entry.state} />
+                          </td>
+                          <td>
+                            <div>{entry.description}</div>
+                            {entry.note && (
+                              <div className="text-muted" style={{ fontSize: '0.8rem', marginTop: 4 }}>
+                                {entry.note}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -212,19 +291,18 @@ export default function Protocols() {
                   </table>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Protocol × Provider Coverage Matrix */}
       <div className="card">
         <div className="card-header">
-          <h3>Protocol Coverage Matrix</h3>
+          <h3>Provider Surface Coverage</h3>
         </div>
         <div className="card-body">
           {isLoading ? (
-            <div className="empty-state"><p>Loading providers...</p></div>
+            <div className="empty-state"><p>Loading protocol coverage...</p></div>
           ) : providers.length === 0 ? (
             <div className="empty-state">
               <Network size={48} />
@@ -233,67 +311,57 @@ export default function Protocols() {
           ) : (
             <>
               <p className="text-muted" style={{ marginBottom: '1rem' }}>
-                <strong>Native</strong>: Provider speaks this protocol natively. <strong>Adapted</strong>: Request is translated through the canonical IR to reach this provider.
+                Coverage is calculated per client surface, not by rough upstream family. For example,
+                OpenAI Chat and OpenAI Responses are treated separately because Responses only works with
+                OpenAI-format providers, while chat can be adapted into Claude or Gemini.
               </p>
+              {hiddenDisabledProviders > 0 && (
+                <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
+                  {hiddenDisabledProviders} disabled provider surface{hiddenDisabledProviders === 1 ? '' : 's'} are hidden from this matrix.
+                </div>
+              )}
               <div className="table-wrapper">
                 <table className="table">
                   <thead>
                     <tr>
                       <th>Provider</th>
-                      <th>Protocol</th>
-                      {PROTOCOLS.map((p) => (
-                        <th key={p.id} style={{ textAlign: 'center' }}>{p.label}</th>
+                      <th>Identity</th>
+                      {surfaces.map((surface) => (
+                        <th key={surface.surface_id} style={{ textAlign: 'center' }}>
+                          {surface.surface_label}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {providers.map((provider) => (
-                      <tr key={provider.name}>
-                        <td className="text-bold">{provider.name}</td>
-                        <td><span className="type-badge">{provider.upstream_protocol}</span></td>
-                        {PROTOCOLS.map((proto) => {
-                          const mode = coverageLookup.get(`${provider.name}::${proto.id}`) || '';
-                          return (
-                            <td key={proto.id} style={{ textAlign: 'center' }}>
-                              <CoverageBadge level={executionModeToCoverage(mode)} />
-                            </td>
-                          );
-                        })}
+                    {providers.map(({ meta, cells }) => (
+                      <tr key={meta.provider}>
+                        <td className="text-bold">{meta.provider}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <span className="type-badge">{meta.format}</span>
+                            <span className="type-badge" style={{ opacity: 0.85 }}>{meta.upstream}</span>
+                            <span className="type-badge" style={{ opacity: 0.7 }}>{meta.wire_api}</span>
+                          </div>
+                        </td>
+                        {surfaces.map((surface) => (
+                          <td key={surface.surface_id} style={{ textAlign: 'center' }}>
+                            <CoverageCell entry={cells.get(surface.surface_id)} />
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <div className="text-muted" style={{ marginTop: '1rem', fontSize: '0.8rem' }}>
+                <ArrowRight size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Native means the provider speaks that client surface directly. Adapted means Prism translates the request through the canonical gateway pipeline.
+              </div>
             </>
           )}
         </div>
       </div>
-
-      {/* Format Distribution */}
-      {!isLoading && providers.length > 0 && (
-        <div className="card" style={{ marginTop: '1.5rem' }}>
-          <div className="card-header">
-            <h3>Provider Protocol Distribution</h3>
-          </div>
-          <div className="card-body">
-            <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-              {uniqueFormats.map((fmt) => {
-                const count = providers.filter((p) => p.upstream_protocol === fmt).length;
-                return (
-                  <div key={fmt} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '2rem', fontWeight: 700 }}>{count}</div>
-                    <div className="text-muted" style={{ textTransform: 'capitalize' }}>{fmt}</div>
-                  </div>
-                );
-              })}
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '2rem', fontWeight: 700 }}>{providers.length}</div>
-                <div className="text-muted">Total Active</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

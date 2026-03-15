@@ -440,7 +440,7 @@ export default function Providers() {
 
   const summarizeProbe = (result: ProviderHealthResult) =>
     result.checks
-      .filter((check) => ['text', 'stream', 'tools', 'images'].includes(check.capability))
+      .filter((check) => check.capability !== 'auth')
       .map((check) => `${check.capability}:${check.status}`)
       .join(' · ');
 
@@ -484,8 +484,9 @@ export default function Providers() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Format</th>
-                <th>Profile</th>
+                <th>Identity</th>
+                <th>Presentation</th>
+                <th>Wire API</th>
                 <th>Base URL</th>
                 <th>Models</th>
                 <th>Status</th>
@@ -495,11 +496,11 @@ export default function Providers() {
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="table-empty">Loading...</td>
+                  <td colSpan={8} className="table-empty">Loading...</td>
                 </tr>
               ) : providers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="table-empty">
+                  <td colSpan={8} className="table-empty">
                     <div className="empty-state">
                       <Server size={48} />
                       <p>No providers configured</p>
@@ -539,6 +540,9 @@ export default function Providers() {
                       <span className="type-badge" style={{ opacity: provider.upstream_presentation?.profile && provider.upstream_presentation.profile !== 'native' ? 1 : 0.5 }}>
                         {PROFILE_OPTIONS.find((p) => p.value === provider.upstream_presentation?.profile)?.label ?? 'Native'}
                       </span>
+                    </td>
+                    <td>
+                      <span className="type-badge">{provider.wire_api}</span>
                     </td>
                     <td className="text-mono" style={{ maxWidth: 250 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

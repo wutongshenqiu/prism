@@ -283,6 +283,106 @@ Deletes a provider.
 
 ---
 
+#### GET /api/dashboard/providers/capabilities
+
+Returns dashboard runtime truth for every provider. Unlike the editable provider CRUD payload, this response is probe-oriented and includes provider identity, presentation, wire API, flattened model inventory, and the latest cached capability probe states.
+
+**Response shape:**
+```json
+{
+  "providers": [
+    {
+      "name": "codex-gateway",
+      "format": "openai",
+      "upstream": "codex",
+      "upstream_protocol": "open_ai",
+      "wire_api": "responses",
+      "presentation_profile": "codex-cli",
+      "presentation_mode": "always",
+      "models": [
+        { "id": "gpt-5", "alias": null }
+      ],
+      "probe_status": "warning",
+      "checked_at": "2026-03-16T12:00:00Z",
+      "probe": {
+        "text": { "status": "verified", "message": null },
+        "stream": { "status": "verified", "message": null },
+        "tools": { "status": "verified", "message": null },
+        "images": { "status": "verified", "message": null },
+        "json_schema": { "status": "unknown", "message": "no live probe implemented" },
+        "reasoning": { "status": "unknown", "message": "no live probe implemented" },
+        "count_tokens": { "status": "unsupported", "message": "Codex backend does not expose count_tokens" }
+      },
+      "disabled": false
+    }
+  ]
+}
+```
+
+**Notes:**
+- `probe_status` is a provider-level summary derived from the cached probe result (`ok`, `warning`, `error`, `unknown`).
+- `probe.*.status` is per-capability runtime truth (`verified`, `failed`, `unknown`, `unsupported`).
+- `models[]` is the provider-local model mapping used by the dashboard model registry.
+
+**Source:** `crates/server/src/handler/dashboard/control_plane.rs`
+
+---
+
+#### GET /api/dashboard/protocols/matrix
+
+Returns the dashboard protocol control-plane payload. This endpoint is no longer a coarse three-column matrix; it exposes both the explicit route inventory and per-provider client-surface coverage.
+
+**Response shape:**
+```json
+{
+  "endpoints": [
+    {
+      "id": "openai_responses_ws",
+      "family": "open_ai",
+      "method": "GET",
+      "path": "/v1/responses/ws",
+      "description": "WebSocket facade over Responses SSE with create/append semantics.",
+      "scope": "public",
+      "transport": "web_socket",
+      "operation": "generate",
+      "stream_transport": "web_socket_events",
+      "state": {
+        "status": "verified",
+        "message": "at least one active provider has verified runtime support"
+      },
+      "note": "Terminal completion is signaled by response.completed, not [DONE]."
+    }
+  ],
+  "coverage": [
+    {
+      "provider": "codex-gateway",
+      "format": "openai",
+      "upstream": "codex",
+      "upstream_protocol": "open_ai",
+      "wire_api": "responses",
+      "disabled": false,
+      "surface_id": "openai_responses_ws",
+      "surface_label": "OpenAI Responses WS",
+      "ingress_protocol": "open_ai",
+      "execution_mode": "native",
+      "state": {
+        "status": "verified",
+        "message": null
+      }
+    }
+  ]
+}
+```
+
+**Notes:**
+- `endpoints[]` is built from the current backend router contract and includes public routes, provider-scoped routes, non-generation operations, and WebSocket transports.
+- `coverage[]` is calculated per provider and per client surface such as `openai_chat`, `openai_responses`, `openai_responses_ws`, `claude_messages`, `claude_count_tokens`, `gemini_generate`, and `gemini_stream`.
+- `execution_mode` is omitted when a provider does not expose the surface at all. Otherwise it reflects whether Prism can serve that surface `native`ly or through protocol adaptation.
+
+**Source:** `crates/server/src/handler/dashboard/control_plane.rs`
+
+---
+
 #### GET /api/dashboard/auth-profiles
 
 Lists flattened auth profile state across all providers. This includes mode, header kind, masked secret or runtime access-token state, refresh-token presence, expiry, account metadata, and upstream presentation config.
