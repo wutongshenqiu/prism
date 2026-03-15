@@ -17,6 +17,34 @@ interface ModelEntry {
   format: string;
 }
 
+type CapabilityState = boolean | null;
+
+function CapabilityBadge({
+  state,
+  label,
+}: {
+  state: CapabilityState;
+  label?: string;
+}) {
+  if (state === true) {
+    return (
+      <span className="type-badge type-badge--green">
+        <CheckCircle size={12} />
+        {label || 'Yes'}
+      </span>
+    );
+  }
+  if (state === false) {
+    return (
+      <span className="type-badge type-badge--red">
+        <XCircle size={12} />
+        {label || 'No'}
+      </span>
+    );
+  }
+  return <span className="type-badge">Unknown</span>;
+}
+
 export default function ModelsCapabilities() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [capabilityMap, setCapabilityMap] = useState<Record<string, ProviderCapabilityEntry>>({});
@@ -108,8 +136,8 @@ export default function ModelsCapabilities() {
         name: p.name,
         format: p.format,
         modelsCount: p.models.length,
-        supportsStream: caps?.supports_stream ?? true,
-        supportsTools: caps?.supports_tools ?? false,
+        supportsStream: caps?.supports_stream ?? null,
+        supportsTools: caps?.supports_tools ?? null,
         wireApi: p.wire_api,
         hasPresentation: !!p.upstream_presentation && p.upstream_presentation.profile !== 'native',
       };
@@ -170,18 +198,15 @@ export default function ModelsCapabilities() {
                         <span className="type-badge">{cap.wireApi}</span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <CheckCircle size={14} color="var(--color-success)" />
+                        <CapabilityBadge state={cap.supportsStream} />
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        {cap.supportsTools
-                          ? <CheckCircle size={14} color="var(--color-success)" />
-                          : <XCircle size={14} color="var(--color-text-secondary)" />
-                        }
+                        <CapabilityBadge state={cap.supportsTools} />
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         {cap.hasPresentation
-                          ? <CheckCircle size={14} color="var(--color-success)" />
-                          : <span className="text-muted">-</span>
+                          ? <CapabilityBadge state label="Enabled" />
+                          : <span className="text-muted">Native</span>
                         }
                       </td>
                     </tr>

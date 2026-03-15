@@ -2,6 +2,7 @@ pub mod auth;
 pub mod auth_keys;
 pub mod auth_profiles;
 pub mod config_ops;
+pub mod config_tx;
 pub mod control_plane;
 pub mod logs;
 pub mod providers;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useLogsStore } from '../stores/logsStore';
+import { useRealtimeStore } from '../stores/realtimeStore';
 import LogDrawer from '../components/LogDrawer';
 import FilterSelect from '../components/FilterSelect';
 import type { RequestLogFilter } from '../types';
@@ -12,6 +13,7 @@ export default function RequestLogs() {
   const page = useLogsStore((s) => s.page);
   const totalPages = useLogsStore((s) => s.totalPages);
   const total = useLogsStore((s) => s.total);
+  const pendingLiveCount = useLogsStore((s) => s.pendingLiveCount);
   const isLoading = useLogsStore((s) => s.isLoading);
   const fetchLogs = useLogsStore((s) => s.fetchLogs);
   const setPage = useLogsStore((s) => s.setPage);
@@ -22,6 +24,7 @@ export default function RequestLogs() {
   const openDrawer = useLogsStore((s) => s.openDrawer);
   const isLive = useLogsStore((s) => s.isLive);
   const toggleLive = useLogsStore((s) => s.toggleLive);
+  const connectionState = useRealtimeStore((s) => s.connectionState);
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -254,6 +257,27 @@ export default function RequestLogs() {
       {error && (
         <div className="alert alert-error" style={{ marginBottom: '1.5rem' }}>
           {error}
+        </div>
+      )}
+
+      {isLive && connectionState !== 'connected' && (
+        <div className="alert alert-warning" style={{ marginBottom: '1.5rem' }}>
+          {connectionState === 'connecting'
+            ? 'Realtime feed is reconnecting. Live updates may arrive with delay.'
+            : 'Realtime feed is disconnected. Historical queries still work, but live updates are paused until the socket reconnects.'}
+        </div>
+      )}
+
+      {isLive && page !== 1 && pendingLiveCount > 0 && (
+        <div className="alert alert-warning" style={{ marginBottom: '1.5rem' }}>
+          {pendingLiveCount} new matching request{pendingLiveCount === 1 ? '' : 's'} arrived while you were browsing older pages.
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ marginLeft: '0.75rem' }}
+            onClick={() => setPage(1)}
+          >
+            Jump to latest
+          </button>
         </div>
       )}
 

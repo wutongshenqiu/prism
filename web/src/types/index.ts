@@ -634,6 +634,62 @@ export interface WsMessage {
 
 // ── Config ──
 
+export interface ConfigProviderSummary {
+  name: string;
+  format: string;
+  disabled: boolean;
+  models_count: number;
+  region: string | null;
+  wire_api: string;
+}
+
+export interface ConfigSnapshot {
+  listen: {
+    host: string;
+    port: number;
+    tls_enabled: boolean;
+    body_limit_mb: number;
+  };
+  providers: {
+    total: number;
+    items: ConfigProviderSummary[];
+  };
+  routing: RoutingConfig;
+  auth_keys: {
+    total: number;
+  };
+  dashboard: {
+    enabled: boolean;
+    username: string;
+    jwt_ttl_secs: number;
+  };
+  rate_limit: Record<string, unknown>;
+  cache: {
+    enabled: boolean;
+    max_entries: number;
+    ttl_secs: number;
+  };
+  cost: {
+    custom_prices_count: number;
+  };
+  retry: Record<string, unknown>;
+  streaming: Record<string, unknown>;
+  timeouts: {
+    connect_timeout: number;
+    request_timeout: number;
+  };
+  log_store: {
+    capacity: number;
+  };
+  config_version: string;
+}
+
+export interface RawConfigResponse {
+  content: string;
+  path: string;
+  config_version?: string;
+}
+
 export interface ConfigValidateResponse {
   valid: boolean;
   errors: string[];

@@ -71,7 +71,18 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Connect WebSocket for real-time updates
-  useWebSocket();
+  const { connectionState } = useWebSocket();
+
+  const connectionLabel = connectionState === 'connected'
+    ? 'Realtime connected'
+    : connectionState === 'connecting'
+      ? 'Realtime reconnecting'
+      : 'Realtime disconnected';
+  const connectionClass = connectionState === 'connected'
+    ? 'type-badge type-badge--green'
+    : connectionState === 'connecting'
+      ? 'type-badge type-badge--blue'
+      : 'type-badge type-badge--red';
 
   const handleLogout = () => {
     logout();
@@ -143,6 +154,12 @@ export default function Layout() {
             <Menu size={20} />
           </button>
           <h1 className="main-header-title">Prism Gateway</h1>
+          <div className="main-header-status">
+            <span className={connectionClass}>
+              <span className={`live-dot ${connectionState === 'connected' ? 'live-dot--active' : ''}`} />
+              {connectionLabel}
+            </span>
+          </div>
         </header>
         <div className="main-body">
           <Outlet />
