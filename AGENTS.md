@@ -284,6 +284,7 @@ Agent commands defined in `.claude/commands/`. Portable to OpenCode (`.opencode/
 - **Serialization**: Use `serde` with `serde_json` and `serde_yml` for all data serialization. Derive `Serialize`/`Deserialize` on public types.
 - **Configuration**: Use `arc-swap` for hot-reloadable configuration.
 - **Naming**: Follow standard Rust naming conventions -- `snake_case` for functions/variables, `PascalCase` for types/traits, `SCREAMING_SNAKE_CASE` for constants.
+- **CSS custom properties**: All design tokens in `web/` use the `--color-` prefix for color variables. Never use shorthand like `var(--success)` — always use the full form `var(--color-success)`. The canonical token names are defined in `web/src/App.css` `:root` block. Key prefixes: `--color-primary`, `--color-success`, `--color-warning`, `--color-danger`, `--color-text`, `--color-bg-*`, `--color-border`, `--radius-*`.
 
 ## Git Conventions
 

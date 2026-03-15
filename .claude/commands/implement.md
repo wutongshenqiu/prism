@@ -13,6 +13,10 @@ Steps:
    - 如果 Spec 目录不存在，报错退出
    - 优先读取 `technical-design.md`，提取 Task Breakdown / Implementation Steps
    - **如果 TD 不存在**: 读取 `prd.md`，基于 Goals / User Stories 生成 `technical-design.md` 并写入 Spec 目录，然后继续
+   - **检查 `implementation-handoff.md`**: 如果存在，读取其中定义的 Issue 序列和实现顺序
+     - handoff 文件定义了 ordered issue list（`#NNN: title` 格式）和每个 issue 的 scope/acceptance criteria
+     - 按 handoff 中的顺序逐个实现每个 issue，每完成一个 issue 运行 `make lint && make test`
+     - 每个 issue 完成后用 `gh issue close NNN` 关闭对应 issue
    - 提取关键文件列表和涉及的 crate
 
 2. **创建分支**: 基于 Spec ID 创建 feature 分支
