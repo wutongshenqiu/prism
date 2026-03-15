@@ -8,6 +8,8 @@ import type {
   PresentationPreviewResponse,
   ProviderCapabilityEntry,
   ProviderHealthResult,
+  ProtocolCoverageEntry,
+  ProtocolEndpointEntry,
   AuthKey,
   AuthKeyCreateRequest,
   AuthKeyCreateResponse,
@@ -232,8 +234,21 @@ export const providersApi = {
               };
               return {
                 name: String(record.name ?? ''),
+                format: (record.format as ProviderCapabilityEntry['format']) ?? 'openai',
+                upstream: (record.upstream as ProviderCapabilityEntry['upstream']) ?? 'openai',
                 upstream_protocol: String(record.upstream_protocol ?? ''),
-                models: Array.isArray(record.models) ? record.models.map(String) : [],
+                wire_api: (record.wire_api as ProviderCapabilityEntry['wire_api']) ?? 'chat',
+                presentation_profile: (record.presentation_profile as ProviderCapabilityEntry['presentation_profile']) ?? 'native',
+                presentation_mode: (record.presentation_mode as ProviderCapabilityEntry['presentation_mode']) ?? 'always',
+                models: Array.isArray(record.models)
+                  ? record.models.map((item) => {
+                      const model = asRecord(item);
+                      return {
+                        id: String(model.id ?? ''),
+                        alias: (model.alias as string | null) ?? null,
+                      };
+                    })
+                  : [],
                 capabilities: {
                   supports_stream: Boolean(caps.supports_stream),
                   supports_tools: Boolean(caps.supports_tools),
@@ -252,6 +267,8 @@ export const providersApi = {
                   reasoning: normalizeProbe(probe.reasoning),
                   count_tokens: normalizeProbe(probe.count_tokens),
                 },
+                probe_status: (record.probe_status as ProviderCapabilityEntry['probe_status']) ?? 'unknown',
+                checked_at: (record.checked_at as string | null) ?? null,
                 disabled: Boolean(record.disabled),
               } satisfies ProviderCapabilityEntry;
             })
@@ -445,45 +462,59 @@ export const logsApi = {
 
 // ── System ──
 
-export interface ProtocolMatrixEntry {
-  provider: string;
-  ingress_protocol: string;
-  upstream_protocol: string;
-  execution_mode: string;
-  supports_generate: boolean;
-  supports_stream: boolean;
-  stream_state: { status: 'verified' | 'failed' | 'unknown' | 'unsupported'; message?: string | null };
-  supports_count_tokens: boolean;
-  count_tokens_state: { status: 'verified' | 'failed' | 'unknown' | 'unsupported'; message?: string | null };
+export interface ProtocolMatrixPayload {
+  endpoints: ProtocolEndpointEntry[];
+  coverage: ProtocolCoverageEntry[];
 }
 
 export const protocolsApi = {
   matrix: () =>
-    api.get<{ entries: ProtocolMatrixEntry[] }>('/protocols/matrix').then((res) => {
-      const raw = res.data.entries || [];
-      return Array.isArray(raw)
-        ? raw.map((item) => {
-            const record = asRecord(item);
-            const normalizeProbe = (value: unknown) => {
-              const probeRecord = asRecord(value);
-              return {
-                status: String(probeRecord.status ?? 'unknown') as ProtocolMatrixEntry['stream_state']['status'],
-                message: (probeRecord.message as string | null) ?? null,
-              };
-            };
-            return {
-              provider: String(record.provider ?? ''),
-              ingress_protocol: String(record.ingress_protocol ?? ''),
-              upstream_protocol: String(record.upstream_protocol ?? ''),
-              execution_mode: String(record.execution_mode ?? ''),
-              supports_generate: Boolean(record.supports_generate),
-              supports_stream: Boolean(record.supports_stream),
-              stream_state: normalizeProbe(record.stream_state),
-              supports_count_tokens: Boolean(record.supports_count_tokens),
-              count_tokens_state: normalizeProbe(record.count_tokens_state),
-            } satisfies ProtocolMatrixEntry;
-          })
-        : [];
+    api.get<ProtocolMatrixPayload>('/protocols/matrix').then((res) => {
+      const normalizeProbe = (value: unknown) => {
+        const probeRecord = asRecord(value);
+        return {
+          status: String(probeRecord.status ?? 'unknown') as ProtocolEndpointEntry['state']['status'],
+          message: (probeRecord.message as string | null) ?? null,
+        };
+      };
+
+      const rawEndpoints = Array.isArray(res.data.endpoints) ? res.data.endpoints : [];
+      const rawCoverage = Array.isArray(res.data.coverage) ? res.data.coverage : [];
+
+      return {
+        endpoints: rawEndpoints.map((item) => {
+          const record = asRecord(item);
+          return {
+            id: String(record.id ?? ''),
+            family: (record.family as ProtocolEndpointEntry['family']) ?? 'open_ai',
+            method: String(record.method ?? ''),
+            path: String(record.path ?? ''),
+            description: String(record.description ?? ''),
+            scope: (record.scope as ProtocolEndpointEntry['scope']) ?? 'public',
+            transport: (record.transport as ProtocolEndpointEntry['transport']) ?? 'http',
+            operation: (record.operation as ProtocolEndpointEntry['operation']) ?? 'generate',
+            stream_transport: (record.stream_transport as ProtocolEndpointEntry['stream_transport']) ?? 'none',
+            state: normalizeProbe(record.state),
+            note: (record.note as string | null) ?? null,
+          } satisfies ProtocolEndpointEntry;
+        }),
+        coverage: rawCoverage.map((item) => {
+          const record = asRecord(item);
+          return {
+            provider: String(record.provider ?? ''),
+            format: (record.format as ProtocolCoverageEntry['format']) ?? 'openai',
+            upstream: (record.upstream as ProtocolCoverageEntry['upstream']) ?? 'openai',
+            upstream_protocol: String(record.upstream_protocol ?? ''),
+            wire_api: (record.wire_api as ProtocolCoverageEntry['wire_api']) ?? 'chat',
+            disabled: Boolean(record.disabled),
+            surface_id: String(record.surface_id ?? ''),
+            surface_label: String(record.surface_label ?? ''),
+            ingress_protocol: (record.ingress_protocol as ProtocolCoverageEntry['ingress_protocol']) ?? 'open_ai',
+            execution_mode: (record.execution_mode as ProtocolCoverageEntry['execution_mode']) ?? null,
+            state: normalizeProbe(record.state),
+          } satisfies ProtocolCoverageEntry;
+        }),
+      } satisfies ProtocolMatrixPayload;
     }),
 };
 

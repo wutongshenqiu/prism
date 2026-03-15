@@ -222,23 +222,30 @@ test.describe('Dashboard Pages', () => {
     await expect(page.locator('body')).toContainText('gpt-5');
   });
 
-  test('protocols page derives streaming support from live matrix', async ({ page }) => {
+  test('protocols page shows endpoint inventory and runtime surface coverage', async ({ page }) => {
     await page.getByRole('link', { name: /protocols/i }).click();
     await expect(page.getByRole('heading', { name: 'Protocols' })).toBeVisible();
     await expect(page.locator('body')).toContainText('/v1/responses');
-    await expect(page.locator('body')).toContainText('Streaming availability below is derived from the currently active provider set');
+    await expect(page.locator('body')).toContainText('/v1/responses/ws');
+    await expect(page.locator('body')).toContainText('/v1/messages/count_tokens');
+    await expect(page.locator('body')).toContainText('/api/provider/{provider}/v1/responses/ws');
+    await expect(page.locator('body')).toContainText('Provider Surface Coverage');
+    await expect(page.locator('body')).toContainText(/OpenAI Responses WS|Claude Count Tokens|Gemini Stream/);
     await expect(page.locator('body')).toContainText(/codex-gateway|claude-gateway/);
   });
 
-  test('models page shows runtime capability truth', async ({ page }) => {
+  test('models page shows provider runtime truth and extended capabilities', async ({ page }) => {
     await page.getByRole('link', { name: /models & capabilities/i }).click();
     await expect(page.getByRole('heading', { name: 'Models & Capabilities' })).toBeVisible();
-    await expect(page.locator('body')).toContainText('Provider Capabilities');
+    await expect(page.locator('body')).toContainText('Provider Runtime Truth');
     await expect(page.locator('body')).toContainText('gpt-5');
     await expect(page.locator('body')).toContainText('claude-sonnet-4-20250514');
+    await expect(page.locator('body')).toContainText('Count Tokens');
+    await expect(page.locator('body')).toContainText('Codex');
+    await expect(page.locator('body')).toContainText('responses');
     await expect(
-      page.getByRole('table').first().getByRole('row', { name: /codex-gateway openai/i }),
-    ).toContainText(/Yes|Unknown|No/);
+      page.getByRole('table').first().getByRole('row', { name: /codex-gateway/i }),
+    ).toContainText(/Verified|Unsupported|Unknown|Ready|Partial/);
   });
 
   test('tenants page exposes tenants and embedded auth keys', async ({ page }) => {

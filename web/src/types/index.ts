@@ -243,11 +243,50 @@ export interface CapabilityProbeStates {
 
 export interface ProviderCapabilityEntry {
   name: string;
+  format: FormatType;
+  upstream: UpstreamType;
   upstream_protocol: string;
-  models: string[];
+  wire_api: 'chat' | 'responses';
+  presentation_profile: ProfileKind;
+  presentation_mode: ActivationMode;
+  models: ModelMapping[];
   capabilities: ProviderCapabilities;
+  probe_status: 'ok' | 'warning' | 'error' | 'unknown';
+  checked_at?: string | null;
   probe: CapabilityProbeStates;
   disabled: boolean;
+}
+
+export type EndpointScope = 'public' | 'provider_scoped';
+export type EndpointTransport = 'http' | 'web_socket';
+export type StreamTransport = 'none' | 'sse' | 'web_socket_events';
+
+export interface ProtocolEndpointEntry {
+  id: string;
+  family: 'open_ai' | 'claude' | 'gemini';
+  method: string;
+  path: string;
+  description: string;
+  scope: EndpointScope;
+  transport: EndpointTransport;
+  operation: 'generate' | 'count_tokens' | 'list_models';
+  stream_transport: StreamTransport;
+  state: CapabilityProbeState;
+  note?: string | null;
+}
+
+export interface ProtocolCoverageEntry {
+  provider: string;
+  format: FormatType;
+  upstream: UpstreamType;
+  upstream_protocol: string;
+  wire_api: 'chat' | 'responses';
+  disabled: boolean;
+  surface_id: string;
+  surface_label: string;
+  ingress_protocol: 'open_ai' | 'claude' | 'gemini';
+  execution_mode?: 'native' | 'lossless_adapted' | 'lossy_adapted' | null;
+  state: CapabilityProbeState;
 }
 
 export interface ProviderProbeCheck {

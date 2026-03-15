@@ -1708,6 +1708,251 @@ async fn test_system_health() {
 }
 
 #[tokio::test]
+async fn test_protocol_matrix_includes_endpoint_inventory_and_surface_coverage() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let codex_provider = json!({
+        "name": "codex-gateway",
+        "format": "openai",
+        "upstream": "codex",
+        "base_url": "https://chatgpt.com/backend-api/codex",
+        "wire_api": "responses",
+        "models": ["gpt-5"],
+        "auth_profiles": [
+            { "id": "codex-user", "mode": "codex-oauth" }
+        ],
+        "disabled": false
+    });
+    let claude_provider = json!({
+        "name": "claude-gateway",
+        "format": "claude",
+        "api_key": "sk-ant-test",
+        "models": ["claude-sonnet-4-20250514"],
+        "disabled": false
+    });
+
+    let (status, body) = send_request(
+        &harness,
+        authed_post("/api/dashboard/providers", &token, codex_provider),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "codex create failed: {body:?}");
+    let (status, body) = send_request(
+        &harness,
+        authed_post("/api/dashboard/providers", &token, claude_provider),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "claude create failed: {body:?}"
+    );
+
+    harness.state.provider_probe_cache.insert(
+        "codex-gateway".to_string(),
+        prism_server::handler::dashboard::providers::ProviderProbeResult {
+            provider: "codex-gateway".to_string(),
+            upstream: "codex".to_string(),
+            status: "warning".to_string(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            latency_ms: 42,
+            checks: vec![
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "text".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "stream".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "tools".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "images".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "json_schema".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unknown,
+                    message: Some("no live probe implemented".to_string()),
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "reasoning".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unknown,
+                    message: Some("no live probe implemented".to_string()),
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "count_tokens".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unsupported,
+                    message: Some("Codex backend does not expose count_tokens".to_string()),
+                },
+            ],
+        },
+    );
+
+    let (status, body) = send_request(
+        &harness,
+        authed_get("/api/dashboard/protocols/matrix", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "protocol matrix failed: {body:?}");
+
+    let endpoints = body["endpoints"].as_array().expect("endpoints array");
+    assert!(
+        endpoints
+            .iter()
+            .any(|entry| entry["path"] == "/v1/responses/ws")
+    );
+    assert!(
+        endpoints
+            .iter()
+            .any(|entry| entry["path"] == "/api/provider/{provider}/v1/responses/ws")
+    );
+    assert!(
+        endpoints
+            .iter()
+            .any(|entry| entry["path"] == "/v1/messages/count_tokens")
+    );
+
+    let coverage = body["coverage"].as_array().expect("coverage array");
+    let codex_ws = coverage
+        .iter()
+        .find(|entry| {
+            entry["provider"] == "codex-gateway" && entry["surface_id"] == "openai_responses_ws"
+        })
+        .expect("codex ws coverage");
+    assert_eq!(codex_ws["state"]["status"], "verified");
+    assert_eq!(codex_ws["execution_mode"], "native");
+
+    let claude_responses = coverage
+        .iter()
+        .find(|entry| {
+            entry["provider"] == "claude-gateway" && entry["surface_id"] == "openai_responses"
+        })
+        .expect("claude responses coverage");
+    assert_eq!(claude_responses["state"]["status"], "unsupported");
+}
+
+#[tokio::test]
+async fn test_provider_capabilities_return_identity_and_extended_probe_truth() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let provider = json!({
+        "name": "codex-gateway",
+        "format": "openai",
+        "upstream": "codex",
+        "base_url": "https://chatgpt.com/backend-api/codex",
+        "wire_api": "responses",
+        "models": ["gpt-5", "gpt-5-mini"],
+        "upstream_presentation": {
+            "profile": "codex-cli",
+            "mode": "always",
+            "strict-mode": false,
+            "sensitive-words": [],
+            "cache-user-id": false,
+            "custom-headers": {}
+        },
+        "auth_profiles": [
+            { "id": "codex-user", "mode": "codex-oauth" }
+        ],
+        "disabled": false
+    });
+
+    let (status, body) = send_request(
+        &harness,
+        authed_post("/api/dashboard/providers", &token, provider),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "provider create failed: {body:?}"
+    );
+
+    harness.state.provider_probe_cache.insert(
+        "codex-gateway".to_string(),
+        prism_server::handler::dashboard::providers::ProviderProbeResult {
+            provider: "codex-gateway".to_string(),
+            upstream: "codex".to_string(),
+            status: "warning".to_string(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            latency_ms: 24,
+            checks: vec![
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "text".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "stream".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "tools".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "images".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Verified,
+                    message: None,
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "json_schema".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unknown,
+                    message: Some("no live probe implemented".to_string()),
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "reasoning".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unknown,
+                    message: Some("no live probe implemented".to_string()),
+                },
+                prism_server::handler::dashboard::providers::ProviderProbeCheck {
+                    capability: "count_tokens".to_string(),
+                    status: prism_server::handler::dashboard::providers::ProbeStatus::Unsupported,
+                    message: Some("Codex backend does not expose count_tokens".to_string()),
+                },
+            ],
+        },
+    );
+
+    let (status, body) = send_request(
+        &harness,
+        authed_get("/api/dashboard/providers/capabilities", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "capabilities failed: {body:?}");
+
+    let providers = body["providers"].as_array().expect("providers array");
+    let codex = providers
+        .iter()
+        .find(|entry| entry["name"] == "codex-gateway")
+        .expect("codex provider");
+    assert_eq!(codex["format"], "openai");
+    assert_eq!(codex["upstream"], "codex");
+    assert_eq!(codex["wire_api"], "responses");
+    assert_eq!(codex["presentation_profile"], "codex-cli");
+    assert_eq!(codex["probe_status"], "warning");
+    assert_eq!(codex["probe"]["count_tokens"]["status"], "unsupported");
+    assert!(
+        codex["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .any(|model| model["id"] == "gpt-5")
+    );
+}
+
+#[tokio::test]
 async fn test_system_logs() {
     let harness = create_test_harness();
     let token = login_and_get_token(&harness).await;

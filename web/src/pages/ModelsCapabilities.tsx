@@ -1,52 +1,25 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { providersApi } from '../services/api';
-import type { Provider, ProviderCapabilityEntry } from '../types';
+import type { ProbeStatus, ProviderCapabilityEntry } from '../types';
 import {
+  CheckCircle,
+  Filter,
   Layers,
   RefreshCw,
   Search,
-  CheckCircle,
   XCircle,
-  Filter,
 } from 'lucide-react';
 
 interface ModelEntry {
   id: string;
   alias: string | null;
   provider: string;
+  upstream: string;
   format: string;
+  wire_api: string;
 }
 
-type CapabilityState = boolean | null;
-type ProbeState = 'verified' | 'failed' | 'unknown' | 'unsupported';
-
-function CapabilityBadge({
-  state,
-  label,
-}: {
-  state: CapabilityState;
-  label?: string;
-}) {
-  if (state === true) {
-    return (
-      <span className="type-badge type-badge--green">
-        <CheckCircle size={12} />
-        {label || 'Yes'}
-      </span>
-    );
-  }
-  if (state === false) {
-    return (
-      <span className="type-badge type-badge--red">
-        <XCircle size={12} />
-        {label || 'No'}
-      </span>
-    );
-  }
-  return <span className="type-badge">Unknown</span>;
-}
-
-function ProbeBadge({ state }: { state: ProbeState }) {
+function ProbeBadge({ state }: { state: ProbeStatus }) {
   if (state === 'verified') {
     return (
       <span className="type-badge type-badge--green">
@@ -69,105 +42,152 @@ function ProbeBadge({ state }: { state: ProbeState }) {
   return <span className="type-badge">Unknown</span>;
 }
 
+function HealthBadge({
+  status,
+  checkedAt,
+}: {
+  status: ProviderCapabilityEntry['probe_status'];
+  checkedAt?: string | null;
+}) {
+  const title = checkedAt ? `Last checked ${new Date(checkedAt).toLocaleString()}` : undefined;
+  if (status === 'ok') {
+    return (
+      <span className="type-badge type-badge--green" title={title}>
+        Ready
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className="type-badge type-badge--red" title={title}>
+        Error
+      </span>
+    );
+  }
+  if (status === 'warning') {
+    return (
+      <span className="type-badge type-badge--blue" title={title}>
+        Partial
+      </span>
+    );
+  }
+  return (
+    <span className="type-badge" title={title}>
+      Unknown
+    </span>
+  );
+}
+
+function presentationLabel(profile: ProviderCapabilityEntry['presentation_profile']) {
+  switch (profile) {
+    case 'claude-code':
+      return 'Claude Code';
+    case 'gemini-cli':
+      return 'Gemini CLI';
+    case 'codex-cli':
+      return 'Codex CLI';
+    default:
+      return 'Native';
+  }
+}
+
+function protocolLabel(protocol: ProviderCapabilityEntry['upstream_protocol']) {
+  switch (protocol) {
+    case 'open_ai':
+      return 'OpenAI';
+    case 'claude':
+    case 'anthropic':
+      return 'Anthropic';
+    case 'gemini':
+      return 'Gemini';
+    default:
+      return protocol;
+  }
+}
+
 export default function ModelsCapabilities() {
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [capabilityMap, setCapabilityMap] = useState<Record<string, ProviderCapabilityEntry>>({});
+  const [providers, setProviders] = useState<ProviderCapabilityEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterFormat, setFilterFormat] = useState('');
+  const [filterUpstream, setFilterUpstream] = useState('');
   const [filterProvider, setFilterProvider] = useState('');
 
-  const fetchProviders = useCallback(async () => {
+  const fetchCapabilities = useCallback(async () => {
     try {
-      const [provRes, caps] = await Promise.all([
-        providersApi.list(),
-        providersApi.capabilities().catch(() => [] as ProviderCapabilityEntry[]),
-      ]);
-      setProviders(provRes.data);
-      const map: Record<string, ProviderCapabilityEntry> = {};
-      for (const c of caps) {
-        map[c.name] = c;
-      }
-      setCapabilityMap(map);
+      const next = await providersApi.capabilities();
+      setProviders(next);
     } catch (err) {
-      console.error('Failed to fetch providers:', err);
+      console.error('Failed to fetch provider capabilities:', err);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchProviders();
-  }, [fetchProviders]);
+    void fetchCapabilities();
+  }, [fetchCapabilities]);
+
+  const activeProviders = useMemo(
+    () => providers.filter((provider) => !provider.disabled),
+    [providers],
+  );
 
   const allModels = useMemo(() => {
     const models: ModelEntry[] = [];
-    for (const p of providers) {
-      if (p.disabled) continue;
-      for (const m of p.models) {
+    for (const provider of activeProviders) {
+      for (const model of provider.models) {
         models.push({
-          id: m.id,
-          alias: m.alias,
-          provider: p.name,
-          format: p.format,
+          id: model.id,
+          alias: model.alias ?? null,
+          provider: provider.name,
+          upstream: provider.upstream,
+          format: provider.format,
+          wire_api: provider.wire_api,
         });
       }
     }
     return models;
-  }, [providers]);
+  }, [activeProviders]);
 
   const filteredModels = useMemo(() => {
     let result = allModels;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
-        (m) =>
-          m.id.toLowerCase().includes(q) ||
-          (m.alias && m.alias.toLowerCase().includes(q)) ||
-          m.provider.toLowerCase().includes(q)
+        (model) =>
+          model.id.toLowerCase().includes(q) ||
+          (model.alias && model.alias.toLowerCase().includes(q)) ||
+          model.provider.toLowerCase().includes(q) ||
+          model.upstream.toLowerCase().includes(q),
       );
     }
-    if (filterFormat) {
-      result = result.filter((m) => m.format === filterFormat);
+    if (filterUpstream) {
+      result = result.filter((model) => model.upstream === filterUpstream);
     }
     if (filterProvider) {
-      result = result.filter((m) => m.provider === filterProvider);
+      result = result.filter((model) => model.provider === filterProvider);
     }
     return result;
-  }, [allModels, searchQuery, filterFormat, filterProvider]);
+  }, [allModels, filterProvider, filterUpstream, searchQuery]);
 
-  // Group models by model ID to show multi-provider availability
-  const modelGroups = useMemo(() => {
+  const groupedModels = useMemo(() => {
     const groups = new Map<string, ModelEntry[]>();
-    for (const m of filteredModels) {
-      const key = m.alias || m.id;
-      const arr = groups.get(key) || [];
-      arr.push(m);
-      groups.set(key, arr);
+    for (const model of filteredModels) {
+      const entries = groups.get(model.id) ?? [];
+      entries.push(model);
+      groups.set(model.id, entries);
     }
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
   }, [filteredModels]);
 
-  const uniqueFormats = [...new Set(providers.map((p) => p.format))];
-  const activeProviders = providers.filter((p) => !p.disabled);
-  const providerNames = activeProviders.map((p) => p.name);
-
-  // Capability summary per provider — sourced from capabilities API
-  const providerCapabilities = useMemo(() => {
-    return activeProviders.map((p) => {
-      return {
-        name: p.name,
-        format: p.format,
-        modelsCount: p.models.length,
-        textProbe: capabilityMap[p.name]?.probe.text.status ?? 'unknown',
-        streamProbe: capabilityMap[p.name]?.probe.stream.status ?? 'unknown',
-        toolsProbe: capabilityMap[p.name]?.probe.tools.status ?? 'unknown',
-        imagesProbe: capabilityMap[p.name]?.probe.images.status ?? 'unknown',
-        wireApi: p.wire_api,
-        hasPresentation: !!p.upstream_presentation && p.upstream_presentation.profile !== 'native',
-      };
-    });
-  }, [activeProviders, capabilityMap]);
+  const providerNames = useMemo(
+    () => activeProviders.map((provider) => provider.name),
+    [activeProviders],
+  );
+  const upstreams = useMemo(
+    () => [...new Set(activeProviders.map((provider) => provider.upstream))],
+    [activeProviders],
+  );
 
   return (
     <div className="page">
@@ -175,26 +195,25 @@ export default function ModelsCapabilities() {
         <div>
           <h2>Models & Capabilities</h2>
           <p className="page-subtitle">
-            {allModels.length} models across {activeProviders.length} active providers
+            {allModels.length} provider-model mappings across {activeProviders.length} active providers
           </p>
         </div>
         <div className="page-header-actions">
-          <button className="btn btn-secondary" onClick={fetchProviders}>
+          <button className="btn btn-secondary" onClick={fetchCapabilities}>
             <RefreshCw size={16} />
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Provider Capability Matrix */}
       <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div className="card-header">
-          <h3>Provider Capabilities</h3>
+          <h3>Provider Runtime Truth</h3>
         </div>
         <div className="card-body">
           {isLoading ? (
-            <div className="empty-state"><p>Loading...</p></div>
-          ) : providerCapabilities.length === 0 ? (
+            <div className="empty-state"><p>Loading runtime capability truth...</p></div>
+          ) : activeProviders.length === 0 ? (
             <div className="empty-state">
               <Layers size={48} />
               <p>No active providers configured</p>
@@ -202,61 +221,83 @@ export default function ModelsCapabilities() {
           ) : (
             <>
               <p className="text-muted" style={{ marginBottom: '1rem' }}>
-                Runtime truth is populated from provider probes. <strong>Unknown</strong> means no live probe has been run yet.
+                This view is driven from the dashboard control-plane payload instead of joining provider config
+                with guessed defaults in the browser. Unknown means the provider exists but no successful live
+                probe has been recorded for that capability yet.
               </p>
               <div className="table-wrapper">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Format</th>
-                    <th style={{ textAlign: 'center' }}>Models</th>
-                    <th style={{ textAlign: 'center' }}>Wire API</th>
-                    <th style={{ textAlign: 'center' }}>Text</th>
-                    <th style={{ textAlign: 'center' }}>Streaming</th>
-                    <th style={{ textAlign: 'center' }}>Tools</th>
-                    <th style={{ textAlign: 'center' }}>Images</th>
-                    <th style={{ textAlign: 'center' }}>Presentation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {providerCapabilities.map((cap) => (
-                    <tr key={cap.name}>
-                      <td className="text-bold">{cap.name}</td>
-                      <td><span className="type-badge">{cap.format}</span></td>
-                      <td style={{ textAlign: 'center' }}>{cap.modelsCount}</td>
-                      <td style={{ textAlign: 'center' }}>
-                        <span className="type-badge">{cap.wireApi}</span>
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <ProbeBadge state={cap.textProbe} />
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <ProbeBadge state={cap.streamProbe} />
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <ProbeBadge state={cap.toolsProbe} />
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <ProbeBadge state={cap.imagesProbe} />
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        {cap.hasPresentation
-                          ? <CapabilityBadge state label="Enabled" />
-                          : <span className="text-muted">Native</span>
-                        }
-                      </td>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Provider</th>
+                      <th>Identity</th>
+                      <th style={{ textAlign: 'center' }}>Wire API</th>
+                      <th style={{ textAlign: 'center' }}>Models</th>
+                      <th style={{ textAlign: 'center' }}>Health</th>
+                      <th style={{ textAlign: 'center' }}>Text</th>
+                      <th style={{ textAlign: 'center' }}>Streaming</th>
+                      <th style={{ textAlign: 'center' }}>Tools</th>
+                      <th style={{ textAlign: 'center' }}>Images</th>
+                      <th style={{ textAlign: 'center' }}>JSON Schema</th>
+                      <th style={{ textAlign: 'center' }}>Reasoning</th>
+                      <th style={{ textAlign: 'center' }}>Count Tokens</th>
+                      <th style={{ textAlign: 'center' }}>Presentation</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {activeProviders.map((provider) => (
+                      <tr key={provider.name}>
+                        <td className="text-bold">{provider.name}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <span className="type-badge">{provider.format}</span>
+                            <span className="type-badge" style={{ opacity: 0.85 }}>{provider.upstream}</span>
+                            <span className="type-badge" style={{ opacity: 0.7 }}>{protocolLabel(provider.upstream_protocol)}</span>
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <span className="type-badge">{provider.wire_api}</span>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>{provider.models.length}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <HealthBadge status={provider.probe_status} checkedAt={provider.checked_at} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.text.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.stream.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.tools.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.images.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.json_schema.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.reasoning.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <ProbeBadge state={provider.probe.count_tokens.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <span className="type-badge">
+                            {presentationLabel(provider.presentation_profile)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Model Search & Filter */}
       <div className="card">
         <div className="card-header card-header--actions">
           <h3>Model Registry</h3>
@@ -264,34 +305,34 @@ export default function ModelsCapabilities() {
             <Filter size={14} className="text-muted" />
             <select
               className="filter-input"
-              value={filterFormat}
-              onChange={(e) => setFilterFormat(e.target.value)}
-              style={{ minWidth: 100 }}
+              value={filterUpstream}
+              onChange={(event) => setFilterUpstream(event.target.value)}
+              style={{ minWidth: 120 }}
             >
-              <option value="">All Formats</option>
-              {uniqueFormats.map((f) => (
-                <option key={f} value={f}>{f}</option>
+              <option value="">All Upstreams</option>
+              {upstreams.map((upstream) => (
+                <option key={upstream} value={upstream}>{upstream}</option>
               ))}
             </select>
             <select
               className="filter-input"
               value={filterProvider}
-              onChange={(e) => setFilterProvider(e.target.value)}
-              style={{ minWidth: 120 }}
+              onChange={(event) => setFilterProvider(event.target.value)}
+              style={{ minWidth: 140 }}
             >
               <option value="">All Providers</option>
-              {providerNames.map((n) => (
-                <option key={n} value={n}>{n}</option>
+              {providerNames.map((name) => (
+                <option key={name} value={name}>{name}</option>
               ))}
             </select>
             <div className="search-input-wrapper">
               <Search size={14} className="search-icon" />
               <input
                 type="text"
-                placeholder="Search models..."
+                placeholder="Search models, aliases, providers..."
                 className="filter-input search-input"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(event) => setSearchQuery(event.target.value)}
               />
             </div>
           </div>
@@ -299,43 +340,46 @@ export default function ModelsCapabilities() {
         <div className="card-body" style={{ padding: 0 }}>
           {isLoading ? (
             <div className="empty-state" style={{ padding: '2rem' }}><p>Loading...</p></div>
-          ) : modelGroups.length === 0 ? (
+          ) : groupedModels.length === 0 ? (
             <div className="empty-state" style={{ padding: '2rem' }}>
               <Layers size={48} />
-              <p>No models match your search</p>
+              <p>No models match the current filters</p>
             </div>
           ) : (
             <div className="table-wrapper">
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Model</th>
-                    <th>Alias</th>
+                    <th>Model ID</th>
+                    <th>Aliases</th>
                     <th>Available From</th>
                     <th style={{ textAlign: 'center' }}>Providers</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {modelGroups.map(([key, entries]) => (
-                    <tr key={key}>
-                      <td className="text-mono text-bold" style={{ fontSize: '0.85rem' }}>
-                        {entries[0].id}
-                      </td>
-                      <td className="text-mono" style={{ fontSize: '0.85rem' }}>
-                        {entries[0].alias && entries[0].alias !== entries[0].id ? entries[0].alias : <span className="text-muted">-</span>}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                          {entries.map((e) => (
-                            <span key={`${e.provider}-${e.id}`} className="type-badge">
-                              {e.provider}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={{ textAlign: 'center' }}>{entries.length}</td>
-                    </tr>
-                  ))}
+                  {groupedModels.map(([modelId, entries]) => {
+                    const aliases = [...new Set(entries.map((entry) => entry.alias).filter(Boolean))] as string[];
+                    return (
+                      <tr key={modelId}>
+                        <td className="text-mono text-bold" style={{ fontSize: '0.85rem' }}>
+                          {modelId}
+                        </td>
+                        <td className="text-mono" style={{ fontSize: '0.85rem' }}>
+                          {aliases.length > 0 ? aliases.join(', ') : <span className="text-muted">-</span>}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                            {entries.map((entry) => (
+                              <span key={`${entry.provider}-${entry.id}-${entry.alias ?? 'native'}`} className="type-badge">
+                                {entry.provider} · {entry.upstream}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>{entries.length}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -343,10 +387,9 @@ export default function ModelsCapabilities() {
         </div>
       </div>
 
-      {/* Summary stats */}
       {!isLoading && (
         <div className="text-muted" style={{ marginTop: '1rem', fontSize: '0.8rem' }}>
-          Showing {filteredModels.length} of {allModels.length} models ({modelGroups.length} unique)
+          Showing {filteredModels.length} provider-model mappings across {groupedModels.length} unique model IDs.
         </div>
       )}
     </div>
