@@ -476,12 +476,8 @@ export default function Providers() {
                       </div>
                     </td>
                     <td>
-                      {(provider.models || []).length > 0 ? (
-                        <TagList items={(provider.models || []).map((m) => typeof m === 'string' ? m : m.id)} maxVisible={3} />
-                      ) : provider.models_count != null ? (
-                        <div className="tag-list">
-                          <span className="tag">{provider.models_count} models</span>
-                        </div>
+                      {provider.models.length > 0 ? (
+                        <TagList items={provider.models.map((m) => m.id)} maxVisible={3} />
                       ) : (
                         <span className="text-muted">-</span>
                       )}

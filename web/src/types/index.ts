@@ -22,7 +22,6 @@ export interface Provider {
   prefix: string | null;
   disabled: boolean;
   models: ModelMapping[];
-  models_count: number;
   excluded_models: string[];
   headers?: Record<string, string>;
   wire_api: 'chat' | 'responses';

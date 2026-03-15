@@ -34,7 +34,7 @@ describe('Providers page', () => {
             format: 'claude',
             api_key_masked: 'sk-a****test',
             base_url: 'https://api.anthropic.com',
-            models_count: 0,
+            models: [],
             disabled: false,
           },
         ],

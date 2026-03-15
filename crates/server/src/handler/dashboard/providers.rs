@@ -13,8 +13,9 @@ struct ProviderSummary {
     format: String,
     api_key_masked: String,
     base_url: Option<String>,
-    models_count: usize,
+    models: Vec<prism_core::config::ModelMapping>,
     disabled: bool,
+    wire_api: prism_core::provider::WireApi,
     upstream_presentation: prism_core::presentation::UpstreamPresentationConfig,
 }
 
@@ -101,8 +102,9 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
             format: entry.format.as_str().to_string(),
             api_key_masked: mask_key(&entry.api_key),
             base_url: entry.base_url.clone(),
-            models_count: entry.models.len(),
+            models: entry.models.clone(),
             disabled: entry.disabled,
+            wire_api: entry.wire_api,
             upstream_presentation: entry.upstream_presentation.clone(),
         });
     }
