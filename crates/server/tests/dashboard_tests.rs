@@ -156,6 +156,17 @@ fn authed_delete(uri: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// Helper: build a PUT request with JWT auth and JSON body.
+fn authed_put(uri: &str, token: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 // ===========================================================================
 // Auth tests
 // ===========================================================================
@@ -986,17 +997,30 @@ async fn test_get_current_config() {
     let req = authed_get("/api/dashboard/config/current", &token);
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
-    // Check sanitized config fields
-    assert!(body["host"].is_string());
-    assert!(body["port"].is_number());
+    // Check sanitized config sections
+    assert!(body["listen"].is_object());
+    assert!(body["listen"]["host"].is_string());
+    assert!(body["listen"]["port"].is_number());
     assert!(body["dashboard"].is_object());
     assert_eq!(body["dashboard"]["enabled"], true);
     assert_eq!(body["dashboard"]["username"], "admin");
     // Password hash and jwt_secret should not be in the sanitized output
     assert!(body["dashboard"]["password_hash"].is_null());
     assert!(body["dashboard"]["jwt_secret"].is_null());
-    // Provider counts
+    // Provider summary
     assert!(body["providers"].is_object());
+    assert!(body["providers"]["total"].is_number());
+    assert!(body["providers"]["items"].is_array());
+    // Additional sections
+    assert!(body["routing"].is_object());
+    assert!(body["auth_keys"].is_object());
+    assert!(body["rate_limit"].is_object());
+    assert!(body["cache"].is_object());
+    assert!(body["retry"].is_object());
+    assert!(body["timeouts"].is_object());
+    assert!(body["log_store"].is_object());
+    // Version hash
+    assert!(body["config_version"].is_string());
 }
 
 #[tokio::test]
@@ -1203,10 +1227,11 @@ async fn test_explain_route_empty_inventory() {
     );
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
-    // New control-plane explain returns structured ExplainResponse
+    // Explain returns RouteExplanation with scoring details
     assert!(body["selected"].is_null());
     assert!(body["alternates"].as_array().unwrap().is_empty());
-    assert!(body["required_capabilities"].is_object());
+    assert!(body["profile"].is_string());
+    assert!(body["model_chain"].is_array());
 }
 
 #[tokio::test]
@@ -1299,7 +1324,7 @@ async fn test_explain_with_provider() {
         .update_from_credentials(&harness.state.router.credential_map());
     harness.state.config.store(Arc::new(new_config));
 
-    // Explain returns structured response with selected route and capabilities
+    // Explain returns RouteExplanation with full scoring details
     let req = authed_post(
         "/api/dashboard/routing/explain",
         &token,
@@ -1307,10 +1332,12 @@ async fn test_explain_with_provider() {
     );
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK, "explain failed: {body:?}");
-    // New control-plane explain returns required_capabilities and route info
-    assert!(body["required_capabilities"].is_object());
+    assert!(body["profile"].is_string());
+    assert!(body["model_chain"].is_array());
     assert!(body["alternates"].is_array());
     assert!(body["rejections"].is_array());
+    // Explain includes scoring details (not cleared like preview)
+    assert!(body["scoring"].is_array());
 }
 
 #[tokio::test]
@@ -1394,4 +1421,152 @@ async fn test_update_routing_then_preview_reflects_change() {
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["profile"], "stable");
+}
+
+// ===========================================================================
+// Config version tracking tests (#259 / #262)
+// ===========================================================================
+
+#[tokio::test]
+async fn test_raw_config_returns_version() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_get("/api/dashboard/config/raw", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["content"].is_string());
+    assert!(body["path"].is_string());
+    let version = body["config_version"]
+        .as_str()
+        .expect("should have config_version");
+    assert!(!version.is_empty(), "config_version should be non-empty");
+}
+
+#[tokio::test]
+async fn test_current_config_returns_version() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_get("/api/dashboard/config/current", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let version = body["config_version"]
+        .as_str()
+        .expect("should have config_version");
+    assert!(!version.is_empty());
+}
+
+#[tokio::test]
+async fn test_apply_config_success_with_version() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Get current raw config and its version
+    let req = authed_get("/api/dashboard/config/raw", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let yaml_content = body["content"].as_str().unwrap().to_string();
+    let version = body["config_version"].as_str().unwrap().to_string();
+
+    // Apply with matching version — should succeed
+    let req = authed_put(
+        "/api/dashboard/config/apply",
+        &token,
+        json!({"yaml": yaml_content, "config_version": version}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "apply failed: {body:?}");
+    assert!(body["config_version"].is_string());
+}
+
+#[tokio::test]
+async fn test_apply_config_conflict_detection() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Get current raw config
+    let req = authed_get("/api/dashboard/config/raw", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let yaml_content = body["content"].as_str().unwrap().to_string();
+
+    // Apply with stale version — should return 409 Conflict
+    let req = authed_put(
+        "/api/dashboard/config/apply",
+        &token,
+        json!({"yaml": yaml_content, "config_version": "stale-version-hash"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CONFLICT, "expected conflict: {body:?}");
+    assert_eq!(body["error"], "config_conflict");
+    assert!(body["current_version"].is_string());
+}
+
+#[tokio::test]
+async fn test_apply_config_without_version_skips_conflict_check() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    // Get current raw config
+    let req = authed_get("/api/dashboard/config/raw", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let yaml_content = body["content"].as_str().unwrap().to_string();
+
+    // Apply without version — no conflict check, should succeed
+    let req = authed_put(
+        "/api/dashboard/config/apply",
+        &token,
+        json!({"yaml": yaml_content}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "apply failed: {body:?}");
+    assert!(body["config_version"].is_string());
+}
+
+#[tokio::test]
+async fn test_apply_config_invalid_yaml() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_put(
+        "/api/dashboard/config/apply",
+        &token,
+        json!({"yaml": "port: not-a-number\n"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "validation_failed");
+}
+
+#[tokio::test]
+async fn test_apply_config_missing_yaml_field() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_put(
+        "/api/dashboard/config/apply",
+        &token,
+        json!({"content": "some yaml"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "validation_failed");
+}
+
+#[tokio::test]
+async fn test_routing_update_returns_version() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_patch(
+        "/api/dashboard/routing",
+        &token,
+        json!({"default-profile": "stable"}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "update routing failed: {body:?}");
+    // Routing update now returns config_version
+    assert!(body["config_version"].is_string());
 }

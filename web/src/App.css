@@ -1698,7 +1698,7 @@
 .strategy-option-algo {
   font-size: 0.7rem;
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   margin-top: 0.25rem;
 }
 
@@ -1773,11 +1773,11 @@
 
 .btn-icon:hover {
   color: var(--color-primary);
-  background: var(--color-bg-hover);
+  background: var(--color-bg-tertiary);
 }
 
 .btn-icon--danger:hover {
-  color: var(--color-error);
+  color: var(--color-danger);
 }
 
 /* Tabs */
@@ -1870,7 +1870,7 @@
 }
 
 .preview-model {
-  font-family: var(--font-mono);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.8rem;
 }
 
@@ -1888,7 +1888,7 @@
 }
 
 .preview-reason {
-  color: var(--color-error);
+  color: var(--color-danger);
   font-size: 0.75rem;
   text-transform: capitalize;
 }

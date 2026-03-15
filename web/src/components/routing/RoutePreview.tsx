@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Search, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import { routingApi } from '../../services/api';
-import type { PreviewRequest, RouteExplanation } from '../../types';
+import type { RouteIntrospectionRequest, RouteExplanation } from '../../types';
+import { formatRejectReason } from '../../types';
 
 export default function RoutePreview() {
   const [model, setModel] = useState('');
@@ -22,7 +23,7 @@ export default function RoutePreview() {
     setLoading(true);
     setError('');
     try {
-      const req: PreviewRequest = {
+      const req: RouteIntrospectionRequest = {
         model: model.trim(),
         endpoint,
         stream,
@@ -175,11 +176,11 @@ export default function RoutePreview() {
 
                 {result.rejections.length > 0 && (
                   <div className="preview-section">
-                    <h4><XCircle size={14} style={{ color: 'var(--color-error)' }} /> Rejected ({result.rejections.length})</h4>
+                    <h4><XCircle size={14} style={{ color: 'var(--color-danger)' }} /> Rejected ({result.rejections.length})</h4>
                     {result.rejections.map((rej, i) => (
                       <div key={i} className="preview-rejection">
                         <code>{rej.candidate}</code>
-                        <span className="preview-reason">{rej.reason.replace(/_/g, ' ')}</span>
+                        <span className="preview-reason">{formatRejectReason(rej.reason)}</span>
                       </div>
                     ))}
                   </div>

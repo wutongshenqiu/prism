@@ -192,7 +192,7 @@ export default function Tenants() {
                         </tr>
                         {expandedId === tenant.id && (
                           <tr key={`${tenant.id}-detail`}>
-                            <td colSpan={5} style={{ background: 'var(--bg-secondary)', padding: '1rem' }}>
+                            <td colSpan={5} style={{ background: 'var(--color-bg-secondary)', padding: '1rem' }}>
                               {detailLoading ? (
                                 <span className="text-muted">Loading metrics...</span>
                               ) : detailMetrics?.metrics ? (

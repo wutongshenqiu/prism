@@ -102,7 +102,7 @@ pub async fn create_auth_key(
     })
     .await
     {
-        Ok(()) => {
+        Ok(_) => {
             tracing::info!(name = ?key_name, "Auth key created via dashboard");
             (
                 StatusCode::CREATED,
@@ -160,7 +160,7 @@ pub async fn update_auth_key(
     })
     .await
     {
-        Ok(()) => {
+        Ok(_) => {
             tracing::info!(key_id = id, "Auth key updated via dashboard");
             (
                 StatusCode::OK,
@@ -207,7 +207,7 @@ pub async fn delete_auth_key(
     })
     .await
     {
-        Ok(()) => {
+        Ok(_) => {
             tracing::info!(key_id = id, "Auth key deleted via dashboard");
             (
                 StatusCode::OK,

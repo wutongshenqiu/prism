@@ -1,14 +1,16 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { getWebSocketManager, destroyWebSocketManager } from '../services/websocket';
+import type { ConnectionState } from '../services/websocket';
 import { useAuthStore } from '../stores/authStore';
 import { useMetricsStore } from '../stores/metricsStore';
 import { useLogsStore } from '../stores/logsStore';
 import type { MetricsSnapshot, RequestLog, WsMessage } from '../types';
 
-export function useWebSocket(): void {
+export function useWebSocket(): { connectionState: ConnectionState } {
   const token = useAuthStore((s) => s.token);
   const setSnapshot = useMetricsStore((s) => s.setSnapshot);
   const addLog = useLogsStore((s) => s.addLog);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
   // Stable token provider that always reads the latest token
   const tokenProvider = useCallback(
@@ -16,10 +18,20 @@ export function useWebSocket(): void {
     [],
   );
 
+  // Token refresher: attempt to refresh the auth token
+  const tokenRefresher = useCallback(async (): Promise<string | null> => {
+    try {
+      await useAuthStore.getState().refreshToken();
+      return useAuthStore.getState().token;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!token) return;
 
-    const manager = getWebSocketManager(tokenProvider);
+    const manager = getWebSocketManager(tokenProvider, tokenRefresher);
     manager.connect();
 
     const unsubscribe = manager.subscribe((message: WsMessage) => {
@@ -35,14 +47,20 @@ export function useWebSocket(): void {
       }
     });
 
+    const unsubscribeState = manager.onStateChange(setConnectionState);
+    setConnectionState(manager.connectionState);
+
     return () => {
       unsubscribe();
+      unsubscribeState();
     };
-  }, [token, tokenProvider, setSnapshot, addLog]);
+  }, [token, tokenProvider, tokenRefresher, setSnapshot, addLog]);
 
   useEffect(() => {
     return () => {
       destroyWebSocketManager();
     };
   }, []);
+
+  return { connectionState };
 }

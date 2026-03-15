@@ -618,7 +618,7 @@ export default function Providers() {
               </div>
 
               {/* ── Upstream Presentation ── */}
-              <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px', marginBottom: 0 }}>
+              <fieldset style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '12px 16px', marginBottom: 0 }}>
                 <legend style={{ fontSize: '0.85rem', fontWeight: 600, padding: '0 6px' }}>Upstream Presentation</legend>
 
                 <div className="form-group" style={{ marginBottom: 12 }}>
@@ -650,7 +650,7 @@ export default function Providers() {
                 )}
 
                 {form.profile === 'claude-code' && (
-                  <div style={{ background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
+                  <div style={{ background: 'var(--color-bg-secondary)', borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
                     <p style={{ fontSize: '0.8rem', fontWeight: 600, margin: '0 0 8px' }}>Claude Code Options</p>
 
                     <div className="form-group form-group-inline" style={{ marginBottom: 8 }}>
@@ -767,7 +767,7 @@ export default function Providers() {
                     </button>
 
                     {previewResult && (
-                      <div style={{ marginTop: 8, background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 6, padding: '10px 12px', fontSize: '0.8rem' }}>
+                      <div style={{ marginTop: 8, background: 'var(--color-bg-secondary)', borderRadius: 6, padding: '10px 12px', fontSize: '0.8rem' }}>
                         <p style={{ fontWeight: 600, margin: '0 0 6px' }}>
                           Profile: {previewResult.profile} — {previewResult.activated ? 'Active' : 'Skipped'}
                         </p>

@@ -12,7 +12,7 @@ import type {
   AuthKeyUpdateRequest,
   RoutingConfig,
   RoutingUpdateRequest,
-  PreviewRequest,
+  RouteIntrospectionRequest,
   RouteExplanation,
   RequestLog,
   PaginatedResponse,
@@ -193,13 +193,13 @@ export const routingApi = {
   update: (data: RoutingUpdateRequest) =>
     api.patch('/routing', data),
 
-  preview: (data: PreviewRequest) =>
+  preview: (data: RouteIntrospectionRequest) =>
     api.post('/routing/preview', data).then((res) => ({
       ...res,
       data: res.data as RouteExplanation,
     })) as Promise<{ data: RouteExplanation } & Record<string, unknown>>,
 
-  explain: (data: PreviewRequest) =>
+  explain: (data: RouteIntrospectionRequest) =>
     api.post('/routing/explain', data).then((res) => ({
       ...res,
       data: res.data as RouteExplanation,
@@ -278,6 +278,21 @@ export const logsApi = {
 
 // ── System ──
 
+export interface ProtocolMatrixEntry {
+  provider: string;
+  ingress_protocol: string;
+  upstream_protocol: string;
+  execution_mode: string;
+  supports_generate: boolean;
+  supports_stream: boolean;
+  supports_count_tokens: boolean;
+}
+
+export const protocolsApi = {
+  matrix: () =>
+    api.get<{ entries: ProtocolMatrixEntry[] }>('/protocols/matrix').then((res) => res.data.entries),
+};
+
 export const systemApi = {
   health: () => api.get<SystemHealth>('/system/health'),
 
@@ -317,17 +332,20 @@ export const tenantsApi = {
 // ── Config ──
 
 export const configApi = {
-  current: () => api.get('/config/current'),
+  current: () => api.get<Record<string, unknown> & { config_version?: string }>('/config/current'),
 
-  raw: () => api.get<{ content: string; path: string }>('/config/raw'),
+  raw: () => api.get<{ content: string; path: string; config_version?: string }>('/config/raw'),
 
   validate: (yaml: string) =>
     api.post<ConfigValidateResponse>('/config/validate', { yaml }),
 
   reload: () => api.post('/config/reload'),
 
-  apply: (yaml: string) =>
-    api.put<{ message: string }>('/config/apply', { yaml }),
+  apply: (yaml: string, configVersion?: string) =>
+    api.put<{ message: string; config_version?: string }>('/config/apply', {
+      yaml,
+      ...(configVersion ? { config_version: configVersion } : {}),
+    }),
 };
 
 export default api;

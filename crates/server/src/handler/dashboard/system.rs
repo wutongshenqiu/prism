@@ -37,15 +37,24 @@ fn read_file_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<Str
 pub async fn system_health(State(state): State<AppState>) -> impl IntoResponse {
     let config = state.config.load();
     let uptime_seconds = state.start_time.elapsed().as_secs();
+    let health_snap = state.health_manager.snapshot();
 
-    // Group providers by name for health summary
+    // Group credentials by provider name and derive runtime health.
+    // A credential is "active" if it is not disabled AND not circuit-broken/ejected.
     let mut provider_groups: std::collections::HashMap<&str, (usize, usize)> =
         std::collections::HashMap::new();
     for entry in &config.providers {
         let (active, total) = provider_groups.entry(&entry.name).or_insert((0, 0));
         *total += 1;
         if !entry.disabled {
-            *active += 1;
+            // Check runtime health: look up by credential name
+            let runtime_unhealthy = health_snap
+                .credentials
+                .get(&entry.name)
+                .is_some_and(|h| h.circuit_open || h.ejected);
+            if !runtime_unhealthy {
+                *active += 1;
+            }
         }
     }
     let providers: Vec<serde_json::Value> = provider_groups

@@ -380,37 +380,85 @@ pub async fn delete_provider(
     }
 }
 
-/// Read current config from file, apply mutation, write back atomically.
-/// Public wrapper for use by sibling modules.
-pub async fn update_config_file_public(
-    state: &AppState,
-    mutate: impl FnOnce(&mut prism_core::config::Config),
-) -> Result<(), String> {
-    update_config_file(state, mutate).await
+/// Compute SHA256 hex digest of content.
+pub fn sha256_hex(content: &str) -> String {
+    use std::hash::Hasher;
+    // Use a simple FNV-style hash for config versioning (not security-critical).
+    // We pair it with file length for collision resistance.
+    let mut hasher = std::hash::DefaultHasher::new();
+    hasher.write(content.as_bytes());
+    format!("{:016x}-{}", hasher.finish(), content.len())
 }
 
-async fn update_config_file(
-    state: &AppState,
-    mutate: impl FnOnce(&mut prism_core::config::Config),
-) -> Result<(), String> {
+/// Read the current config file and return (contents, version_hash).
+pub fn read_config_versioned(state: &AppState) -> Result<(String, String), String> {
     let config_path = state
         .config_path
         .lock()
         .map_err(|e| format!("Failed to lock config path: {e}"))?
         .clone();
-
     let contents =
         std::fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {e}"))?;
+    let version = sha256_hex(&contents);
+    Ok((contents, version))
+}
+
+/// Config transaction error.
+pub enum ConfigTxError {
+    Conflict { current_version: String },
+    Internal(String),
+}
+
+/// Read current config from file, apply mutation, write back atomically.
+/// If `expected_version` is provided, rejects the write if the file has changed.
+/// Public wrapper for use by sibling modules.
+pub async fn update_config_file_public(
+    state: &AppState,
+    mutate: impl FnOnce(&mut prism_core::config::Config),
+) -> Result<String, String> {
+    update_config_versioned(state, None, mutate)
+        .await
+        .map_err(|e| match e {
+            ConfigTxError::Conflict { .. } => "conflict".to_string(),
+            ConfigTxError::Internal(msg) => msg,
+        })
+}
+
+/// Versioned config update: read, check version, mutate, write atomically.
+/// Returns the new version hash on success.
+pub async fn update_config_versioned(
+    state: &AppState,
+    expected_version: Option<&str>,
+    mutate: impl FnOnce(&mut prism_core::config::Config),
+) -> Result<String, ConfigTxError> {
+    let config_path = state
+        .config_path
+        .lock()
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to lock config path: {e}")))?
+        .clone();
+
+    let contents = std::fs::read_to_string(&config_path)
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to read config: {e}")))?;
+
+    // Check version if caller provided one
+    if let Some(expected) = expected_version {
+        let current = sha256_hex(&contents);
+        if current != expected {
+            return Err(ConfigTxError::Conflict {
+                current_version: current,
+            });
+        }
+    }
 
     // Parse WITHOUT secret resolution to preserve env:// and file:// references
     let mut raw_config = prism_core::config::Config::from_yaml_raw(&contents)
-        .map_err(|e| format!("Failed to parse config: {e}"))?;
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to parse config: {e}")))?;
 
     mutate(&mut raw_config);
 
     let yaml = raw_config
         .to_yaml()
-        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to serialize config: {e}")))?;
 
     // Atomic write: write to unique temp file then rename
     let dir = std::path::Path::new(&config_path)
@@ -420,16 +468,20 @@ async fn update_config_file(
     let tmp_path = dir.join(tmp_name);
     if let Err(e) = std::fs::write(&tmp_path, &yaml) {
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Failed to write temp file: {e}"));
+        return Err(ConfigTxError::Internal(format!(
+            "Failed to write temp file: {e}"
+        )));
     }
     if let Err(e) = std::fs::rename(&tmp_path, &config_path) {
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Failed to rename config file: {e}"));
+        return Err(ConfigTxError::Internal(format!(
+            "Failed to rename config file: {e}"
+        )));
     }
 
     // Load the written config with full secret resolution for runtime use
     let runtime_config = prism_core::config::Config::load_from_str(&yaml)
-        .map_err(|e| format!("Failed to load runtime config: {e}"))?;
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to load runtime config: {e}")))?;
 
     // Update all derived runtime state (same as watcher/SIGHUP paths)
     state.router.update_from_config(&runtime_config);
@@ -443,7 +495,21 @@ async fn update_config_file(
     state.http_client_pool.clear();
     state.config.store(std::sync::Arc::new(runtime_config));
 
-    Ok(())
+    let new_version = sha256_hex(&yaml);
+    Ok(new_version)
+}
+
+async fn update_config_file(
+    state: &AppState,
+    mutate: impl FnOnce(&mut prism_core::config::Config),
+) -> Result<(), String> {
+    update_config_versioned(state, None, mutate)
+        .await
+        .map(|_| ())
+        .map_err(|e| match e {
+            ConfigTxError::Conflict { .. } => "conflict".to_string(),
+            ConfigTxError::Internal(msg) => msg,
+        })
 }
 
 #[derive(Debug, Deserialize)]

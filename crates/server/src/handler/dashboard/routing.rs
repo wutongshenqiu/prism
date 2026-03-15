@@ -58,11 +58,13 @@ pub async fn update_routing(
     })
     .await
     {
-        Ok(()) => {
+        Ok(new_version) => {
             tracing::info!("Routing configuration updated via dashboard");
             (
                 StatusCode::OK,
-                Json(json!({"message": "Routing configuration updated successfully"})),
+                Json(
+                    json!({"message": "Routing configuration updated successfully", "config_version": new_version}),
+                ),
             )
         }
         Err(e) => {
@@ -75,10 +77,10 @@ pub async fn update_routing(
     }
 }
 
-/// POST /api/dashboard/routing/preview
+/// POST /api/dashboard/routing/preview — lightweight introspection (no scoring detail)
 pub async fn preview_route(
     State(state): State<AppState>,
-    Json(req): Json<PreviewRequest>,
+    Json(req): Json<RouteIntrospectionRequest>,
 ) -> impl IntoResponse {
     let features = req.into_features();
     let config = state.config.load();
@@ -93,10 +95,10 @@ pub async fn preview_route(
     (StatusCode::OK, Json(json!(explanation)))
 }
 
-/// POST /api/dashboard/routing/explain
+/// POST /api/dashboard/routing/explain — full introspection with scoring detail
 pub async fn explain_route(
     State(state): State<AppState>,
-    Json(req): Json<PreviewRequest>,
+    Json(req): Json<RouteIntrospectionRequest>,
 ) -> impl IntoResponse {
     let features = req.into_features();
     let config = state.config.load();
@@ -109,9 +111,10 @@ pub async fn explain_route(
     (StatusCode::OK, Json(json!(explanation)))
 }
 
+/// Canonical route introspection request shared by preview and explain endpoints.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct PreviewRequest {
+pub struct RouteIntrospectionRequest {
     pub model: String,
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
@@ -134,15 +137,15 @@ fn default_source_format() -> String {
     "openai".to_string()
 }
 
-impl PreviewRequest {
-    fn into_features(self) -> RouteRequestFeatures {
+impl RouteIntrospectionRequest {
+    pub fn into_features(self) -> RouteRequestFeatures {
         use prism_core::provider::Format;
         use prism_core::routing::types::RouteEndpoint;
 
         let endpoint = match self.endpoint.as_str() {
             "messages" => RouteEndpoint::Messages,
             "responses" => RouteEndpoint::Responses,
-            "generate-content" => RouteEndpoint::GenerateContent,
+            "generate-content" | "generate_content" => RouteEndpoint::GenerateContent,
             "stream-generate-content" => RouteEndpoint::StreamGenerateContent,
             "models" => RouteEndpoint::Models,
             _ => RouteEndpoint::ChatCompletions,

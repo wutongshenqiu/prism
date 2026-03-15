@@ -170,17 +170,17 @@ export default function ModelsCapabilities() {
                         <span className="type-badge">{cap.wireApi}</span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <CheckCircle size={14} color="var(--success)" />
+                        <CheckCircle size={14} color="var(--color-success)" />
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         {cap.supportsTools
-                          ? <CheckCircle size={14} color="var(--success)" />
-                          : <XCircle size={14} color="var(--text-secondary)" />
+                          ? <CheckCircle size={14} color="var(--color-success)" />
+                          : <XCircle size={14} color="var(--color-text-secondary)" />
                         }
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         {cap.hasPresentation
-                          ? <CheckCircle size={14} color="var(--success)" />
+                          ? <CheckCircle size={14} color="var(--color-success)" />
                           : <span className="text-muted">-</span>
                         }
                       </td>

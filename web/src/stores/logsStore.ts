@@ -94,6 +94,27 @@ export const useLogsStore = create<LogsState>((set, get) => ({
 
   addLog: (log) => {
     if (!get().isLive) return;
+    const { filters } = get();
+    // Filter incoming WebSocket logs against active filter set
+    if (filters.provider && log.provider !== filters.provider) return;
+    if (filters.model && log.model !== filters.model) return;
+    if (filters.tenant_id && log.tenant_id !== filters.tenant_id) return;
+    if (filters.api_key_id && log.api_key_id !== filters.api_key_id) return;
+    if (filters.error_type && log.error_type !== filters.error_type) return;
+    if (filters.stream !== undefined && log.stream !== filters.stream) return;
+    if (filters.status) {
+      const code = log.status;
+      if (filters.status === '2xx' && (code < 200 || code >= 300)) return;
+      if (filters.status === '4xx' && (code < 400 || code >= 500)) return;
+      if (filters.status === '5xx' && (code < 500 || code >= 600)) return;
+    }
+    if (filters.latency_min && log.latency_ms < filters.latency_min) return;
+    if (filters.latency_max && log.latency_ms > filters.latency_max) return;
+    if (filters.keyword) {
+      const kw = filters.keyword.toLowerCase();
+      const haystack = `${log.requested_model || ''} ${log.model || ''} ${log.provider || ''} ${log.error || ''}`.toLowerCase();
+      if (!haystack.includes(kw)) return;
+    }
     set((state) => {
       const updated = [log, ...state.logs];
       if (updated.length > state.pageSize) {

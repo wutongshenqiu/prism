@@ -259,7 +259,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/dashboard/routing/explain",
-            axum::routing::post(handler::dashboard::control_plane::route_explain),
+            axum::routing::post(handler::dashboard::routing::explain_route),
         )
         // WebSocket route (auth via query param, validated by dashboard_auth middleware)
         .route(

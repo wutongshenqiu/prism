@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
-import { providersApi } from '../services/api';
-import type { Provider } from '../types';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { protocolsApi } from '../services/api';
+import type { ProtocolMatrixEntry } from '../services/api';
 import {
   Network,
   RefreshCw,
@@ -23,7 +23,7 @@ const PROTOCOLS: {
   endpoints: ProtocolEndpoint[];
 }[] = [
   {
-    id: 'openai',
+    id: 'open_ai',
     label: 'OpenAI',
     format: 'openai',
     endpoints: [
@@ -54,18 +54,10 @@ const PROTOCOLS: {
 
 type CoverageLevel = 'native' | 'adapted' | 'none';
 
-// Translation is supported for all pairs where both protocols are in {openai, claude, gemini}.
-// A provider is native when its format matches the protocol, adapted when translation exists.
-const TRANSLATION_PAIRS = new Set([
-  'openai->claude', 'openai->gemini',
-  'claude->openai', 'claude->gemini',
-  'gemini->openai', 'gemini->claude',
-]);
-
-function getCoverage(protocol: string, providerFormat: string): CoverageLevel {
-  if (protocol === providerFormat) return 'native';
-  const key = `${protocol}->${providerFormat}`;
-  return TRANSLATION_PAIRS.has(key) ? 'adapted' : 'none';
+function executionModeToCoverage(mode: string): CoverageLevel {
+  if (mode === 'native') return 'native';
+  if (mode === 'lossless_adapted' || mode === 'lossy_adapted') return 'adapted';
+  return 'none';
 }
 
 function CoverageBadge({ level }: { level: CoverageLevel }) {
@@ -79,25 +71,43 @@ function CoverageBadge({ level }: { level: CoverageLevel }) {
 }
 
 export default function Protocols() {
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [matrixEntries, setMatrixEntries] = useState<ProtocolMatrixEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchProviders = useCallback(async () => {
+  const fetchMatrix = useCallback(async () => {
     try {
-      const res = await providersApi.list();
-      setProviders(res.data.filter((p: Provider) => !p.disabled));
+      const entries = await protocolsApi.matrix();
+      setMatrixEntries(entries);
     } catch (err) {
-      console.error('Failed to fetch providers:', err);
+      console.error('Failed to fetch protocol matrix:', err);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchProviders();
-  }, [fetchProviders]);
+    fetchMatrix();
+  }, [fetchMatrix]);
 
-  const uniqueFormats = [...new Set(providers.map((p) => p.format))];
+  // Derive unique providers from the matrix
+  const providers = useMemo(() => {
+    const seen = new Set<string>();
+    return matrixEntries
+      .filter((e) => e.supports_generate)
+      .filter((e) => { if (seen.has(e.provider)) return false; seen.add(e.provider); return true; })
+      .map((e) => ({ name: e.provider, upstream_protocol: e.upstream_protocol }));
+  }, [matrixEntries]);
+
+  // Build a coverage lookup: (provider, ingress_protocol) → execution_mode
+  const coverageLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of matrixEntries) {
+      map.set(`${e.provider}::${e.ingress_protocol}`, e.execution_mode);
+    }
+    return map;
+  }, [matrixEntries]);
+
+  const uniqueFormats = [...new Set(providers.map((p) => p.upstream_protocol))];
 
   return (
     <div className="page">
@@ -109,7 +119,7 @@ export default function Protocols() {
           </p>
         </div>
         <div className="page-header-actions">
-          <button className="btn btn-secondary" onClick={fetchProviders}>
+          <button className="btn btn-secondary" onClick={fetchMatrix}>
             <RefreshCw size={16} />
             Refresh
           </button>
@@ -145,7 +155,7 @@ export default function Protocols() {
                           <td><span className="type-badge">{ep.method}</span></td>
                           <td className="text-mono" style={{ fontSize: '0.85rem' }}>{ep.path}</td>
                           <td>{ep.description}</td>
-                          <td>{ep.stream ? <CheckCircle size={14} color="var(--success)" /> : <span className="text-muted">-</span>}</td>
+                          <td>{ep.stream ? <CheckCircle size={14} color="var(--color-success)" /> : <span className="text-muted">-</span>}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -180,7 +190,7 @@ export default function Protocols() {
                   <thead>
                     <tr>
                       <th>Provider</th>
-                      <th>Format</th>
+                      <th>Protocol</th>
                       {PROTOCOLS.map((p) => (
                         <th key={p.id} style={{ textAlign: 'center' }}>{p.label}</th>
                       ))}
@@ -190,12 +200,15 @@ export default function Protocols() {
                     {providers.map((provider) => (
                       <tr key={provider.name}>
                         <td className="text-bold">{provider.name}</td>
-                        <td><span className="type-badge">{provider.format}</span></td>
-                        {PROTOCOLS.map((proto) => (
-                          <td key={proto.id} style={{ textAlign: 'center' }}>
-                            <CoverageBadge level={getCoverage(proto.format, provider.format)} />
-                          </td>
-                        ))}
+                        <td><span className="type-badge">{provider.upstream_protocol}</span></td>
+                        {PROTOCOLS.map((proto) => {
+                          const mode = coverageLookup.get(`${provider.name}::${proto.id}`) || '';
+                          return (
+                            <td key={proto.id} style={{ textAlign: 'center' }}>
+                              <CoverageBadge level={executionModeToCoverage(mode)} />
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
@@ -210,12 +223,12 @@ export default function Protocols() {
       {!isLoading && providers.length > 0 && (
         <div className="card" style={{ marginTop: '1.5rem' }}>
           <div className="card-header">
-            <h3>Provider Format Distribution</h3>
+            <h3>Provider Protocol Distribution</h3>
           </div>
           <div className="card-body">
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               {uniqueFormats.map((fmt) => {
-                const count = providers.filter((p) => p.format === fmt).length;
+                const count = providers.filter((p) => p.upstream_protocol === fmt).length;
                 return (
                   <div key={fmt} style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: '2rem', fontWeight: 700 }}>{count}</div>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { routingApi } from '../services/api';
-import type { PreviewRequest, RouteExplanation } from '../types';
+import type { RouteIntrospectionRequest, RouteExplanation } from '../types';
+import { formatRejectReason } from '../types';
 import {
   PlayCircle,
   Search,
@@ -30,7 +31,7 @@ export default function Replay() {
     setError('');
     setExplanation(null);
 
-    const req: PreviewRequest = {
+    const req: RouteIntrospectionRequest = {
       model: model.trim(),
       endpoint,
       source_format: sourceFormat,
@@ -160,9 +161,9 @@ export default function Replay() {
             <div className="card-header">
               <h3>
                 {explanation.selected ? (
-                  <><CheckCircle size={18} color="var(--success)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Route Selected</>
+                  <><CheckCircle size={18} color="var(--color-success)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Route Selected</>
                 ) : (
-                  <><XCircle size={18} color="var(--danger)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />No Route Found</>
+                  <><XCircle size={18} color="var(--color-danger)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />No Route Found</>
                 )}
               </h3>
             </div>
@@ -299,7 +300,7 @@ export default function Replay() {
           {explanation.rejections.length > 0 && (
             <div className="card">
               <div className="card-header">
-                <h3><XCircle size={18} color="var(--danger)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Rejections</h3>
+                <h3><XCircle size={18} color="var(--color-danger)" style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />Rejections</h3>
               </div>
               <div className="table-wrapper">
                 <table className="table">
@@ -313,7 +314,7 @@ export default function Replay() {
                     {explanation.rejections.map((rej, i) => (
                       <tr key={i}>
                         <td className="text-mono" style={{ fontSize: '0.85rem' }}>{rej.candidate}</td>
-                        <td>{rej.reason}</td>
+                        <td>{formatRejectReason(rej.reason)}</td>
                       </tr>
                     ))}
                   </tbody>

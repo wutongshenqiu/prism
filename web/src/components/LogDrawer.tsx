@@ -40,7 +40,7 @@ export default function LogDrawer({ onClose }: LogDrawerProps) {
         </div>
         <div className="drawer-body">
           {isLoading && <div className="drawer-loading">Loading...</div>}
-          {!isLoading && detailError && <div className="drawer-loading" style={{ color: 'var(--error)' }}>{detailError}</div>}
+          {!isLoading && detailError && <div className="drawer-loading" style={{ color: 'var(--color-danger)' }}>{detailError}</div>}
           {!isLoading && !detailError && !log && <div className="drawer-loading">Not found</div>}
           {!isLoading && log && (
             <>

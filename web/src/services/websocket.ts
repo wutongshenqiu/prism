@@ -1,20 +1,32 @@
 import type { WsMessage } from '../types';
 
+export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 type MessageHandler = (message: WsMessage) => void;
+type StateHandler = (state: ConnectionState) => void;
 type TokenProvider = () => string | null;
+type TokenRefresher = () => Promise<string | null>;
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
   private handlers: Set<MessageHandler> = new Set();
+  private stateHandlers: Set<StateHandler> = new Set();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private baseReconnectDelay = 1000;
   private shouldReconnect = true;
   private tokenProvider: TokenProvider;
+  private tokenRefresher: TokenRefresher | null = null;
+  private _connectionState: ConnectionState = 'disconnected';
 
-  constructor(tokenProvider: TokenProvider) {
+  constructor(tokenProvider: TokenProvider, tokenRefresher?: TokenRefresher) {
     this.tokenProvider = tokenProvider;
+    this.tokenRefresher = tokenRefresher ?? null;
+  }
+
+  private setConnectionState(state: ConnectionState): void {
+    this._connectionState = state;
+    this.stateHandlers.forEach((h) => h(state));
   }
 
   private buildUrl(): string | null {
@@ -31,8 +43,11 @@ export class WebSocketManager {
     const url = this.buildUrl();
     if (!url) {
       console.warn('[WS] No token available, skipping connect');
+      this.setConnectionState('disconnected');
       return;
     }
+
+    this.setConnectionState('connecting');
 
     try {
       this.ws = new WebSocket(url);
@@ -40,6 +55,7 @@ export class WebSocketManager {
       this.ws.onopen = () => {
         console.log('[WS] Connected');
         this.reconnectAttempts = 0;
+        this.setConnectionState('connected');
       };
 
       this.ws.onmessage = (event) => {
@@ -53,10 +69,22 @@ export class WebSocketManager {
 
       this.ws.onclose = (event) => {
         console.log('[WS] Disconnected:', event.code, event.reason);
-        // 4001 = server-side token expired indicator; 1008 = policy violation (auth fail)
-        if (event.code === 4001 || event.code === 1008) {
-          console.warn('[WS] Auth failure, triggering reconnect with fresh token');
+        this.setConnectionState('disconnected');
+
+        // 4001 = server-side token expired; 1008 = policy violation (auth fail)
+        if ((event.code === 4001 || event.code === 1008) && this.tokenRefresher) {
+          console.warn('[WS] Auth failure, attempting token refresh before reconnect');
+          this.tokenRefresher().then((newToken) => {
+            if (newToken && this.shouldReconnect) {
+              this.reconnectAttempts = 0; // Reset since we got a fresh token
+              this.scheduleReconnect();
+            }
+          }).catch(() => {
+            console.warn('[WS] Token refresh failed, stopping reconnect');
+          });
+          return;
         }
+
         if (this.shouldReconnect) {
           this.scheduleReconnect();
         }
@@ -67,6 +95,7 @@ export class WebSocketManager {
       };
     } catch (err) {
       console.error('[WS] Connection failed:', err);
+      this.setConnectionState('disconnected');
       this.scheduleReconnect();
     }
   }
@@ -77,7 +106,6 @@ export class WebSocketManager {
       return;
     }
 
-    // If no token available, stop reconnecting
     if (!this.tokenProvider()) {
       console.warn('[WS] No token for reconnect, stopping');
       return;
@@ -86,6 +114,7 @@ export class WebSocketManager {
     const delay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts);
     this.reconnectAttempts++;
 
+    this.setConnectionState('connecting');
     console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
     this.reconnectTimer = setTimeout(() => {
@@ -107,6 +136,8 @@ export class WebSocketManager {
     }
 
     this.handlers.clear();
+    this.stateHandlers.clear();
+    this.setConnectionState('disconnected');
   }
 
   subscribe(handler: MessageHandler): () => void {
@@ -116,6 +147,17 @@ export class WebSocketManager {
     };
   }
 
+  onStateChange(handler: StateHandler): () => void {
+    this.stateHandlers.add(handler);
+    return () => {
+      this.stateHandlers.delete(handler);
+    };
+  }
+
+  get connectionState(): ConnectionState {
+    return this._connectionState;
+  }
+
   get isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }
@@ -123,9 +165,12 @@ export class WebSocketManager {
 
 let instance: WebSocketManager | null = null;
 
-export function getWebSocketManager(tokenProvider: TokenProvider): WebSocketManager {
+export function getWebSocketManager(
+  tokenProvider: TokenProvider,
+  tokenRefresher?: TokenRefresher,
+): WebSocketManager {
   if (!instance) {
-    instance = new WebSocketManager(tokenProvider);
+    instance = new WebSocketManager(tokenProvider, tokenRefresher);
   }
   return instance;
 }

@@ -23,16 +23,18 @@ interface ConfigSection {
 }
 
 const CONFIG_SECTIONS: ConfigSection[] = [
-  { key: 'listen', label: 'Server', description: 'Listen address, port, and TLS settings' },
-  { key: 'providers', label: 'Providers', description: 'Upstream provider credentials, base URLs, and model mappings' },
-  { key: 'routing', label: 'Routing', description: 'Routing profiles, rules, and model resolution' },
-  { key: 'auth-keys', label: 'Auth Keys', description: 'API keys for client authentication with model/credential ACLs' },
-  { key: 'dashboard', label: 'Dashboard', description: 'Dashboard authentication and settings' },
-  { key: 'rate-limit', label: 'Rate Limiting', description: 'Global and per-key RPM/TPM limits' },
+  { key: 'listen', label: 'Server', description: 'Listen address, port, TLS, and body limit' },
+  { key: 'providers', label: 'Providers', description: 'Upstream provider summary (count, formats, regions)' },
+  { key: 'routing', label: 'Routing', description: 'Routing strategy, rules, and model resolution' },
+  { key: 'auth_keys', label: 'Auth Keys', description: 'Client API key count' },
+  { key: 'dashboard', label: 'Dashboard', description: 'Dashboard authentication and session settings' },
+  { key: 'rate_limit', label: 'Rate Limiting', description: 'Global and per-key RPM/TPM limits' },
   { key: 'cache', label: 'Cache', description: 'Response cache settings (TTL, max entries)' },
   { key: 'cost', label: 'Cost Tracking', description: 'Custom model pricing overrides' },
-  { key: 'audit', label: 'Audit', description: 'Audit logging backend configuration' },
-  { key: 'logging', label: 'Logging', description: 'Log level, file rotation, and output settings' },
+  { key: 'retry', label: 'Retry', description: 'Retry policy for upstream requests' },
+  { key: 'streaming', label: 'Streaming', description: 'SSE streaming configuration' },
+  { key: 'timeouts', label: 'Timeouts', description: 'Connect and request timeout settings' },
+  { key: 'log_store', label: 'Log Store', description: 'In-memory request log ring buffer capacity' },
 ];
 
 export default function Config() {
@@ -41,6 +43,7 @@ export default function Config() {
   const [rawYaml, setRawYaml] = useState('');
   const [configPath, setConfigPath] = useState('');
   const [editorContent, setEditorContent] = useState('');
+  const [configVersion, setConfigVersion] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [validationResult, setValidationResult] = useState<ConfigValidateResponse | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -59,6 +62,7 @@ export default function Config() {
       setRawYaml(rawRes.data.content);
       setConfigPath(rawRes.data.path);
       setEditorContent(rawRes.data.content);
+      setConfigVersion(rawRes.data.config_version || '');
       setValidationResult(null);
     } catch (err) {
       console.error('Failed to fetch config:', err);
@@ -102,21 +106,33 @@ export default function Config() {
     setIsApplying(true);
     setMessage(null);
     try {
-      await configApi.apply(editorContent);
+      const res = await configApi.apply(editorContent, configVersion || undefined);
+      if (res.data.config_version) {
+        setConfigVersion(res.data.config_version);
+      }
       setMessage({ type: 'success', text: 'Configuration applied successfully.' });
       await fetchConfig();
     } catch (err) {
       if (err && typeof err === 'object' && 'response' in err) {
-        const axiosErr = err as { response?: { data?: { error?: string; message?: string } } };
+        const axiosErr = err as { response?: { status?: number; data?: { error?: string; message?: string; current_version?: string } } };
         const errorCode = axiosErr.response?.data?.error;
         const errMsg = axiosErr.response?.data?.message || 'Failed to apply configuration';
-        // Surface specific error semantics to the user
-        const prefix = errorCode === 'write_failed'
-          ? 'Write conflict: '
-          : errorCode === 'validation_failed'
-            ? 'Validation error: '
-            : '';
-        setMessage({ type: 'error', text: `${prefix}${errMsg}` });
+        if (errorCode === 'config_conflict') {
+          // Update local version so next save won't conflict again after refresh
+          if (axiosErr.response?.data?.current_version) {
+            setConfigVersion(axiosErr.response.data.current_version);
+          }
+          setMessage({ type: 'error', text: `Conflict: ${errMsg}` });
+          // Offer to refresh
+          fetchConfig();
+        } else {
+          const prefix = errorCode === 'write_failed'
+            ? 'Write error: '
+            : errorCode === 'validation_failed'
+              ? 'Validation error: '
+              : '';
+          setMessage({ type: 'error', text: `${prefix}${errMsg}` });
+        }
       } else {
         setMessage({
           type: 'error',
@@ -197,7 +213,7 @@ export default function Config() {
             >
               <Edit3 size={14} />
               YAML Editor
-              {hasChanges && <span style={{ color: 'var(--warning)', marginLeft: '0.25rem' }}>*</span>}
+              {hasChanges && <span style={{ color: 'var(--color-warning)', marginLeft: '0.25rem' }}>*</span>}
             </button>
           </div>
         </div>
@@ -231,11 +247,11 @@ export default function Config() {
                         alignItems: 'center',
                         width: '100%',
                         padding: '0.75rem 1rem',
-                        background: isExpanded ? 'var(--bg-secondary)' : 'transparent',
+                        background: isExpanded ? 'var(--color-bg-secondary)' : 'transparent',
                         border: 'none',
                         cursor: 'pointer',
                         textAlign: 'left',
-                        color: 'var(--text-primary)',
+                        color: 'var(--color-text)',
                       }}
                     >
                       <div>
@@ -257,7 +273,7 @@ export default function Config() {
                       <div style={{ padding: '1rem', borderTop: '1px solid var(--color-border)' }}>
                         {sectionData !== undefined ? (
                           <pre style={{
-                            background: 'var(--bg-secondary)',
+                            background: 'var(--color-bg-secondary)',
                             padding: '0.75rem',
                             borderRadius: 'var(--radius-sm)',
                             overflow: 'auto',
@@ -288,7 +304,7 @@ export default function Config() {
           </div>
           <div className="card-body">
             <pre style={{
-              background: 'var(--bg-secondary)',
+              background: 'var(--color-bg-secondary)',
               padding: '1rem',
               borderRadius: '0.5rem',
               overflow: 'auto',
@@ -310,7 +326,7 @@ export default function Config() {
                 <FileCode size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
                 YAML Configuration
                 {hasChanges && (
-                  <span style={{ color: 'var(--warning)', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
+                  <span style={{ color: 'var(--color-warning)', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
                     (unsaved changes)
                   </span>
                 )}
@@ -359,8 +375,8 @@ export default function Config() {
                   border: 'none',
                   outline: 'none',
                   resize: 'vertical',
-                  background: 'var(--bg-secondary)',
-                  color: 'var(--text-primary)',
+                  background: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text)',
                   tabSize: 2,
                 }}
               />

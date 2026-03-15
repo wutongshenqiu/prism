@@ -248,9 +248,9 @@ export interface RoutingUpdateRequest {
   'model-resolution'?: ModelResolution;
 }
 
-// ── Route Preview/Explain ──
+// ── Route Introspection (canonical model for preview & explain) ──
 
-export interface PreviewRequest {
+export interface RouteIntrospectionRequest {
   model: string;
   endpoint?: string;
   source_format?: string;
@@ -276,9 +276,32 @@ export interface SelectedRoute {
   score: RouteScore;
 }
 
+/** Rejection reason is a serde enum: string for unit variants, object for struct variants. */
+export type RejectReason =
+  | 'model_not_supported'
+  | 'region_mismatch'
+  | 'provider_pin_excluded'
+  | 'circuit_breaker_open'
+  | 'outlier_ejected'
+  | 'credential_disabled'
+  | 'access_denied'
+  | 'cooldown_active'
+  | { missing_capability: { capabilities: string[] } };
+
 export interface RouteRejection {
   candidate: string;
-  reason: string;
+  reason: RejectReason;
+}
+
+/** Format a RejectReason for display. */
+export function formatRejectReason(reason: RejectReason): string {
+  if (typeof reason === 'string') {
+    return reason.replace(/_/g, ' ');
+  }
+  if (typeof reason === 'object' && 'missing_capability' in reason) {
+    return `missing capability: ${reason.missing_capability.capabilities.join(', ')}`;
+  }
+  return String(reason);
 }
 
 export interface ModelResolutionStep {

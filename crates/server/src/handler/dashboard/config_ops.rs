@@ -124,7 +124,8 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// PUT /api/dashboard/config/apply — validate, persist, and reload config.
-/// Accepts `{"yaml": "..."}` with the full YAML config to apply.
+/// Accepts `{"yaml": "...", "config_version": "..."}`.
+/// If `config_version` is provided and doesn't match the current file, returns 409 Conflict.
 pub async fn apply_config(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
@@ -139,6 +140,11 @@ pub async fn apply_config(
         }
     };
 
+    let expected_version = body
+        .get("config_version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     // Step 1: Validate
     let runtime_config = match prism_core::config::Config::load_from_str(&yaml_str) {
         Ok(cfg) => cfg,
@@ -150,7 +156,7 @@ pub async fn apply_config(
         }
     };
 
-    // Step 2: Persist atomically
+    // Step 2: Check version if provided
     let config_path = match state.config_path.lock() {
         Ok(path) => path.clone(),
         Err(e) => {
@@ -161,6 +167,30 @@ pub async fn apply_config(
         }
     };
 
+    if let Some(ref expected) = expected_version {
+        let current_contents = match std::fs::read_to_string(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "read_failed", "message": e.to_string()})),
+                );
+            }
+        };
+        let current_version = super::providers::sha256_hex(&current_contents);
+        if &current_version != expected {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "config_conflict",
+                    "message": "Configuration has been modified by another session. Refresh and retry.",
+                    "current_version": current_version,
+                })),
+            );
+        }
+    }
+
+    // Step 3: Persist atomically
     let dir = std::path::Path::new(&config_path)
         .parent()
         .unwrap_or(std::path::Path::new("."));
@@ -180,7 +210,7 @@ pub async fn apply_config(
         );
     }
 
-    // Step 3: Reload runtime
+    // Step 4: Reload runtime
     state.router.update_from_config(&runtime_config);
     state
         .catalog
@@ -192,60 +222,101 @@ pub async fn apply_config(
     state.http_client_pool.clear();
     state.config.store(std::sync::Arc::new(runtime_config));
 
+    let new_version = super::providers::sha256_hex(&yaml_str);
     tracing::info!(path = %config_path, "Configuration applied via dashboard API");
     (
         StatusCode::OK,
-        Json(json!({"message": "Configuration applied successfully"})),
+        Json(json!({
+            "message": "Configuration applied successfully",
+            "config_version": new_version,
+        })),
     )
 }
 
-/// GET /api/dashboard/config/raw — get raw YAML config file contents.
+/// GET /api/dashboard/config/raw — get raw YAML config file contents with version.
 pub async fn get_raw_config(State(state): State<AppState>) -> impl IntoResponse {
-    let config_path = match state.config_path.lock() {
-        Ok(path) => path.clone(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "lock_failed", "message": e.to_string()})),
-            );
+    match super::providers::read_config_versioned(&state) {
+        Ok((content, version)) => {
+            let config_path = state
+                .config_path
+                .lock()
+                .map(|p| p.clone())
+                .unwrap_or_default();
+            (
+                StatusCode::OK,
+                Json(json!({"content": content, "path": config_path, "config_version": version})),
+            )
         }
-    };
-
-    match std::fs::read_to_string(&config_path) {
-        Ok(content) => (
-            StatusCode::OK,
-            Json(json!({"content": content, "path": config_path})),
-        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "read_failed", "message": e.to_string()})),
+            Json(json!({"error": "read_failed", "message": e})),
         ),
     }
 }
 
-/// GET /api/dashboard/config/current — get full sanitized config.
+/// GET /api/dashboard/config/current — get full sanitized config with version.
+/// Returns a truthful view of all configuration sections. Secrets are masked.
 pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     let config = state.config.load();
+    let version = super::providers::read_config_versioned(&state)
+        .map(|(_, v)| v)
+        .unwrap_or_default();
+
+    // Build providers summary (mask API keys)
+    let providers_summary: Vec<serde_json::Value> = config
+        .providers
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "format": p.format.as_str(),
+                "disabled": p.disabled,
+                "models_count": p.models.len(),
+                "region": p.region,
+                "wire_api": p.wire_api,
+            })
+        })
+        .collect();
+
     let sanitized = json!({
-        "host": config.host,
-        "port": config.port,
-        "tls": { "enable": config.tls.enable },
-        "auth_keys_count": config.auth_keys.len(),
+        "listen": {
+            "host": config.host,
+            "port": config.port,
+            "tls_enabled": config.tls.enable,
+            "body_limit_mb": config.body_limit_mb,
+        },
+        "providers": {
+            "total": config.providers.len(),
+            "items": providers_summary,
+        },
         "routing": config.routing,
-        "retry": config.retry,
-        "body_limit_mb": config.body_limit_mb,
-        "streaming": config.streaming,
-        "connect_timeout": config.connect_timeout,
-        "request_timeout": config.request_timeout,
+        "auth_keys": {
+            "total": config.auth_keys.len(),
+        },
         "dashboard": {
             "enabled": config.dashboard.enabled,
             "username": config.dashboard.username,
             "jwt_ttl_secs": config.dashboard.jwt_ttl_secs,
-            "log_store_capacity": config.log_store.capacity,
         },
-        "providers": {
-            "total": config.providers.len(),
+        "rate_limit": config.rate_limit,
+        "cache": {
+            "enabled": config.cache.enabled,
+            "max_entries": config.cache.max_entries,
+            "ttl_secs": config.cache.ttl_secs,
         },
+        "cost": {
+            "custom_prices_count": config.model_prices.len(),
+        },
+        "retry": config.retry,
+        "streaming": config.streaming,
+        "timeouts": {
+            "connect_timeout": config.connect_timeout,
+            "request_timeout": config.request_timeout,
+        },
+        "log_store": {
+            "capacity": config.log_store.capacity,
+        },
+        "config_version": version,
     });
     (StatusCode::OK, Json(sanitized))
 }
