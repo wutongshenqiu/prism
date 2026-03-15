@@ -702,6 +702,7 @@ Logical provider-family configuration. A provider entry owns protocol behavior, 
 pub struct ProviderKeyEntry {
     pub name: String,
     pub format: Format,
+    pub upstream: Option<UpstreamKind>,
     pub api_key: String,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -744,6 +745,7 @@ pub struct ProviderKeyEntry {
 |-------|------|---------|----------|-------------|
 | `name` | `String` | required | `name` | Stable logical provider name used for routing identity and dashboard APIs. |
 | `format` | `Format` | required | `format` | Wire protocol family: `openai`, `claude`, or `gemini`. |
+| `upstream` | `Option<UpstreamKind>` | `None` | `upstream` | Concrete upstream family. Defaults to the same family as `format`, but OpenAI-format providers may explicitly set `upstream: codex` to use the dedicated Codex executor. |
 | `api_key` | `String` | `""` | `api-key` | Legacy provider-level secret. If `auth_profiles[]` is empty, Prism exposes it as one implicit API-key auth profile named after the provider. |
 | `base_url` | `Option<String>` | `None` | `base-url` | Override provider base URL. Trailing slashes are stripped. |
 | `proxy_url` | `Option<String>` | `None` | `proxy-url` | Per-provider proxy URL. Falls back to global `proxy_url`. |
@@ -765,9 +767,11 @@ pub struct ProviderKeyEntry {
 
 ### Key behavior
 
+- If `upstream` is omitted, Prism derives it from `format`.
 - `expanded_auth_profiles()` returns explicit `auth_profiles[]` when present.
 - If `auth_profiles[]` is empty and `api_key` is set, Prism synthesizes one implicit API-key auth profile using the provider name as the profile ID.
 - A provider entry may intentionally have no auth material yet; dashboard auth-profile APIs can attach profiles later.
+- `upstream: codex` requires `format: openai`, rejects provider-level `api-key`, and only accepts `codex-oauth` auth profiles.
 
 ### YAML example
 
@@ -844,7 +848,7 @@ pub struct AuthProfileEntry {
 
 - `id` must be non-empty.
 - `api-key` and `bearer-token` modes require `secret` unless the profile is disabled.
-- `openai-codex-oauth` profiles must not carry a static `secret`.
+- `codex-oauth` profiles must not carry a static `secret`, require `upstream: codex`, and must target the official `https://chatgpt.com/backend-api/codex` base URL.
 - `anthropic-claude-subscription` profiles must not carry a static `secret`, are restricted to Claude-format providers, and must target the official `https://api.anthropic.com` base URL.
 
 ---
@@ -855,7 +859,7 @@ pub struct AuthProfileEntry {
 pub enum AuthMode {
     ApiKey,
     BearerToken,
-    OpenaiCodexOauth,
+    CodexOAuth,
     AnthropicClaudeSubscription,
 }
 ```
@@ -864,7 +868,7 @@ pub enum AuthMode {
 |---------|------------|---------|
 | `ApiKey` | `api-key` | Static key sent with a provider-specific auth header. |
 | `BearerToken` | `bearer-token` | Static bearer token, used for subscription/setup-token style flows. |
-| `OpenaiCodexOauth` | `openai-codex-oauth` | Refreshable Codex OAuth profile managed through the auth runtime store. |
+| `CodexOAuth` | `codex-oauth` | Refreshable Codex OAuth profile managed through the auth runtime store and restricted to Codex upstreams. |
 | `AnthropicClaudeSubscription` | `anthropic-claude-subscription` | Managed Claude setup-token profile stored only in the auth runtime sidecar and always sent as `x-api-key`. |
 
 ---

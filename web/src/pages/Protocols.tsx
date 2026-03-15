@@ -16,6 +16,8 @@ interface ProtocolEndpoint {
   streamMode: 'never' | 'runtime';
 }
 
+type ProbeState = 'verified' | 'failed' | 'unknown' | 'unsupported';
+
 const PROTOCOLS: {
   id: string;
   label: string;
@@ -72,19 +74,24 @@ function CoverageBadge({ level }: { level: CoverageLevel }) {
 
 function StreamSupportBadge({
   mode,
-  supported,
+  state,
 }: {
   mode: ProtocolEndpoint['streamMode'];
-  supported: boolean;
+  state: ProbeState;
 }) {
   if (mode === 'never') {
     return <span className="text-muted">No</span>;
   }
-  return supported ? (
-    <span className="type-badge type-badge--green"><CheckCircle size={12} /> Available</span>
-  ) : (
-    <span className="type-badge type-badge--red"><XCircle size={12} /> Unavailable</span>
-  );
+  if (state === 'verified') {
+    return <span className="type-badge type-badge--green"><CheckCircle size={12} /> Verified</span>;
+  }
+  if (state === 'failed') {
+    return <span className="type-badge type-badge--red"><XCircle size={12} /> Failed</span>;
+  }
+  if (state === 'unsupported') {
+    return <span className="type-badge">Unsupported</span>;
+  }
+  return <span className="type-badge">Unknown</span>;
 }
 
 export default function Protocols() {
@@ -126,13 +133,22 @@ export default function Protocols() {
 
   const uniqueFormats = [...new Set(providers.map((p) => p.upstream_protocol))];
   const streamSupportByIngress = useMemo(() => {
-    const map = new Map<string, boolean>();
+    const rank: Record<ProbeState, number> = {
+      verified: 4,
+      failed: 3,
+      unsupported: 2,
+      unknown: 1,
+    };
+    const map = new Map<string, ProbeState>();
     for (const protocol of PROTOCOLS) {
-      map.set(protocol.id, false);
+      map.set(protocol.id, 'unknown');
     }
     for (const entry of matrixEntries) {
-      if (entry.supports_generate && entry.supports_stream) {
-        map.set(entry.ingress_protocol, true);
+      if (!entry.supports_generate) continue;
+      const current = map.get(entry.ingress_protocol) ?? 'unknown';
+      const next = entry.stream_state?.status ?? 'unknown';
+      if (rank[next] > rank[current]) {
+        map.set(entry.ingress_protocol, next);
       }
     }
     return map;
@@ -187,7 +203,7 @@ export default function Protocols() {
                           <td>
                             <StreamSupportBadge
                               mode={ep.streamMode}
-                              supported={streamSupportByIngress.get(proto.id) ?? false}
+                              state={streamSupportByIngress.get(proto.id) ?? 'unknown'}
                             />
                           </td>
                         </tr>

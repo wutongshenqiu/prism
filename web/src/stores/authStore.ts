@@ -1,44 +1,45 @@
 import { create } from 'zustand';
-import { authApi, setTokenSetter } from '../services/api';
+import { authApi, setSessionSetter } from '../services/api';
 import { destroyWebSocketManager } from '../services/websocket';
 
 interface AuthState {
-  token: string | null;
+  username: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  initialized: boolean;
   error: string | null;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
-  refreshToken: () => Promise<void>;
-  initialize: () => void;
+  logout: () => Promise<void>;
+  refreshToken: () => Promise<boolean>;
+  initialize: () => Promise<void>;
 }
 
-// Single point of truth for persisting and updating token state.
-// All paths (login, refresh, interceptor) converge here.
-function applyToken(token: string | null) {
-  if (token) {
-    localStorage.setItem('auth_token', token);
-    useAuthStore.setState({ token, isAuthenticated: true });
-  } else {
-    localStorage.removeItem('auth_token');
+function applySession(authenticated: boolean, username?: string | null) {
+  if (!authenticated) {
     destroyWebSocketManager();
-    useAuthStore.setState({ token: null, isAuthenticated: false });
   }
+  useAuthStore.setState((state) => ({
+    username: authenticated ? (username ?? state.username) : null,
+    isAuthenticated: authenticated,
+    initialized: true,
+    isLoading: false,
+  }));
 }
-
-// Read token synchronously so ProtectedRoute sees it on first render
-const savedToken = localStorage.getItem('auth_token');
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: savedToken,
-  isAuthenticated: !!savedToken,
-  isLoading: false,
+  username: null,
+  isAuthenticated: false,
+  isLoading: true,
+  initialized: false,
   error: null,
 
-  initialize: () => {
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      set({ token, isAuthenticated: true });
+  initialize: async () => {
+    set({ isLoading: true });
+    try {
+      const response = await authApi.session();
+      applySession(response.data.authenticated, response.data.username);
+    } catch {
+      applySession(false, null);
     }
   },
 
@@ -46,30 +47,35 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await authApi.login(username, password);
-      applyToken(response.data.token);
-      set({ isLoading: false });
+      applySession(response.data.authenticated, response.data.username);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Login failed';
-      set({ error: message, isLoading: false });
+      const message = err instanceof Error ? err.message : 'Login failed';
+      set({ error: message, isLoading: false, initialized: true, isAuthenticated: false });
       throw err;
     }
   },
 
-  logout: () => {
-    applyToken(null);
+  logout: async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // Best effort cookie clear; local state should still be dropped.
+    }
+    applySession(false, null);
   },
 
   refreshToken: async () => {
     try {
       const response = await authApi.refresh();
-      applyToken(response.data.token);
+      applySession(response.data.authenticated, response.data.username);
+      return true;
     } catch {
-      applyToken(null);
+      applySession(false, null);
+      return false;
     }
   },
 }));
 
-// Register the unified setter so the Axios interceptor can update auth state
-// on token refresh (avoiding circular imports).
-setTokenSetter(applyToken);
+setSessionSetter((authenticated) => {
+  applySession(authenticated);
+});

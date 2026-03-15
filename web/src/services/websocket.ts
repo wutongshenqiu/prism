@@ -3,8 +3,8 @@ import type { WsMessage } from '../types';
 export type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 type MessageHandler = (message: WsMessage) => void;
 type StateHandler = (state: ConnectionState) => void;
-type TokenProvider = () => string | null;
-type TokenRefresher = () => Promise<string | null>;
+type SessionProvider = () => boolean;
+type SessionRefresher = () => Promise<boolean>;
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
@@ -15,13 +15,13 @@ export class WebSocketManager {
   private maxReconnectAttempts = 10;
   private baseReconnectDelay = 1000;
   private shouldReconnect = true;
-  private tokenProvider: TokenProvider;
-  private tokenRefresher: TokenRefresher | null = null;
+  private sessionProvider: SessionProvider;
+  private sessionRefresher: SessionRefresher | null = null;
   private _connectionState: ConnectionState = 'disconnected';
 
-  constructor(tokenProvider: TokenProvider, tokenRefresher?: TokenRefresher) {
-    this.tokenProvider = tokenProvider;
-    this.tokenRefresher = tokenRefresher ?? null;
+  constructor(sessionProvider: SessionProvider, sessionRefresher?: SessionRefresher) {
+    this.sessionProvider = sessionProvider;
+    this.sessionRefresher = sessionRefresher ?? null;
   }
 
   private setConnectionState(state: ConnectionState): void {
@@ -30,11 +30,10 @@ export class WebSocketManager {
   }
 
   private buildUrl(): string | null {
-    const token = this.tokenProvider();
-    if (!token) return null;
+    if (!this.sessionProvider()) return null;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    return `${protocol}//${host}/ws/dashboard?token=${encodeURIComponent(token)}`;
+    return `${protocol}//${host}/ws/dashboard`;
   }
 
   connect(): void {
@@ -42,7 +41,7 @@ export class WebSocketManager {
 
     const url = this.buildUrl();
     if (!url) {
-      console.warn('[WS] No token available, skipping connect');
+      console.warn('[WS] No active dashboard session, skipping connect');
       this.setConnectionState('disconnected');
       return;
     }
@@ -72,10 +71,10 @@ export class WebSocketManager {
         this.setConnectionState('disconnected');
 
         // 4001 = server-side token expired; 1008 = policy violation (auth fail)
-        if ((event.code === 4001 || event.code === 1008) && this.tokenRefresher) {
+        if ((event.code === 4001 || event.code === 1008) && this.sessionRefresher) {
           console.warn('[WS] Auth failure, attempting token refresh before reconnect');
-          this.tokenRefresher().then((newToken) => {
-            if (newToken && this.shouldReconnect) {
+          this.sessionRefresher().then((authenticated) => {
+            if (authenticated && this.shouldReconnect) {
               this.reconnectAttempts = 0; // Reset since we got a fresh token
               this.scheduleReconnect();
             }
@@ -106,8 +105,8 @@ export class WebSocketManager {
       return;
     }
 
-    if (!this.tokenProvider()) {
-      console.warn('[WS] No token for reconnect, stopping');
+    if (!this.sessionProvider()) {
+      console.warn('[WS] No dashboard session for reconnect, stopping');
       return;
     }
 
@@ -166,11 +165,11 @@ export class WebSocketManager {
 let instance: WebSocketManager | null = null;
 
 export function getWebSocketManager(
-  tokenProvider: TokenProvider,
-  tokenRefresher?: TokenRefresher,
+  sessionProvider: SessionProvider,
+  sessionRefresher?: SessionRefresher,
 ): WebSocketManager {
   if (!instance) {
-    instance = new WebSocketManager(tokenProvider, tokenRefresher);
+    instance = new WebSocketManager(sessionProvider, sessionRefresher);
   }
   return instance;
 }

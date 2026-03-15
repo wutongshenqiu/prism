@@ -8,35 +8,29 @@ import { useRealtimeStore } from '../stores/realtimeStore';
 import type { MetricsSnapshot, RequestLog, WsMessage } from '../types';
 
 export function useWebSocket(): { connectionState: ConnectionState } {
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const setSnapshot = useMetricsStore((s) => s.setSnapshot);
   const addLog = useLogsStore((s) => s.addLog);
   const connectionState = useRealtimeStore((s) => s.connectionState);
   const setConnectionState = useRealtimeStore((s) => s.setConnectionState);
 
-  // Stable token provider that always reads the latest token
-  const tokenProvider = useCallback(
-    () => useAuthStore.getState().token,
+  // Stable session provider that always reads the latest auth state
+  const sessionProvider = useCallback(
+    () => useAuthStore.getState().isAuthenticated,
     [],
   );
 
-  // Token refresher: attempt to refresh the auth token
-  const tokenRefresher = useCallback(async (): Promise<string | null> => {
-    try {
-      await useAuthStore.getState().refreshToken();
-      return useAuthStore.getState().token;
-    } catch {
-      return null;
-    }
-  }, []);
+  const sessionRefresher = useCallback(async (): Promise<boolean> =>
+    useAuthStore.getState().refreshToken()
+  , []);
 
   useEffect(() => {
-    if (!token) {
+    if (!isAuthenticated) {
       setConnectionState('disconnected');
       return;
     }
 
-    const manager = getWebSocketManager(tokenProvider, tokenRefresher);
+    const manager = getWebSocketManager(sessionProvider, sessionRefresher);
     manager.connect();
 
     const unsubscribe = manager.subscribe((message: WsMessage) => {
@@ -59,7 +53,7 @@ export function useWebSocket(): { connectionState: ConnectionState } {
       unsubscribe();
       unsubscribeState();
     };
-  }, [token, tokenProvider, tokenRefresher, setSnapshot, addLog, setConnectionState]);
+  }, [isAuthenticated, sessionProvider, sessionRefresher, setSnapshot, addLog, setConnectionState]);
 
   useEffect(() => {
     return () => {

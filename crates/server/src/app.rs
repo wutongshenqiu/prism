@@ -163,6 +163,8 @@ impl Application {
             health_manager: health_manager.clone(),
             auth_runtime: auth_runtime.clone(),
             oauth_sessions: Arc::new(dashmap::DashMap::new()),
+            device_sessions: Arc::new(dashmap::DashMap::new()),
+            provider_probe_cache: Arc::new(dashmap::DashMap::new()),
         };
         let app_router = crate::build_router(state);
 

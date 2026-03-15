@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod claude;
+pub mod codex;
 pub mod common;
 pub mod gemini;
 pub mod health;
@@ -7,7 +8,7 @@ pub mod openai_compat;
 pub mod routing;
 pub mod sse;
 
-use prism_core::provider::{Format, ProviderExecutor};
+use prism_core::provider::{ProviderExecutor, UpstreamKind};
 use prism_core::proxy::HttpClientPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,11 +41,8 @@ impl ExecutorRegistry {
         self.executors.get(name).cloned()
     }
 
-    pub fn get_by_format(&self, format: Format) -> Option<Arc<dyn ProviderExecutor>> {
-        self.executors
-            .values()
-            .find(|e| e.native_format() == format)
-            .cloned()
+    pub fn get_by_upstream(&self, upstream: UpstreamKind) -> Option<Arc<dyn ProviderExecutor>> {
+        self.get(upstream.as_str())
     }
 
     pub fn all(&self) -> impl Iterator<Item = (&String, &Arc<dyn ProviderExecutor>)> {
@@ -61,11 +59,14 @@ pub fn build_registry(
     // OpenAI executor (handles all OpenAI-format providers)
     let openai = openai_compat::OpenAICompatExecutor {
         name: "openai".to_string(),
-        format: Format::OpenAI,
+        format: prism_core::provider::Format::OpenAI,
         global_proxy: global_proxy.clone(),
         client_pool: client_pool.clone(),
     };
     executors.insert("openai".to_string(), Arc::new(openai));
+
+    let codex = codex::CodexExecutor::new(global_proxy.clone(), client_pool.clone());
+    executors.insert("codex".to_string(), Arc::new(codex));
 
     // Claude executor
     let claude = claude::ClaudeExecutor::new(global_proxy.clone(), client_pool.clone());

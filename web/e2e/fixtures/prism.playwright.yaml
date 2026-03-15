@@ -24,7 +24,8 @@ dashboard:
 providers:
   - name: codex-gateway
     format: openai
-    base-url: "https://api.openai.com/v1"
+    upstream: codex
+    base-url: "https://chatgpt.com/backend-api/codex"
     wire-api: responses
     models:
       - id: "gpt-5"
@@ -38,11 +39,8 @@ providers:
       custom-headers:
         user-agent: "Codex/1.0.0"
     auth-profiles:
-      - id: api
-        mode: api-key
-        secret: "sk-openai-playwright"
       - id: codex-user
-        mode: openai-codex-oauth
+        mode: codex-oauth
         access-token: "codex-access-token"
         refresh-token: "codex-refresh-token"
         expires-at: "2030-01-01T00:00:00Z"

@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { KeyRound, Plus, RefreshCw, Pencil, Trash2, Link as LinkIcon, X } from 'lucide-react';
+import { KeyRound, Plus, RefreshCw, Pencil, Trash2, Link as LinkIcon, X, Laptop, Smartphone, Globe } from 'lucide-react';
 import { authProfilesApi, providersApi } from '../services/api';
-import type { AuthMode, AuthProfile, AuthProfileUpsertRequest, Provider } from '../types';
+import type {
+  AuthMode,
+  AuthProfile,
+  AuthProfileUpsertRequest,
+  CodexDeviceStartResponse,
+  Provider,
+} from '../types';
 import StatusBadge from '../components/StatusBadge';
 
 interface FormState {
@@ -21,6 +27,10 @@ interface NoticeState {
   message: string;
 }
 
+interface CodexDeviceState extends CodexDeviceStartResponse {
+  status: 'idle' | 'pending';
+}
+
 const emptyForm: FormState = {
   provider: '',
   id: '',
@@ -33,7 +43,7 @@ const emptyForm: FormState = {
 };
 
 function isManagedMode(mode: AuthMode) {
-  return mode === 'openai-codex-oauth' || mode === 'anthropic-claude-subscription';
+  return mode === 'codex-oauth' || mode === 'anthropic-claude-subscription';
 }
 
 function modeLabel(mode: AuthMode) {
@@ -42,7 +52,7 @@ function modeLabel(mode: AuthMode) {
       return 'API key';
     case 'bearer-token':
       return 'Bearer token';
-    case 'openai-codex-oauth':
+    case 'codex-oauth':
       return 'Codex OAuth';
     case 'anthropic-claude-subscription':
       return 'Claude Subscription';
@@ -66,12 +76,34 @@ export default function AuthProfiles() {
   const [connectProfile, setConnectProfile] = useState<AuthProfile | null>(null);
   const [connectSecret, setConnectSecret] = useState('');
   const [connectError, setConnectError] = useState('');
+  const [codexDevice, setCodexDevice] = useState<CodexDeviceState | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const providerFilter = searchParams.get('provider') ?? '';
   const focusedProfile = searchParams.get('profile') ?? '';
   const oauthStatus = searchParams.get('oauth');
+  const providersByName = useMemo(
+    () => new Map(providers.map((provider) => [provider.name, provider])),
+    [providers],
+  );
+
+  const allowedModesForProvider = (providerName: string): AuthMode[] => {
+    const provider = providersByName.get(providerName);
+    switch (provider?.upstream) {
+      case 'codex':
+        return ['codex-oauth'];
+      case 'claude':
+        return ['api-key', 'bearer-token', 'anthropic-claude-subscription'];
+      default:
+        return ['api-key', 'bearer-token'];
+    }
+  };
+
+  const normalizeModeForProvider = (providerName: string, mode: AuthMode): AuthMode => {
+    const allowed = allowedModesForProvider(providerName);
+    return allowed.includes(mode) ? mode : allowed[0] ?? 'api-key';
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -118,8 +150,9 @@ export default function AuthProfiles() {
   }, [profiles, providerFilter]);
 
   const openCreate = () => {
+    const provider = providerFilter || providers[0]?.name || '';
     setEditing(null);
-    setForm({ ...emptyForm, provider: providerFilter || providers[0]?.name || '' });
+    setForm({ ...emptyForm, provider, mode: normalizeModeForProvider(provider, emptyForm.mode) });
     setError('');
     setShowModal(true);
   };
@@ -151,6 +184,7 @@ export default function AuthProfiles() {
     setConnectProfile(null);
     setConnectSecret('');
     setConnectError('');
+    setCodexDevice(null);
     setConnecting(null);
   };
 
@@ -217,29 +251,10 @@ export default function AuthProfiles() {
   };
 
   const handleConnect = async (profile: AuthProfile) => {
-    if (profile.mode === 'anthropic-claude-subscription') {
-      setConnectProfile(profile);
-      setConnectSecret('');
-      setConnectError('');
-      return;
-    }
-
-    setConnecting(profile.qualified_name);
-    try {
-      const redirectUri = `${window.location.origin}/auth-profiles/callback`;
-      const start = await authProfilesApi.startCodexOauth({
-        provider: profile.provider,
-        profile_id: profile.id,
-        redirect_uri: redirectUri,
-      });
-      window.location.assign(start.auth_url);
-    } catch (err) {
-      setNotice({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Failed to start OAuth login',
-      });
-      setConnecting(null);
-    }
+    setConnectProfile(profile);
+    setConnectSecret('');
+    setConnectError('');
+    setCodexDevice(null);
   };
 
   const handleConnectToken = async () => {
@@ -268,6 +283,59 @@ export default function AuthProfiles() {
     }
   };
 
+  const handleImportLocalCodex = async () => {
+    if (!connectProfile) return;
+    setConnecting(connectProfile.qualified_name);
+    setConnectError('');
+    try {
+      await authProfilesApi.importLocal(connectProfile.provider, connectProfile.id);
+      setNotice({
+        type: 'success',
+        message: `Imported local Codex auth for "${connectProfile.qualified_name}".`,
+      });
+      closeConnectModal();
+      await fetchData();
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : 'Failed to import local auth.json');
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const handleStartBrowserOauth = async () => {
+    if (!connectProfile) return;
+    setConnecting(connectProfile.qualified_name);
+    try {
+      const redirectUri = `${window.location.origin}/auth-profiles/callback`;
+      const start = await authProfilesApi.startCodexOauth({
+        provider: connectProfile.provider,
+        profile_id: connectProfile.id,
+        redirect_uri: redirectUri,
+      });
+      window.location.assign(start.auth_url);
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : 'Failed to start OAuth login');
+      setConnecting(null);
+    }
+  };
+
+  const handleStartDeviceFlow = async () => {
+    if (!connectProfile) return;
+    setConnecting(connectProfile.qualified_name);
+    setConnectError('');
+    try {
+      const device = await authProfilesApi.startCodexDevice({
+        provider: connectProfile.provider,
+        profile_id: connectProfile.id,
+      });
+      setCodexDevice({ ...device, status: 'pending' });
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : 'Failed to start device flow');
+    } finally {
+      setConnecting(null);
+    }
+  };
+
   const handleRefresh = async (profile: AuthProfile) => {
     setRefreshing(profile.qualified_name);
     try {
@@ -283,6 +351,36 @@ export default function AuthProfiles() {
       setRefreshing(null);
     }
   };
+
+  useEffect(() => {
+    if (!connectProfile || connectProfile.mode !== 'codex-oauth' || !codexDevice) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      if (cancelled) return;
+      void authProfilesApi.pollCodexDevice(codexDevice.state)
+        .then(async (result) => {
+          if (cancelled || result.status !== 'completed') return;
+          setNotice({
+            type: 'success',
+            message: `Auth profile "${connectProfile.qualified_name}" connected via device flow.`,
+          });
+          closeConnectModal();
+          await fetchData();
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setConnectError(err instanceof Error ? err.message : 'Device flow polling failed');
+        });
+    }, Math.max(codexDevice.interval_secs, 2) * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [codexDevice, connectProfile]);
 
   return (
     <div className="page">
@@ -376,7 +474,7 @@ export default function AuthProfiles() {
                           <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => openEdit(profile)}>
                             <Pencil size={14} />
                           </button>
-                          {profile.mode === 'openai-codex-oauth' && (
+                          {profile.mode === 'codex-oauth' && (
                             <>
                               <button
                                 className="btn btn-ghost btn-sm"
@@ -436,7 +534,15 @@ export default function AuthProfiles() {
                 <label>Provider</label>
                 <select
                   value={form.provider}
-                  onChange={(event) => setForm((prev) => ({ ...prev, provider: event.target.value }))}
+                  onChange={(event) => {
+                    const provider = event.target.value;
+                    setForm((prev) => ({
+                      ...prev,
+                      provider,
+                      mode: normalizeModeForProvider(provider, prev.mode),
+                      secret: '',
+                    }));
+                  }}
                   disabled={!!editing}
                 >
                   <option value="">Select provider</option>
@@ -463,10 +569,9 @@ export default function AuthProfiles() {
                   value={form.mode}
                   onChange={(event) => setForm((prev) => ({ ...prev, mode: event.target.value as AuthMode, secret: '' }))}
                 >
-                  <option value="api-key">API key</option>
-                  <option value="bearer-token">Bearer token</option>
-                  <option value="openai-codex-oauth">Codex OAuth</option>
-                  <option value="anthropic-claude-subscription">Claude Subscription</option>
+                  {allowedModesForProvider(form.provider).map((mode) => (
+                    <option key={mode} value={mode}>{modeLabel(mode)}</option>
+                  ))}
                 </select>
               </div>
 
@@ -482,7 +587,7 @@ export default function AuthProfiles() {
                 </div>
               ) : (
                 <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
-                  {form.mode === 'openai-codex-oauth'
+                  {form.mode === 'codex-oauth'
                     ? 'OAuth tokens are managed separately from config. Save this profile, then use the link action to connect it.'
                     : 'Claude subscription tokens are managed separately from config. Save this profile, then use the link action to paste a `claude setup-token`. This mode is intended for the official Anthropic endpoint only.'}
                 </div>
@@ -550,29 +655,82 @@ export default function AuthProfiles() {
             </div>
             <div className="modal-body">
               <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
-                Paste a Claude setup-token for <strong>{connectProfile.qualified_name}</strong>.
-                The token is stored in the runtime auth sidecar, not in config.
+                {connectProfile.mode === 'anthropic-claude-subscription'
+                  ? <>Paste a Claude setup-token for <strong>{connectProfile.qualified_name}</strong>. The token is stored in the runtime auth sidecar, not in config.</>
+                  : <>Connect <strong>{connectProfile.qualified_name}</strong> with a browser OAuth flow, device code flow, or server-local <code>~/.codex/auth.json</code> import.</>}
               </p>
               {connectError && <div className="form-error">{connectError}</div>}
-              <div className="form-group">
-                <label>Setup Token</label>
-                <input
-                  type="password"
-                  value={connectSecret}
-                  onChange={(event) => setConnectSecret(event.target.value)}
-                  placeholder="sk-ant-oat01-..."
-                />
-              </div>
+              {connectProfile.mode === 'anthropic-claude-subscription' ? (
+                <div className="form-group">
+                  <label>Setup Token</label>
+                  <input
+                    type="password"
+                    value={connectSecret}
+                    onChange={(event) => setConnectSecret(event.target.value)}
+                    placeholder="sk-ant-oat01-..."
+                  />
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 16 }}>
+                  <div className="alert alert-warning">
+                    Codex managed auth is pinned to official OpenAI hosts. Browser automation is not used for login completion; device flow is safer on remote servers.
+                  </div>
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void handleImportLocalCodex()}
+                      disabled={connecting === connectProfile.qualified_name}
+                    >
+                      <Laptop size={16} />
+                      Import server-local <code>~/.codex/auth.json</code>
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void handleStartDeviceFlow()}
+                      disabled={connecting === connectProfile.qualified_name}
+                    >
+                      <Smartphone size={16} />
+                      Start Device Flow
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void handleStartBrowserOauth()}
+                      disabled={connecting === connectProfile.qualified_name}
+                    >
+                      <Globe size={16} />
+                      Open Browser OAuth
+                    </button>
+                  </div>
+                  {codexDevice && (
+                    <div className="card" style={{ marginTop: 4 }}>
+                      <div className="card-body" style={{ display: 'grid', gap: 8 }}>
+                        <div><strong>User Code:</strong> {codexDevice.user_code}</div>
+                        <div>
+                          <strong>Verification URL:</strong>{' '}
+                          <a href={codexDevice.verification_url} target="_blank" rel="noreferrer">
+                            {codexDevice.verification_url}
+                          </a>
+                        </div>
+                        <div className="text-muted" style={{ fontSize: '0.9rem' }}>
+                          Polling every {codexDevice.interval_secs}s until the device flow completes.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={closeConnectModal}>Cancel</button>
-              <button
-                className="btn btn-primary"
-                onClick={() => void handleConnectToken()}
-                disabled={connecting === connectProfile.qualified_name}
-              >
-                {connecting === connectProfile.qualified_name ? 'Connecting...' : 'Connect'}
-              </button>
+              {connectProfile.mode === 'anthropic-claude-subscription' && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void handleConnectToken()}
+                  disabled={connecting === connectProfile.qualified_name}
+                >
+                  {connecting === connectProfile.qualified_name ? 'Connecting...' : 'Connect'}
+                </button>
+              )}
             </div>
           </div>
         </div>

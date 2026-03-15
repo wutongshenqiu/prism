@@ -15,21 +15,27 @@ pub struct SseEvent {
 
 /// Parse a byte stream into SSE events.
 /// Handles `event:` and `data:` prefixes, multi-line data, and `[DONE]` sentinel.
-pub fn parse_sse_stream(
-    byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send>> {
+pub fn parse_sse_stream<E>(
+    byte_stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send>>
+where
+    E: std::fmt::Display + Send + 'static,
+{
     let stream = async_stream(byte_stream);
     Box::pin(stream)
 }
 
-struct SseState {
-    stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+struct SseState<E> {
+    stream: Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>,
     buffer: String,
 }
 
-fn async_stream(
-    byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> impl Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send {
+fn async_stream<E>(
+    byte_stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<SseEvent, prism_core::error::ProxyError>> + Send
+where
+    E: std::fmt::Display + Send + 'static,
+{
     futures::stream::unfold(
         SseState {
             stream: Box::pin(byte_stream),
@@ -231,7 +237,8 @@ mod tests {
     #[tokio::test]
     async fn test_parse_sse_stream_basic() {
         let raw = "data: hello\n\ndata: world\n\n";
-        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let stream =
+            futures::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(raw)) });
         let mut sse_stream = parse_sse_stream(stream);
 
         let event1 = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
@@ -247,8 +254,8 @@ mod tests {
     async fn test_parse_sse_stream_chunked() {
         // Data arrives in multiple chunks
         let stream = futures::stream::iter(vec![
-            Ok(Bytes::from("data: hel")),
-            Ok(Bytes::from("lo\n\n")),
+            Ok::<Bytes, std::io::Error>(Bytes::from("data: hel")),
+            Ok::<Bytes, std::io::Error>(Bytes::from("lo\n\n")),
         ]);
         let mut sse_stream = parse_sse_stream(stream);
 
@@ -259,7 +266,8 @@ mod tests {
     #[tokio::test]
     async fn test_parse_sse_stream_with_event_type() {
         let raw = "event: message_start\ndata: {}\n\n";
-        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let stream =
+            futures::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(raw)) });
         let mut sse_stream = parse_sse_stream(stream);
 
         let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
@@ -270,7 +278,8 @@ mod tests {
     #[tokio::test]
     async fn test_parse_sse_stream_done_sentinel() {
         let raw = "data: [DONE]\n\n";
-        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let stream =
+            futures::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(raw)) });
         let mut sse_stream = parse_sse_stream(stream);
 
         let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();
@@ -281,7 +290,8 @@ mod tests {
     async fn test_parse_sse_stream_remaining_data_on_eof() {
         // Data without trailing double newline (stream ends abruptly)
         let raw = "data: final";
-        let stream = futures::stream::once(async move { Ok(Bytes::from(raw)) });
+        let stream =
+            futures::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(raw)) });
         let mut sse_stream = parse_sse_stream(stream);
 
         let event = StreamExt::next(&mut sse_stream).await.unwrap().unwrap();

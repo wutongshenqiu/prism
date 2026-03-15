@@ -51,6 +51,8 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-066 | Dashboard Correctness & Control Plane Quality Overhaul | Completed | [completed/SPEC-066/](completed/SPEC-066/) |
 | SPEC-067 | Provider Families & Auth Profiles              | Completed | [completed/SPEC-067/](completed/SPEC-067/) |
 | SPEC-068 | Managed Auth Profiles & Claude Subscription Tokens | Completed | [completed/SPEC-068/](completed/SPEC-068/) |
+| SPEC-069 | Codex Native Upstream & Managed OAuth          | Completed | [completed/SPEC-069/](completed/SPEC-069/) |
+| SPEC-070 | Codex Device Flow, Local Import, and Responses WebSocket | Completed | [completed/SPEC-070/](completed/SPEC-070/) |
 
 ## Active
 

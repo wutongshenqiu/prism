@@ -1,4 +1,4 @@
-use prism_core::provider::{AuthRecord, Format};
+use prism_core::provider::{AuthRecord, Format, UpstreamKind, upstream_protocol_for_kind};
 use prism_core::routing::planner::{CredentialEntry, InventorySnapshot, ProviderEntry};
 use prism_domain::capability::default_capabilities_for_protocol;
 use std::collections::HashMap;
@@ -12,6 +12,7 @@ pub struct ProviderCatalog {
 
 struct CatalogProvider {
     format: Format,
+    upstream: UpstreamKind,
     name: String,
     credentials: Vec<CatalogCredential>,
 }
@@ -34,7 +35,7 @@ impl ProviderCatalog {
             providers: providers
                 .iter()
                 .map(|p| {
-                    let up = prism_core::provider::upstream_protocol(p.format);
+                    let up = upstream_protocol_for_kind(p.upstream);
                     ProviderEntry {
                         format: p.format,
                         name: p.name.clone(),
@@ -71,8 +72,13 @@ impl ProviderCatalog {
                 .first()
                 .map(|r| r.provider)
                 .unwrap_or(Format::OpenAI);
+            let upstream = records
+                .first()
+                .map(|r| r.upstream)
+                .unwrap_or_else(|| UpstreamKind::from(format));
             providers.push(CatalogProvider {
                 format,
+                upstream,
                 name: provider_name.clone(),
                 credentials: records
                     .iter()
@@ -135,6 +141,7 @@ mod tests {
         AuthRecord {
             id: id.to_string(),
             provider: format,
+            upstream: UpstreamKind::from(format),
             provider_name: format!("provider-{id}"),
             api_key: format!("key-{id}"),
             base_url: None,
@@ -181,6 +188,7 @@ mod tests {
             let mut providers = catalog.providers.write().unwrap();
             providers.push(CatalogProvider {
                 format: Format::OpenAI,
+                upstream: UpstreamKind::OpenAI,
                 name: "openai".to_string(),
                 credentials: vec![CatalogCredential {
                     record: test_record("c1", Format::OpenAI, &["gpt-4"]),
@@ -201,6 +209,7 @@ mod tests {
             let mut providers = catalog.providers.write().unwrap();
             providers.push(CatalogProvider {
                 format: Format::OpenAI,
+                upstream: UpstreamKind::OpenAI,
                 name: "openai".to_string(),
                 credentials: vec![CatalogCredential {
                     record: test_record("c1", Format::OpenAI, &["gpt-4"]),
@@ -223,6 +232,7 @@ mod tests {
             let mut providers = catalog.providers.write().unwrap();
             providers.push(CatalogProvider {
                 format: Format::OpenAI,
+                upstream: UpstreamKind::OpenAI,
                 name: "openai".to_string(),
                 credentials: vec![
                     CatalogCredential {

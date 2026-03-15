@@ -121,6 +121,7 @@ mod tests {
         AuthRecord {
             id: "test-gemini".to_string(),
             provider: Format::Gemini,
+            upstream: UpstreamKind::Gemini,
             provider_name: "gemini".to_string(),
             api_key: "AIzaSyTest".to_string(),
             base_url: None,

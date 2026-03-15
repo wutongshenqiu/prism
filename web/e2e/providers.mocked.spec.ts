@@ -5,27 +5,18 @@ const providersPayload = {
     {
       name: 'openai-prod',
       format: 'openai',
+      upstream: 'codex',
       api_key_masked: 'sk-o****prod',
-      base_url: 'https://api.openai.com',
+      base_url: 'https://chatgpt.com/backend-api/codex',
       models: [{ id: 'gpt-5', alias: null }],
       disabled: false,
       wire_api: 'responses',
       upstream_presentation: { profile: 'codex-cli' },
       auth_profiles: [
         {
-          id: 'billing',
-          qualified_name: 'openai-prod/billing',
-          mode: 'api-key',
-          header: 'bearer',
-          refresh_token_present: false,
-          id_token_present: false,
-          disabled: false,
-          weight: 1,
-        },
-        {
           id: 'codex-user',
           qualified_name: 'openai-prod/codex-user',
-          mode: 'openai-codex-oauth',
+          mode: 'codex-oauth',
           header: 'bearer',
           refresh_token_present: true,
           id_token_present: true,
@@ -41,8 +32,9 @@ const providersPayload = {
 const providerDetail = {
   name: 'openai-prod',
   format: 'openai',
+  upstream: 'codex',
   api_key_masked: 'sk-o****prod',
-  base_url: 'https://api.openai.com',
+  base_url: 'https://chatgpt.com/backend-api/codex',
   proxy_url: null,
   prefix: null,
   models: [{ id: 'gpt-5', alias: null }],
@@ -62,19 +54,9 @@ const providerDetail = {
   },
   auth_profiles: [
     {
-      id: 'billing',
-      qualified_name: 'openai-prod/billing',
-      mode: 'api-key',
-      header: 'bearer',
-      refresh_token_present: false,
-      id_token_present: false,
-      disabled: false,
-      weight: 1,
-    },
-    {
       id: 'codex-user',
       qualified_name: 'openai-prod/codex-user',
-      mode: 'openai-codex-oauth',
+      mode: 'codex-oauth',
       header: 'bearer',
       refresh_token_present: true,
       id_token_present: true,
@@ -87,8 +69,6 @@ const providerDetail = {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem('auth_token', 'playwright-token');
-
     class MockWebSocket {
       static CONNECTING = 0;
       static OPEN = 1;
@@ -126,6 +106,10 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({ status: 200, json: { message: 'ok' } });
   });
 
+  await page.route('**/api/dashboard/auth/session', async (route) => {
+    await route.fulfill({ json: { authenticated: true, username: 'playwright' } });
+  });
+
   await page.route('**/api/dashboard/providers/openai-prod', async (route) => {
     await route.fulfill({ json: providerDetail });
   });
@@ -136,7 +120,7 @@ test('providers page renders auth profile summary', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
   await expect(page.getByText('openai-prod')).toBeVisible();
-  await expect(page.getByText('Auth profiles: billing, codex-user')).toBeVisible();
+  await expect(page.getByText('Auth profiles: codex-user')).toBeVisible();
   await expect(page.getByText('Codex CLI')).toBeVisible();
 });
 
@@ -145,7 +129,6 @@ test('providers edit modal shows managed auth profile warning', async ({ page })
   await page.locator('button[title="Edit"]').first().click();
 
   await expect(page.getByText('This provider uses managed auth profiles')).toBeVisible();
-  await expect(page.getByText('billing · API key')).toBeVisible();
   await expect(page.getByText('codex-user · Codex OAuth')).toBeVisible();
   await expect(
     page.getByText(

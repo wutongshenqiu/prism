@@ -15,6 +15,7 @@ Runtime credential representation built from `ProviderKeyEntry` during config lo
 pub struct AuthRecord {
     pub id: String,
     pub provider: Format,
+    pub upstream: UpstreamKind,
     pub provider_name: String,
     pub api_key: String,
     pub base_url: Option<String>,
@@ -44,7 +45,8 @@ pub struct AuthRecord {
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `String` | UUID v4 generated at build time. Used to track tried credentials in retry loop. |
-| `provider` | `Format` | The provider format (`OpenAI`, `Claude`, or `Gemini`). |
+| `provider` | `Format` | The ingress wire format (`OpenAI`, `Claude`, or `Gemini`). |
+| `upstream` | `UpstreamKind` | The concrete upstream family (`openai`, `codex`, `claude`, or `gemini`) used for executor selection and default base URL resolution. |
 | `provider_name` | `String` | Logical provider-family name from config, used as routing identity. |
 | `api_key` | `String` | Static upstream secret. For OAuth profiles this acts as fallback storage when runtime state is empty. |
 | `base_url` | `Option<String>` | Custom base URL override. |
@@ -59,7 +61,7 @@ pub struct AuthRecord {
 | `wire_api` | `WireApi` | Wire API format (Chat or Responses). |
 | `credential_name` | `Option<String>` | Human-readable routing name, currently `provider/profile`. |
 | `auth_profile_id` | `String` | Stable auth profile ID within the provider family. |
-| `auth_mode` | `AuthMode` | Auth material type (`api-key`, `bearer-token`, `openai-codex-oauth`, or `anthropic-claude-subscription`). |
+| `auth_mode` | `AuthMode` | Auth material type (`api-key`, `bearer-token`, `codex-oauth`, or `anthropic-claude-subscription`). |
 | `auth_header` | `AuthHeaderKind` | Explicit or derived upstream auth header strategy. |
 | `oauth_state` | `Option<SharedOAuthTokenState>` | Shared runtime OAuth state for refreshable profiles. |
 | `weight` | `u32` | Weight for weighted round-robin routing (default 1). |
@@ -74,7 +76,7 @@ pub struct AuthRecord {
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `base_url_or_default` | `fn base_url_or_default(&self, default: &str) -> String` | Returns `base_url` or the given default, with trailing slash stripped. |
-| `resolved_base_url` | `fn resolved_base_url(&self) -> String` | Returns `base_url` or the canonical default for the record's provider format. |
+| `resolved_base_url` | `fn resolved_base_url(&self) -> String` | Returns `base_url` or the canonical default for the record's upstream family. |
 | `current_secret` | `fn current_secret(&self) -> String` | Returns the runtime OAuth access token when available, otherwise falls back to `api_key`. |
 | `resolved_auth_header_kind` | `fn resolved_auth_header_kind(&self) -> AuthHeaderKind` | Resolves `auto` into the concrete header kind sent upstream. |
 | `effective_proxy` | `fn effective_proxy<'a>(&'a self, global_proxy: Option<&'a str>) -> Option<&'a str>` | Resolves proxy: entry-level first, then global fallback. |
@@ -217,7 +219,7 @@ pub struct ModelInfo {
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `String` | Model identifier (alias preferred over raw ID). |
-| `provider` | `String` | Logical provider name exposed by the router (for example `openai`, `anthropic`, `openai-codex`). |
+| `provider` | `String` | Logical provider name exposed by the router (for example `openai`, `anthropic`, `codex`). |
 | `owned_by` | `String` | Same as `provider`, for OpenAI-compatible list responses. |
 
 ---
@@ -252,7 +254,7 @@ pub trait ProviderExecutor: Send + Sync {
 
 | Method | Return | Description |
 |--------|--------|-------------|
-| `identifier()` | `&str` | Executor registry key (for example `"openai"`, `"claude"`, or `"gemini"`). |
+| `identifier()` | `&str` | Executor registry key (for example `"openai"`, `"codex"`, `"claude"`, or `"gemini"`). |
 | `native_format()` | `Format` | The provider's native API format. |
 | `execute()` | `Result<ProviderResponse, ProxyError>` | Non-streaming request execution. |
 | `execute_stream()` | `Result<StreamResult, ProxyError>` | Streaming request execution. |
@@ -263,6 +265,7 @@ pub trait ProviderExecutor: Send + Sync {
 | Key | Type | Native Format | Notes |
 |-----|------|--------------|-------|
 | `"openai"` | `openai_compat::OpenAICompatExecutor` | `Format::OpenAI` | Handles OpenAI-format upstreams, including custom base URLs and `responses` mode |
+| `"codex"` | `codex::CodexExecutor` | `Format::OpenAI` | Dedicated ChatGPT/Codex backend executor for `https://chatgpt.com/backend-api/codex` |
 | `"claude"` | `claude::ClaudeExecutor` | `Format::Claude` | |
 | `"gemini"` | `gemini::GeminiExecutor` | `Format::Gemini` | |
 

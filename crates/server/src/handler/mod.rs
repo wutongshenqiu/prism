@@ -9,6 +9,7 @@ pub mod messages;
 pub mod models;
 pub mod provider_scoped;
 pub mod responses;
+pub mod responses_ws;
 
 use crate::AppState;
 use crate::dispatch::{DispatchRequest, dispatch};

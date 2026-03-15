@@ -8,6 +8,7 @@ use prism_core::config::Config;
 use prism_core::error::ProxyError;
 use prism_core::provider::AuthRecord;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,10 @@ use std::sync::{Arc, Mutex, RwLock};
 const CODEX_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_DEVICE_USER_CODE_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/usercode";
+const CODEX_DEVICE_TOKEN_URL: &str = "https://auth.openai.com/api/accounts/deviceauth/token";
+const CODEX_DEVICE_VERIFICATION_URL: &str = "https://auth.openai.com/codex/device";
+const CODEX_DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
 const AUTH_STORE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -25,6 +30,31 @@ pub struct PendingCodexOauthSession {
     pub code_verifier: String,
     pub redirect_uri: String,
     pub created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingCodexDeviceSession {
+    pub provider: String,
+    pub profile_id: String,
+    pub device_auth_id: String,
+    pub user_code: String,
+    pub interval_secs: u64,
+    pub created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexDeviceStart {
+    pub device_auth_id: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub interval_secs: u64,
+    pub expires_in_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum CodexDevicePollResult {
+    Pending,
+    Complete(CodexOAuthTokens),
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +92,10 @@ pub struct AuthRuntimeManager {
     codex_auth_url: String,
     codex_token_url: String,
     codex_client_id: String,
+    codex_device_user_code_url: String,
+    codex_device_token_url: String,
+    codex_device_verification_url: String,
+    codex_auth_file: Option<PathBuf>,
     store_path: RwLock<Option<PathBuf>>,
     persist_lock: Mutex<()>,
     oauth_profiles: DashMap<String, SharedOAuthTokenState>,
@@ -81,11 +115,22 @@ impl AuthRuntimeManager {
             std::env::var("PRISM_CODEX_TOKEN_URL").unwrap_or_else(|_| CODEX_TOKEN_URL.to_string());
         let codex_client_id =
             std::env::var("PRISM_CODEX_CLIENT_ID").unwrap_or_else(|_| CODEX_CLIENT_ID.to_string());
+        let codex_device_user_code_url = std::env::var("PRISM_CODEX_DEVICE_USER_CODE_URL")
+            .unwrap_or_else(|_| CODEX_DEVICE_USER_CODE_URL.to_string());
+        let codex_device_token_url = std::env::var("PRISM_CODEX_DEVICE_TOKEN_URL")
+            .unwrap_or_else(|_| CODEX_DEVICE_TOKEN_URL.to_string());
+        let codex_device_verification_url = std::env::var("PRISM_CODEX_DEVICE_VERIFICATION_URL")
+            .unwrap_or_else(|_| CODEX_DEVICE_VERIFICATION_URL.to_string());
+        let codex_auth_file = std::env::var_os("PRISM_CODEX_AUTH_FILE").map(PathBuf::from);
         Self {
             refresh_skew_seconds: 120,
             codex_auth_url,
             codex_token_url,
             codex_client_id,
+            codex_device_user_code_url,
+            codex_device_token_url,
+            codex_device_verification_url,
+            codex_auth_file,
             store_path: RwLock::new(None),
             persist_lock: Mutex::new(()),
             oauth_profiles: DashMap::new(),
@@ -93,15 +138,42 @@ impl AuthRuntimeManager {
     }
 
     pub fn with_codex_endpoints(auth_url: String, token_url: String, client_id: String) -> Self {
+        Self::with_codex_runtime_endpoints(
+            auth_url,
+            token_url,
+            client_id,
+            CODEX_DEVICE_USER_CODE_URL.to_string(),
+            CODEX_DEVICE_TOKEN_URL.to_string(),
+            CODEX_DEVICE_VERIFICATION_URL.to_string(),
+        )
+    }
+
+    pub fn with_codex_runtime_endpoints(
+        auth_url: String,
+        token_url: String,
+        client_id: String,
+        device_user_code_url: String,
+        device_token_url: String,
+        device_verification_url: String,
+    ) -> Self {
         Self {
             refresh_skew_seconds: 120,
             codex_auth_url: auth_url,
             codex_token_url: token_url,
             codex_client_id: client_id,
+            codex_device_user_code_url: device_user_code_url,
+            codex_device_token_url: device_token_url,
+            codex_device_verification_url: device_verification_url,
+            codex_auth_file: None,
             store_path: RwLock::new(None),
             persist_lock: Mutex::new(()),
             oauth_profiles: DashMap::new(),
         }
+    }
+
+    pub fn with_codex_auth_file(mut self, path: PathBuf) -> Self {
+        self.codex_auth_file = Some(path);
+        self
     }
 
     pub fn initialize(&self, config_path: &str, config: &Config) -> Result<(), String> {
@@ -369,6 +441,195 @@ impl AuthRuntimeManager {
         format!("{}?{query}", self.codex_auth_url)
     }
 
+    pub async fn start_codex_device_flow(
+        &self,
+        pool: &prism_core::proxy::HttpClientPool,
+        global_proxy: Option<&str>,
+    ) -> Result<CodexDeviceStart, String> {
+        #[derive(Serialize)]
+        struct DeviceUserCodeRequest<'a> {
+            client_id: &'a str,
+        }
+
+        #[derive(Deserialize)]
+        struct DeviceUserCodeResponse {
+            device_auth_id: Option<String>,
+            user_code: Option<String>,
+            usercode: Option<String>,
+            interval: Option<Value>,
+        }
+
+        let client = pool
+            .get_or_create(None, global_proxy, 30, 30)
+            .map_err(|e| format!("failed to build oauth client: {e}"))?;
+        let resp = client
+            .post(&self.codex_device_user_code_url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .json(&DeviceUserCodeRequest {
+                client_id: self.codex_client_id.as_str(),
+            })
+            .send()
+            .await
+            .map_err(|e| format!("device auth request failed: {e}"))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("device auth read failed: {e}"))?;
+        if status != StatusCode::OK {
+            return Err(format!(
+                "device auth request failed with status {}: {}",
+                status, body
+            ));
+        }
+
+        let parsed: DeviceUserCodeResponse = serde_json::from_str(&body)
+            .map_err(|e| format!("invalid device auth response: {e}"))?;
+        let device_auth_id = parsed
+            .device_auth_id
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "device auth response missing device_auth_id".to_string())?;
+        let user_code = parsed
+            .user_code
+            .or(parsed.usercode)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "device auth response missing user_code".to_string())?;
+        Ok(CodexDeviceStart {
+            device_auth_id,
+            user_code,
+            verification_url: self.codex_device_verification_url.clone(),
+            interval_secs: parse_device_interval(parsed.interval.as_ref()).unwrap_or(5),
+            expires_in_secs: 15 * 60,
+        })
+    }
+
+    pub async fn poll_codex_device_flow(
+        &self,
+        pool: &prism_core::proxy::HttpClientPool,
+        global_proxy: Option<&str>,
+        session: &PendingCodexDeviceSession,
+    ) -> Result<CodexDevicePollResult, String> {
+        #[derive(Serialize)]
+        struct DeviceTokenRequest<'a> {
+            device_auth_id: &'a str,
+            user_code: &'a str,
+        }
+
+        #[derive(Deserialize)]
+        struct DeviceTokenResponse {
+            authorization_code: Option<String>,
+            code_verifier: Option<String>,
+        }
+
+        let client = pool
+            .get_or_create(None, global_proxy, 30, 30)
+            .map_err(|e| format!("failed to build oauth client: {e}"))?;
+        let resp = client
+            .post(&self.codex_device_token_url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .json(&DeviceTokenRequest {
+                device_auth_id: session.device_auth_id.as_str(),
+                user_code: session.user_code.as_str(),
+            })
+            .send()
+            .await
+            .map_err(|e| format!("device token polling failed: {e}"))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("device token read failed: {e}"))?;
+        if status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND {
+            return Ok(CodexDevicePollResult::Pending);
+        }
+        if status != StatusCode::OK {
+            return Err(format!(
+                "device token polling failed with status {}: {}",
+                status, body
+            ));
+        }
+
+        let parsed: DeviceTokenResponse = serde_json::from_str(&body)
+            .map_err(|e| format!("invalid device token response: {e}"))?;
+        let authorization_code = parsed
+            .authorization_code
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "device token response missing authorization_code".to_string())?;
+        let code_verifier = parsed
+            .code_verifier
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "device token response missing code_verifier".to_string())?;
+        let tokens = self
+            .exchange_codex_code(
+                pool,
+                global_proxy,
+                &authorization_code,
+                CODEX_DEVICE_REDIRECT_URI,
+                &code_verifier,
+            )
+            .await?;
+        Ok(CodexDevicePollResult::Complete(tokens))
+    }
+
+    pub fn load_codex_cli_tokens(
+        &self,
+        path_override: Option<&Path>,
+    ) -> Result<CodexOAuthTokens, String> {
+        #[derive(Deserialize)]
+        struct CodexAuthFile {
+            tokens: Option<CodexAuthTokens>,
+            last_refresh: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct CodexAuthTokens {
+            access_token: Option<String>,
+            refresh_token: Option<String>,
+            id_token: Option<String>,
+            account_id: Option<String>,
+        }
+
+        let path = path_override
+            .map(PathBuf::from)
+            .or_else(|| self.codex_auth_file.clone())
+            .or_else(default_codex_auth_path)
+            .ok_or_else(|| "unable to resolve ~/.codex/auth.json".to_string())?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read '{}': {e}", path.display()))?;
+        let parsed: CodexAuthFile =
+            serde_json::from_str(&raw).map_err(|e| format!("invalid auth.json: {e}"))?;
+        let tokens = parsed
+            .tokens
+            .ok_or_else(|| "auth.json missing tokens object".to_string())?;
+        let access_token = tokens
+            .access_token
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "auth.json missing tokens.access_token".to_string())?;
+        let refresh_token = tokens.refresh_token.unwrap_or_default();
+        let id_token = tokens.id_token;
+        let (account_id_from_id_token, email) = id_token
+            .as_deref()
+            .and_then(parse_id_token_claims)
+            .unwrap_or_default();
+        let last_refresh = parsed
+            .last_refresh
+            .as_deref()
+            .and_then(|value| parse_timestamp(Some(value)))
+            .unwrap_or_else(Utc::now);
+
+        Ok(CodexOAuthTokens {
+            access_token: access_token.clone(),
+            refresh_token,
+            id_token,
+            expires_at: parse_exp_from_jwt(&access_token),
+            account_id: tokens.account_id.or(account_id_from_id_token),
+            email,
+            last_refresh,
+        })
+    }
+
     pub async fn exchange_codex_code(
         &self,
         pool: &prism_core::proxy::HttpClientPool,
@@ -608,10 +869,28 @@ fn split_profile_key(value: &str) -> Option<(&str, &str)> {
     Some((provider, profile_id))
 }
 
+fn default_codex_auth_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).map(|home| {
+        if home.ends_with("auth.json") {
+            home
+        } else {
+            home.join(".codex").join("auth.json")
+        }
+    })
+}
+
 fn parse_timestamp(value: Option<&str>) -> Option<chrono::DateTime<Utc>> {
     value
         .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn parse_device_interval(value: Option<&Value>) -> Option<u64> {
+    match value {
+        Some(Value::Number(number)) => number.as_u64(),
+        Some(Value::String(text)) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    }
 }
 
 fn parse_id_token_claims(id_token: &str) -> Option<(Option<String>, Option<String>)> {
@@ -626,4 +905,12 @@ fn parse_id_token_claims(id_token: &str) -> Option<(Option<String>, Option<Strin
     let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
     let claims: Claims = serde_json::from_slice(&bytes).ok()?;
     Some((claims.account_id.or(claims.sub), claims.email))
+}
+
+fn parse_exp_from_jwt(token: &str) -> Option<chrono::DateTime<Utc>> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let exp = value.get("exp")?.as_i64()?;
+    chrono::DateTime::<Utc>::from_timestamp(exp, 0)
 }

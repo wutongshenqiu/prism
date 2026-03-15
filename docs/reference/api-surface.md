@@ -208,27 +208,35 @@ Claude Messages API passthrough. Accepts Claude-format requests and routes only 
 
 #### POST /v1/responses
 
-OpenAI Responses API passthrough. Forwards directly to upstream OpenAI or OpenAI-compatible providers. No format translation.
+OpenAI Responses API passthrough routed through the unified dispatch pipeline. Supports provider selection, retry/failover, auth-profile pinning, and streaming passthrough for OpenAI-family upstreams.
 
 **Allowed formats:** `Format::OpenAI` only
 
-**Behavior:** Resolves provider, picks credential, builds direct HTTP request to `{base_url}/v1/responses`. Does not go through the translation or retry dispatch loop.
-
-**Limitations:**
-- **No streaming support**: The handler always reads the full upstream response body (`resp.bytes().await`), so streaming passthrough is not implemented even if the upstream Responses API supports it.
-- **No `User-Agent` extraction**: Unlike `chat_completions` and `messages`, this handler does not parse the `User-Agent` header.
+**Behavior:** Parses `model`, optional `models[]`, `stream`, and optional `x-prism-auth-profile`, then dispatches with `responses_passthrough=true`. OpenAI-compatible upstreams receive the original Responses payload; Codex uses its native executor and payload normalization.
 
 **Source:** `crates/server/src/handler/responses.rs`
 
 ---
 
+#### GET /v1/responses/ws
+
+WebSocket facade for the OpenAI Responses API. Accepts websocket JSON requests with `type: "response.create"` or `type: "response.append"` and forwards upstream Responses SSE events back as websocket text frames.
+
+**Allowed formats:** `Format::OpenAI` only
+
+**Behavior:** Uses the same auth, routing, and request logging stack as the HTTP Responses API. The gateway pins the successful credential after the first request. For Codex, subsequent websocket turns preserve `previous_response_id`; other upstreams fall back to transcript merge semantics. Completion is signaled by the terminal `response.completed` event; Prism does not synthesize a websocket `[DONE]` frame.
+
+**Source:** `crates/server/src/handler/responses_ws.rs`
+
+---
+
 ### Dashboard routes
 
-Dashboard login is public; all other dashboard routes require a dashboard JWT.
+Dashboard login is public; all other dashboard routes require dashboard auth via either `Authorization: Bearer <jwt>` or the HttpOnly `dashboard_session` cookie.
 
 #### POST /api/dashboard/auth/login
 
-Authenticates the dashboard user with bcrypt password verification and returns a JWT.
+Authenticates the dashboard user with bcrypt password verification, returns a JWT payload, and sets the same token as an HttpOnly session cookie for browser clients.
 
 **Response:**
 ```json
@@ -299,13 +307,25 @@ Starts a Codex OAuth PKCE flow and returns `{ state, auth_url, provider, profile
 
 Completes the OAuth code exchange, hydrates the auth profile, and persists runtime OAuth tokens into the auth runtime sidecar store (`*.auth-runtime.json`) rather than the YAML config.
 
+#### POST /api/dashboard/auth-profiles/codex/device/start
+
+Starts a Codex device authorization flow and returns `{ state, verification_url, user_code, interval_secs, expires_in }`.
+
+#### POST /api/dashboard/auth-profiles/codex/device/poll
+
+Polls a pending device authorization session. Returns `{ status: "pending" }` while waiting and `{ status: "completed", profile }` after the token exchange succeeds.
+
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/connect
 
 Connects a managed auth profile that expects operator-supplied runtime credentials. Prism currently supports `anthropic-claude-subscription` here by accepting a Claude setup-token, validating the provider/base URL constraints, and storing the token only in the auth runtime sidecar store.
 
+#### POST /api/dashboard/auth-profiles/{provider}/{profile}/import-local
+
+Imports a server-local Codex CLI auth bundle from `~/.codex/auth.json` (or the runtime-configured override) into the managed auth runtime store. This endpoint only supports `codex-oauth` profiles.
+
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/refresh
 
-Refreshes an existing refreshable managed auth profile. Prism currently supports `openai-codex-oauth` here and persists the updated runtime tokens into the auth runtime sidecar store.
+Refreshes an existing refreshable managed auth profile. Prism currently supports `codex-oauth` here and persists the updated runtime tokens into the auth runtime sidecar store.
 
 **Source:** `crates/server/src/handler/dashboard/auth_profiles.rs`
 

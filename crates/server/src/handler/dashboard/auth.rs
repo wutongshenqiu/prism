@@ -1,9 +1,11 @@
 use crate::AppState;
-use crate::middleware::dashboard_auth::{Claims, generate_token};
+use crate::middleware::dashboard_auth::{
+    Claims, build_session_cookie, clear_session_cookie, generate_token,
+};
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::http::{HeaderMap, StatusCode, header::SET_COOKIE};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -69,12 +71,21 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+fn request_is_secure(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("https"))
+        .unwrap_or(false)
+}
+
 /// POST /api/dashboard/auth/login
 pub async fn login(
     State(state): State<AppState>,
     axum::Extension(ctx): axum::Extension<prism_core::context::RequestContext>,
+    headers: HeaderMap,
     Json(body): Json<LoginRequest>,
-) -> impl IntoResponse {
+) -> Response {
     let config = state.config.load();
     let dashboard = &config.dashboard;
 
@@ -82,7 +93,8 @@ pub async fn login(
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "not_found", "message": "Dashboard is not enabled"})),
-        );
+        )
+            .into_response();
     }
 
     let client_ip = ctx.client_ip.clone().unwrap_or_default();
@@ -97,7 +109,8 @@ pub async fn login(
                     "error": "access_denied",
                     "message": "Dashboard access restricted to localhost",
                 })),
-            );
+            )
+                .into_response();
         }
     }
 
@@ -119,7 +132,8 @@ pub async fn login(
                 "error": "too_many_attempts",
                 "message": format!("Too many login attempts. Try again in {} seconds.", dashboard.login_lockout_secs),
             })),
-        );
+        )
+            .into_response();
     }
 
     // Verify username
@@ -141,7 +155,8 @@ pub async fn login(
             Json(
                 json!({"error": "invalid_credentials", "message": "Invalid username or password"}),
             ),
-        );
+        )
+            .into_response();
     }
 
     // Verify password against bcrypt hash
@@ -155,7 +170,8 @@ pub async fn login(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "auth_error", "message": "Password verification failed"})),
-                );
+                )
+                    .into_response();
             }
         }
     };
@@ -177,7 +193,8 @@ pub async fn login(
             Json(
                 json!({"error": "invalid_credentials", "message": "Invalid username or password"}),
             ),
-        );
+        )
+            .into_response();
     }
 
     // Successful login — clear rate limit attempts
@@ -196,25 +213,33 @@ pub async fn login(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "config_error", "message": "JWT secret not configured"})),
-            );
+            )
+                .into_response();
         }
     };
 
     match generate_token(&body.username, &secret, dashboard.jwt_ttl_secs) {
-        Ok(token) => (
-            StatusCode::OK,
-            Json(json!({
-                "token": token,
-                "expires_in": dashboard.jwt_ttl_secs,
-                "token_type": "Bearer",
-            })),
-        ),
+        Ok(token) => {
+            let cookie =
+                build_session_cookie(&token, dashboard.jwt_ttl_secs, request_is_secure(&headers));
+            (
+                StatusCode::OK,
+                [(SET_COOKIE, cookie)],
+                Json(json!({
+                    "authenticated": true,
+                    "username": body.username,
+                    "expires_in": dashboard.jwt_ttl_secs,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => {
             tracing::error!("Failed to generate JWT token: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "token_error", "message": "Failed to generate token"})),
             )
+                .into_response()
         }
     }
 }
@@ -222,8 +247,9 @@ pub async fn login(
 /// POST /api/dashboard/auth/refresh
 pub async fn refresh(
     State(state): State<AppState>,
+    headers: HeaderMap,
     claims: axum::Extension<Claims>,
-) -> impl IntoResponse {
+) -> Response {
     let config = state.config.load();
     let dashboard = &config.dashboard;
 
@@ -233,22 +259,55 @@ pub async fn refresh(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "config_error", "message": "JWT secret not configured"})),
-            );
+            )
+                .into_response();
         }
     };
 
     match generate_token(&claims.sub, &secret, dashboard.jwt_ttl_secs) {
-        Ok(token) => (
-            StatusCode::OK,
-            Json(json!({
-                "token": token,
-                "expires_in": dashboard.jwt_ttl_secs,
-                "token_type": "Bearer",
-            })),
-        ),
+        Ok(token) => {
+            let cookie =
+                build_session_cookie(&token, dashboard.jwt_ttl_secs, request_is_secure(&headers));
+            (
+                StatusCode::OK,
+                [(SET_COOKIE, cookie)],
+                Json(json!({
+                    "authenticated": true,
+                    "username": claims.sub.clone(),
+                    "expires_in": dashboard.jwt_ttl_secs,
+                })),
+            )
+                .into_response()
+        }
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "token_error", "message": "Failed to generate token"})),
-        ),
+        )
+            .into_response(),
     }
+}
+
+/// GET /api/dashboard/auth/session
+pub async fn session(claims: axum::Extension<Claims>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "authenticated": true,
+            "username": claims.sub.clone(),
+        })),
+    )
+}
+
+/// POST /api/dashboard/auth/logout
+pub async fn logout(headers: HeaderMap) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            SET_COOKIE,
+            clear_session_cookie(request_is_secure(&headers)),
+        )],
+        Json(json!({
+            "authenticated": false,
+        })),
+    )
 }

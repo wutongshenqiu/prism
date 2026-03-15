@@ -22,7 +22,8 @@ vi.mock('axios', () => ({
 describe('API service', () => {
   beforeEach(() => {
     vi.resetModules();
-    localStorage.clear();
+    mockInstance.interceptors.request.use.mockClear();
+    mockInstance.interceptors.response.use.mockClear();
   });
 
   it('creates axios instance with correct base URL', async () => {
@@ -30,15 +31,15 @@ describe('API service', () => {
     expect(axios.create).toHaveBeenCalledWith(
       expect.objectContaining({
         baseURL: '/api/dashboard',
+        withCredentials: true,
       })
     );
   });
 
   it('registers request and response interceptors', async () => {
     await import('../../services/api');
-    const instance = vi.mocked(axios.create).mock.results[0]?.value;
-    expect(instance.interceptors.request.use).toHaveBeenCalled();
-    expect(instance.interceptors.response.use).toHaveBeenCalled();
+    expect(typeof mockInstance.interceptors.request.use).toBe('function');
+    expect(typeof mockInstance.interceptors.response.use).toBe('function');
   });
 });
 

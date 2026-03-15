@@ -166,9 +166,12 @@ impl<'a> ExecutionController<'a> {
         let executor = self
             .state
             .executors
-            .get_by_format(target_format)
+            .get_by_upstream(auth.upstream)
             .ok_or_else(|| {
-                ProxyError::Internal(format!("no executor for format {}", target_format.as_str()))
+                ProxyError::Internal(format!(
+                    "no executor for upstream {}",
+                    auth.upstream.as_str()
+                ))
             })?;
 
         let attempt_start = Instant::now();
@@ -253,7 +256,10 @@ impl<'a> ExecutionController<'a> {
         }
 
         // Inject stream_options.include_usage for OpenAI-format streaming
-        if req.stream && target_format == Format::OpenAI {
+        if req.stream
+            && target_format == Format::OpenAI
+            && auth.upstream != prism_core::provider::UpstreamKind::Codex
+        {
             inject_stream_usage_option_value(&mut payload_value);
         }
 

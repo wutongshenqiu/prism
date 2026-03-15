@@ -3,8 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 vi.mock('../../services/api', () => ({
-  authApi: { login: vi.fn(), refresh: vi.fn() },
-  setTokenSetter: vi.fn(),
+  authApi: { login: vi.fn(), refresh: vi.fn(), session: vi.fn(), logout: vi.fn() },
+  setSessionSetter: vi.fn(),
 }));
 vi.mock('../../services/websocket', () => ({
   destroyWebSocketManager: vi.fn(),
@@ -15,9 +15,10 @@ const { default: ProtectedRoute } = await import('../../components/ProtectedRout
 
 function renderWithRouter(isAuthenticated: boolean) {
   useAuthStore.setState({
-    token: isAuthenticated ? 'test-token' : null,
+    username: isAuthenticated ? 'admin' : null,
     isAuthenticated,
     isLoading: false,
+    initialized: true,
     error: null,
   });
 
@@ -40,7 +41,13 @@ function renderWithRouter(isAuthenticated: boolean) {
 
 describe('ProtectedRoute', () => {
   beforeEach(() => {
-    localStorage.clear();
+    useAuthStore.setState({
+      username: null,
+      isAuthenticated: false,
+      isLoading: false,
+      initialized: true,
+      error: null,
+    });
   });
 
   it('renders children when authenticated', () => {

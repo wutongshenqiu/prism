@@ -20,8 +20,6 @@ async function loginApi(request: APIRequestContext) {
     data: { username: USERNAME, password: PASSWORD },
   });
   expect(response.ok()).toBeTruthy();
-  const body = await response.json();
-  return body.token as string;
 }
 
 test.describe('Dashboard Login', () => {
@@ -61,13 +59,13 @@ test.describe('Dashboard Pages', () => {
     await page.getByRole('link', { name: /providers/i }).click();
     await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
     await expect(page.locator('body')).toContainText('codex-gateway');
-    await expect(page.getByTestId('provider-auth-profiles-codex-gateway')).toContainText('Auth profiles: api, codex-user');
+    await expect(page.getByTestId('provider-auth-profiles-codex-gateway')).toContainText('Auth profiles: codex-user');
   });
 
   test('editing a managed provider shows warning and presentation preview', async ({ page }) => {
     await page.getByRole('link', { name: /providers/i }).click();
     await page.getByTitle('Edit').first().click();
-    await expect(page.locator('.alert.alert-warning')).toContainText('This provider uses managed auth profiles');
+    await expect(page.getByText('This provider uses managed auth profiles')).toBeVisible();
     await expect(page.locator('.modal-body')).toContainText('codex-user');
     await page.getByRole('button', { name: /preview presentation/i }).click();
     await expect(page.locator('.modal-body')).toContainText(/Profile:\s+codex-cli/i);
@@ -75,7 +73,7 @@ test.describe('Dashboard Pages', () => {
     await page.getByRole('button', { name: /manage auth profiles/i }).click();
     await expect(page).toHaveURL(/\/auth-profiles\?provider=codex-gateway/);
     await expect(page.getByRole('heading', { name: 'Auth Profiles' })).toBeVisible();
-    await expect(page.getByTestId('auth-profile-row-codex-gateway/api')).toBeVisible();
+    await expect(page.getByTestId('auth-profile-row-codex-gateway/codex-user')).toBeVisible();
   });
 
   test('providers page can create and delete a legacy api-key provider', async ({ page }) => {
@@ -145,16 +143,18 @@ test.describe('Dashboard Pages', () => {
     await page.getByRole('button', { name: /add auth profile/i }).click();
     await page.locator('.modal select').first().selectOption('codex-gateway');
     await page.getByPlaceholder('e.g. billing, oauth-user').fill(profileId);
-    await page.locator('.modal select').nth(1).selectOption('openai-codex-oauth');
+    await page.locator('.modal select').nth(1).selectOption('codex-oauth');
     await page.getByRole('button', { name: /^create$/i }).click();
 
     await expect(page.locator('body')).toContainText(`Auth profile "codex-gateway/${profileId}" created.`);
     let row = page.getByTestId(`auth-profile-row-codex-gateway/${profileId}`);
     await expect(row).toContainText('Disconnected');
 
+    await row.getByTitle('Connect OAuth').click();
+    await expect(page.getByRole('heading', { name: 'Connect Auth Profile' })).toBeVisible();
     await Promise.all([
       page.waitForURL(/\/auth-profiles\/callback/),
-      row.getByTitle('Connect OAuth').click(),
+      page.getByRole('button', { name: /open browser oauth/i }).click(),
     ]);
     await page.waitForURL((url) => url.pathname === '/auth-profiles');
     await expect(page.getByRole('heading', { name: 'Auth Profiles' })).toBeVisible();
@@ -273,23 +273,16 @@ test.describe('Dashboard Pages', () => {
 
 test.describe('Dashboard API', () => {
   test('dashboard auth-profiles endpoint returns nested auth profile state', async ({ request }) => {
-    const token = await loginApi(request);
-    const resp = await request.get(`${BACKEND}/api/dashboard/auth-profiles`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    await loginApi(request);
+    const resp = await request.get(`${BACKEND}/api/dashboard/auth-profiles`);
     expect(resp.status()).toBe(200);
     const body = await resp.json();
     expect(body.profiles).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           provider: 'codex-gateway',
-          id: 'api',
-          mode: 'api-key',
-        }),
-        expect.objectContaining({
-          provider: 'codex-gateway',
           id: 'codex-user',
-          mode: 'openai-codex-oauth',
+          mode: 'codex-oauth',
           refresh_token_present: true,
         }),
       ]),
@@ -297,10 +290,8 @@ test.describe('Dashboard API', () => {
   });
 
   test('dashboard providers endpoint returns auth profile summaries', async ({ request }) => {
-    const token = await loginApi(request);
-    const resp = await request.get(`${BACKEND}/api/dashboard/providers`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    await loginApi(request);
+    const resp = await request.get(`${BACKEND}/api/dashboard/providers`);
     expect(resp.status()).toBe(200);
     const body = await resp.json();
     expect(body.providers).toEqual(
@@ -308,8 +299,7 @@ test.describe('Dashboard API', () => {
         expect.objectContaining({
           name: 'codex-gateway',
           auth_profiles: expect.arrayContaining([
-            expect.objectContaining({ id: 'api', mode: 'api-key' }),
-            expect.objectContaining({ id: 'codex-user', mode: 'openai-codex-oauth' }),
+            expect.objectContaining({ id: 'codex-user', mode: 'codex-oauth' }),
           ]),
         }),
       ]),
@@ -317,10 +307,9 @@ test.describe('Dashboard API', () => {
   });
 
   test('codex oauth lifecycle endpoints start, complete, and refresh a managed auth profile', async ({ request }) => {
-    const token = await loginApi(request);
+    await loginApi(request);
 
     const startResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex/oauth/start`, {
-      headers: { Authorization: `Bearer ${token}` },
       data: {
         provider: 'codex-gateway',
         profile_id: 'codex-session',
@@ -334,7 +323,6 @@ test.describe('Dashboard API', () => {
     expect(startBody.state).toBeTruthy();
 
     const completeResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex/oauth/complete`, {
-      headers: { Authorization: `Bearer ${token}` },
       data: {
         state: startBody.state,
         code: 'playwright-code',
@@ -346,14 +334,13 @@ test.describe('Dashboard API', () => {
       expect.objectContaining({
         provider: 'codex-gateway',
         id: 'codex-session',
-        mode: 'openai-codex-oauth',
+        mode: 'codex-oauth',
         refresh_token_present: true,
         email: 'oauth-playwright@example.com',
       }),
     );
 
     const refreshResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex-gateway/codex-session/refresh`, {
-      headers: { Authorization: `Bearer ${token}` },
     });
     expect(refreshResp.status()).toBe(200);
     const refreshBody = await refreshResp.json();
@@ -361,7 +348,7 @@ test.describe('Dashboard API', () => {
       expect.objectContaining({
         provider: 'codex-gateway',
         id: 'codex-session',
-        mode: 'openai-codex-oauth',
+        mode: 'codex-oauth',
         refresh_token_present: true,
         account_id: 'acct_refresh',
       }),

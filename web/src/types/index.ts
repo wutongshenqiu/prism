@@ -6,8 +6,14 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  token: string;
+  authenticated: boolean;
+  username: string;
   expires_in: number;
+}
+
+export interface SessionResponse {
+  authenticated: boolean;
+  username: string;
 }
 
 // ── Provider ──
@@ -15,6 +21,7 @@ export interface LoginResponse {
 export interface Provider {
   name: string;
   format: FormatType;
+  upstream: UpstreamType;
   base_url: string | null;
   proxy_url: string | null;
   api_key_masked: string;
@@ -34,7 +41,7 @@ export interface Provider {
 export type AuthMode =
   | 'api-key'
   | 'bearer-token'
-  | 'openai-codex-oauth'
+  | 'codex-oauth'
   | 'anthropic-claude-subscription';
 
 export interface ProviderAuthProfile {
@@ -65,6 +72,7 @@ export interface ModelMapping {
 }
 
 export type FormatType = 'openai' | 'claude' | 'gemini';
+export type UpstreamType = 'openai' | 'codex' | 'claude' | 'gemini';
 
 export type ProfileKind = 'native' | 'claude-code' | 'gemini-cli' | 'codex-cli';
 export type ActivationMode = 'always' | 'auto';
@@ -90,6 +98,7 @@ export interface PresentationPreviewResponse {
 export interface ProviderCreateRequest {
   name: string;
   format: FormatType;
+  upstream?: UpstreamType;
   base_url?: string;
   proxy_url?: string;
   api_key?: string;
@@ -106,6 +115,7 @@ export interface ProviderCreateRequest {
 }
 
 export interface ProviderUpdateRequest {
+  upstream?: UpstreamType | null;
   base_url?: string | null;
   proxy_url?: string | null;
   api_key?: string;
@@ -177,6 +187,27 @@ export interface CodexOauthCompleteResponse {
   profile: AuthProfile;
 }
 
+export interface CodexDeviceStartRequest {
+  provider: string;
+  profile_id: string;
+}
+
+export interface CodexDeviceStartResponse {
+  state: string;
+  provider: string;
+  profile_id: string;
+  verification_url: string;
+  user_code: string;
+  interval_secs: number;
+  expires_in: number;
+}
+
+export interface CodexDevicePollResponse {
+  status: 'pending' | 'completed';
+  interval_secs?: number;
+  profile?: AuthProfile;
+}
+
 export interface ConnectAuthProfileRequest {
   secret: string;
 }
@@ -193,12 +224,45 @@ export interface ProviderCapabilities {
   supports_count_tokens: boolean;
 }
 
+export type ProbeStatus = 'verified' | 'failed' | 'unknown' | 'unsupported';
+
+export interface CapabilityProbeState {
+  status: ProbeStatus;
+  message?: string | null;
+}
+
+export interface CapabilityProbeStates {
+  text: CapabilityProbeState;
+  stream: CapabilityProbeState;
+  tools: CapabilityProbeState;
+  images: CapabilityProbeState;
+  json_schema: CapabilityProbeState;
+  reasoning: CapabilityProbeState;
+  count_tokens: CapabilityProbeState;
+}
+
 export interface ProviderCapabilityEntry {
   name: string;
   upstream_protocol: string;
   models: string[];
   capabilities: ProviderCapabilities;
+  probe: CapabilityProbeStates;
   disabled: boolean;
+}
+
+export interface ProviderProbeCheck {
+  capability: string;
+  status: ProbeStatus;
+  message?: string | null;
+}
+
+export interface ProviderHealthResult {
+  provider: string;
+  upstream: string;
+  status: 'ok' | 'warning' | 'error';
+  checked_at: string;
+  latency_ms: number;
+  checks: ProviderProbeCheck[];
 }
 
 // ── Auth Keys ──

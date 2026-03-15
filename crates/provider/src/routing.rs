@@ -437,6 +437,7 @@ fn build_auth_record(
     AuthRecord {
         id: uuid::Uuid::new_v4().to_string(),
         provider: entry.format,
+        upstream: entry.upstream_kind(),
         provider_name: entry.name.clone(),
         api_key: profile
             .secret
@@ -496,6 +497,7 @@ mod tests {
         AuthRecord {
             id: id.to_string(),
             provider: format,
+            upstream: prism_core::provider::UpstreamKind::from(format),
             provider_name: provider_name.to_string(),
             api_key: format!("key-{id}"),
             base_url: None,

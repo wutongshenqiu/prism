@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 /// GET /ws/dashboard — WebSocket endpoint for real-time updates.
 ///
 /// Authentication is handled by the `dashboard_auth_middleware` layer
-/// (supports both `Authorization: Bearer` header and `?token=` query param).
+/// (supports `Authorization: Bearer` headers and same-site session cookies).
 pub async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
