@@ -4,6 +4,10 @@ static PROTECTED_HEADERS: &[&str] = &[
     "authorization",
     "x-api-key",
     "x-goog-api-key",
+    "originator",
+    "chatgpt-account-id",
+    "version",
+    "session_id",
     "content-type",
     "host",
     "content-length",
@@ -28,6 +32,10 @@ mod tests {
         assert!(is_protected("AUTHORIZATION"));
         assert!(is_protected("x-api-key"));
         assert!(is_protected("X-API-KEY"));
+        assert!(is_protected("originator"));
+        assert!(is_protected("chatgpt-account-id"));
+        assert!(is_protected("version"));
+        assert!(is_protected("session_id"));
         assert!(is_protected("content-type"));
         assert!(is_protected("host"));
         assert!(is_protected("content-length"));

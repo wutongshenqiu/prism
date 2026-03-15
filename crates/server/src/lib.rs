@@ -47,6 +47,9 @@ pub struct AppState {
     pub health_manager: Arc<HealthManager>,
     pub auth_runtime: Arc<auth_runtime::AuthRuntimeManager>,
     pub oauth_sessions: Arc<dashmap::DashMap<String, auth_runtime::PendingCodexOauthSession>>,
+    pub device_sessions: Arc<dashmap::DashMap<String, auth_runtime::PendingCodexDeviceSession>>,
+    pub provider_probe_cache:
+        Arc<dashmap::DashMap<String, handler::dashboard::providers::ProviderProbeResult>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -99,6 +102,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::responses::responses),
         )
         .route(
+            "/v1/responses/ws",
+            axum::routing::get(handler::responses_ws::responses_ws),
+        )
+        .route(
             "/v1/messages/count_tokens",
             axum::routing::post(handler::count_tokens::count_tokens),
         )
@@ -124,6 +131,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/provider/{provider}/v1/responses",
             axum::routing::post(handler::provider_scoped::provider_responses),
         )
+        .route(
+            "/api/provider/{provider}/v1/responses/ws",
+            axum::routing::get(handler::responses_ws::provider_responses_ws),
+        )
         .layer(RequestBodyLimitLayer::new(body_limit_bytes))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
@@ -147,6 +158,14 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::dashboard::auth::refresh),
         )
         .route(
+            "/api/dashboard/auth/session",
+            axum::routing::get(handler::dashboard::auth::session),
+        )
+        .route(
+            "/api/dashboard/auth/logout",
+            axum::routing::post(handler::dashboard::auth::logout),
+        )
+        .route(
             "/api/dashboard/auth-profiles",
             axum::routing::get(handler::dashboard::auth_profiles::list_auth_profiles)
                 .post(handler::dashboard::auth_profiles::create_auth_profile),
@@ -165,8 +184,20 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::dashboard::auth_profiles::complete_codex_oauth),
         )
         .route(
+            "/api/dashboard/auth-profiles/codex/device/start",
+            axum::routing::post(handler::dashboard::auth_profiles::start_codex_device),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/codex/device/poll",
+            axum::routing::post(handler::dashboard::auth_profiles::poll_codex_device),
+        )
+        .route(
             "/api/dashboard/auth-profiles/{provider}/{profile}/connect",
             axum::routing::post(handler::dashboard::auth_profiles::connect_auth_profile),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/{provider}/{profile}/import-local",
+            axum::routing::post(handler::dashboard::auth_profiles::import_local_auth_profile),
         )
         .route(
             "/api/dashboard/auth-profiles/{provider}/{profile}/refresh",
@@ -290,7 +321,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/dashboard/routing/explain",
             axum::routing::post(handler::dashboard::routing::explain_route),
         )
-        // WebSocket route (auth via query param, validated by dashboard_auth middleware)
+        // WebSocket route (auth via bearer header or session cookie)
         .route(
             "/ws/dashboard",
             axum::routing::get(handler::dashboard::websocket::ws_handler),

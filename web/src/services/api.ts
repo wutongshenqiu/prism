@@ -1,11 +1,13 @@
 import axios from 'axios';
 import type {
   LoginResponse,
+  SessionResponse,
   Provider,
   ProviderCreateRequest,
   ProviderUpdateRequest,
   PresentationPreviewResponse,
   ProviderCapabilityEntry,
+  ProviderHealthResult,
   AuthKey,
   AuthKeyCreateRequest,
   AuthKeyCreateResponse,
@@ -31,43 +33,31 @@ import type {
   CodexOauthStartRequest,
   CodexOauthStartResponse,
   CodexOauthCompleteResponse,
+  CodexDeviceStartRequest,
+  CodexDeviceStartResponse,
+  CodexDevicePollResponse,
   ConnectAuthProfileRequest,
   ProviderAuthProfile,
 } from '../types';
 
 const api = axios.create({
   baseURL: '/api/dashboard',
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request interceptor: attach JWT token
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+// Session state bridge: keeps the auth store in sync with cookie-backed auth
+// changes driven by the Axios refresh interceptor.
+let _sessionSetter: ((authenticated: boolean) => void) | null = null;
 
-// Token state bridge: centralizes token read/write so both the interceptor
-// and the Zustand auth store stay in sync without circular imports.
-// The auth store registers itself on init via `setTokenSetter`.
-let _tokenSetter: ((token: string | null) => void) | null = null;
-
-export function setTokenSetter(setter: (token: string | null) => void): void {
-  _tokenSetter = setter;
+export function setSessionSetter(setter: (authenticated: boolean) => void): void {
+  _sessionSetter = setter;
 }
 
-function setToken(token: string): void {
-  localStorage.setItem('auth_token', token);
-  _tokenSetter?.(token);
-}
-
-function clearToken(): void {
-  localStorage.removeItem('auth_token');
-  _tokenSetter?.(null);
+function setSession(authenticated: boolean): void {
+  _sessionSetter?.(authenticated);
 }
 
 // Response interceptor: handle 401 and token refresh
@@ -77,27 +67,24 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     // Skip token refresh for login/refresh endpoints — let the caller handle the error
-    const isAuthEndpoint = originalRequest.url?.includes('/auth/login') || originalRequest.url?.includes('/auth/refresh');
+    const isAuthEndpoint =
+      originalRequest.url?.includes('/auth/login') ||
+      originalRequest.url?.includes('/auth/refresh') ||
+      originalRequest.url?.includes('/auth/session') ||
+      originalRequest.url?.includes('/auth/logout');
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true;
 
       try {
-        const token = localStorage.getItem('auth_token');
-        if (!token) throw new Error('No token');
-
-        const response = await axios.post<LoginResponse>(
+        await axios.post<LoginResponse>(
           '/api/dashboard/auth/refresh',
           null,
-          { headers: { Authorization: `Bearer ${token}` } }
+          { withCredentials: true }
         );
-
-        const newToken = response.data.token;
-        setToken(newToken);
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
-
+        setSession(true);
         return api(originalRequest);
       } catch {
-        clearToken();
+        setSession(false);
         window.location.href = '/login';
         return Promise.reject(error);
       }
@@ -114,6 +101,10 @@ export const authApi = {
     api.post<LoginResponse>('/auth/login', { username, password }),
 
   refresh: () => api.post<LoginResponse>('/auth/refresh'),
+
+  session: () => api.get<SessionResponse>('/auth/session'),
+
+  logout: () => api.post<SessionResponse>('/auth/logout'),
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -163,6 +154,7 @@ function normalizeProvider(raw: unknown): Provider {
   return {
     name: String(record.name ?? ''),
     format: (record.format as Provider['format']) ?? 'openai',
+    upstream: (record.upstream as Provider['upstream']) ?? ((record.format as Provider['format']) ?? 'openai'),
     base_url: (record.base_url as string | null) ?? null,
     proxy_url: (record.proxy_url as string | null) ?? null,
     api_key_masked: String(record.api_key_masked ?? ''),
@@ -210,12 +202,12 @@ export const providersApi = {
 
   delete: (name: string) => api.delete(`/providers/${encodeURIComponent(name)}`),
 
-  fetchModels: (data: { format: string; api_key: string; base_url?: string }) =>
+  fetchModels: (data: { format: string; upstream?: string; api_key: string; base_url?: string }) =>
     api.post<{ models: string[] }>('/providers/fetch-models', data)
       .then((res) => res.data.models),
 
   healthCheck: (name: string) =>
-    api.post<{ status: string; latency_ms?: number; message?: string }>(`/providers/${encodeURIComponent(name)}/health`)
+    api.post<ProviderHealthResult>(`/providers/${encodeURIComponent(name)}/health`)
       .then((res) => res.data),
 
   presentationPreview: (name: string, data: { model?: string; user_agent?: string; sample_body?: unknown }) =>
@@ -224,7 +216,47 @@ export const providersApi = {
 
   capabilities: () =>
     api.get<{ providers: ProviderCapabilityEntry[] }>('/providers/capabilities')
-      .then((res) => res.data.providers),
+      .then((res) => {
+        const raw = res.data.providers || [];
+        return Array.isArray(raw)
+          ? raw.map((item) => {
+              const record = asRecord(item);
+              const caps = asRecord(record.capabilities);
+              const probe = asRecord(record.probe);
+              const normalizeProbe = (value: unknown) => {
+                const probeRecord = asRecord(value);
+                return {
+                  status: String(probeRecord.status ?? 'unknown') as ProviderCapabilityEntry['probe']['text']['status'],
+                  message: (probeRecord.message as string | null) ?? null,
+                };
+              };
+              return {
+                name: String(record.name ?? ''),
+                upstream_protocol: String(record.upstream_protocol ?? ''),
+                models: Array.isArray(record.models) ? record.models.map(String) : [],
+                capabilities: {
+                  supports_stream: Boolean(caps.supports_stream),
+                  supports_tools: Boolean(caps.supports_tools),
+                  supports_parallel_tools: Boolean(caps.supports_parallel_tools),
+                  supports_json_schema: Boolean(caps.supports_json_schema),
+                  supports_reasoning: Boolean(caps.supports_reasoning),
+                  supports_images: Boolean(caps.supports_images),
+                  supports_count_tokens: Boolean(caps.supports_count_tokens),
+                },
+                probe: {
+                  text: normalizeProbe(probe.text),
+                  stream: normalizeProbe(probe.stream),
+                  tools: normalizeProbe(probe.tools),
+                  images: normalizeProbe(probe.images),
+                  json_schema: normalizeProbe(probe.json_schema),
+                  reasoning: normalizeProbe(probe.reasoning),
+                  count_tokens: normalizeProbe(probe.count_tokens),
+                },
+                disabled: Boolean(record.disabled),
+              } satisfies ProviderCapabilityEntry;
+            })
+          : [];
+      }),
 };
 
 // ── Auth Profiles ──
@@ -255,8 +287,23 @@ export const authProfilesApi = {
     api.post<CodexOauthCompleteResponse>('/auth-profiles/codex/oauth/complete', { state, code })
       .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
+  startCodexDevice: (data: CodexDeviceStartRequest) =>
+    api.post<CodexDeviceStartResponse>('/auth-profiles/codex/device/start', data)
+      .then((res) => res.data),
+
+  pollCodexDevice: (state: string) =>
+    api.post<CodexDevicePollResponse>('/auth-profiles/codex/device/poll', { state })
+      .then((res) => ({
+        ...res.data,
+        profile: res.data.profile ? normalizeAuthProfile(asRecord(res.data.profile)) : undefined,
+      })),
+
   connect: (provider: string, profileId: string, data: ConnectAuthProfileRequest) =>
     api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/connect`, data)
+      .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
+
+  importLocal: (provider: string, profileId: string) =>
+    api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/import-local`)
       .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
   refresh: (provider: string, profileId: string) =>
@@ -405,12 +452,39 @@ export interface ProtocolMatrixEntry {
   execution_mode: string;
   supports_generate: boolean;
   supports_stream: boolean;
+  stream_state: { status: 'verified' | 'failed' | 'unknown' | 'unsupported'; message?: string | null };
   supports_count_tokens: boolean;
+  count_tokens_state: { status: 'verified' | 'failed' | 'unknown' | 'unsupported'; message?: string | null };
 }
 
 export const protocolsApi = {
   matrix: () =>
-    api.get<{ entries: ProtocolMatrixEntry[] }>('/protocols/matrix').then((res) => res.data.entries),
+    api.get<{ entries: ProtocolMatrixEntry[] }>('/protocols/matrix').then((res) => {
+      const raw = res.data.entries || [];
+      return Array.isArray(raw)
+        ? raw.map((item) => {
+            const record = asRecord(item);
+            const normalizeProbe = (value: unknown) => {
+              const probeRecord = asRecord(value);
+              return {
+                status: String(probeRecord.status ?? 'unknown') as ProtocolMatrixEntry['stream_state']['status'],
+                message: (probeRecord.message as string | null) ?? null,
+              };
+            };
+            return {
+              provider: String(record.provider ?? ''),
+              ingress_protocol: String(record.ingress_protocol ?? ''),
+              upstream_protocol: String(record.upstream_protocol ?? ''),
+              execution_mode: String(record.execution_mode ?? ''),
+              supports_generate: Boolean(record.supports_generate),
+              supports_stream: Boolean(record.supports_stream),
+              stream_state: normalizeProbe(record.stream_state),
+              supports_count_tokens: Boolean(record.supports_count_tokens),
+              count_tokens_state: normalizeProbe(record.count_tokens_state),
+            } satisfies ProtocolMatrixEntry;
+          })
+        : [];
+    }),
 };
 
 export const systemApi = {

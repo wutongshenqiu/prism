@@ -15,7 +15,10 @@ use prism_core::provider::Format;
 /// 1. If the provider string matches a provider name in the credential map,
 ///    collect all credential names for that provider.
 /// 2. Otherwise, treat it as a credential name pattern (exact match).
-fn resolve_provider(state: &AppState, provider: &str) -> Result<Vec<String>, ProxyError> {
+pub(crate) fn resolve_provider(
+    state: &AppState,
+    provider: &str,
+) -> Result<Vec<String>, ProxyError> {
     let cred_map = state.router.credential_map();
 
     // Try matching as a provider name first
@@ -66,7 +69,7 @@ fn allowed_formats_for_path(path_suffix: &str) -> Option<Vec<Format>> {
     }
 }
 
-fn matches_scoped_credential(candidate: &str, requested: &str) -> bool {
+pub(crate) fn matches_scoped_credential(candidate: &str, requested: &str) -> bool {
     candidate == requested || candidate.rsplit('/').next() == Some(requested)
 }
 

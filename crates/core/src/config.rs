@@ -203,13 +203,18 @@ impl Config {
                 "duplicate provider name: {}",
                 entry.name
             );
+            entry.validate_shape().map_err(|e| anyhow::anyhow!("{e}"))?;
             let mut seen_profile_ids = std::collections::HashSet::new();
             for profile in &entry.auth_profiles {
                 profile
                     .validate()
                     .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
                 profile
-                    .validate_for_provider(entry.format, entry.base_url.as_deref())
+                    .validate_for_provider(
+                        entry.format,
+                        entry.upstream_kind(),
+                        entry.base_url.as_deref(),
+                    )
                     .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
                 anyhow::ensure!(
                     seen_profile_ids.insert(&profile.id),
@@ -473,7 +478,7 @@ impl Default for DashboardConfig {
             jwt_ttl_secs: 3600,
             max_login_attempts: 5,
             login_lockout_secs: 300,
-            localhost_only: false,
+            localhost_only: true,
         }
     }
 }
@@ -578,6 +583,9 @@ pub struct ProviderKeyEntry {
     pub name: String,
     /// Wire protocol format.
     pub format: crate::provider::Format,
+    /// Upstream executor family. When omitted, defaults to the wire format family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<crate::provider::UpstreamKind>,
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
@@ -626,6 +634,39 @@ pub struct ProviderKeyEntry {
 }
 
 impl ProviderKeyEntry {
+    pub fn upstream_kind(&self) -> crate::provider::UpstreamKind {
+        self.upstream.unwrap_or_else(|| self.format.into())
+    }
+
+    pub fn validate_shape(&self) -> Result<(), String> {
+        let upstream = self.upstream_kind();
+        if upstream.wire_format() != self.format {
+            return Err(format!(
+                "provider '{}' upstream '{}' requires '{}' wire format",
+                self.name,
+                upstream.as_str(),
+                upstream.wire_format().as_str()
+            ));
+        }
+        if upstream == crate::provider::UpstreamKind::Codex {
+            if !self.api_key.trim().is_empty() {
+                return Err(format!(
+                    "provider '{}' Codex upstream must use auth_profiles instead of api_key",
+                    self.name
+                ));
+            }
+            for profile in &self.auth_profiles {
+                if profile.mode != crate::auth_profile::AuthMode::CodexOAuth {
+                    return Err(format!(
+                        "provider '{}' Codex upstream only supports codex-oauth auth profiles",
+                        self.name
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Expand auth profiles. If none are configured, legacy provider-level auth
     /// fields are exposed as a single implicit profile using the provider name.
     pub fn expanded_auth_profiles(&self) -> Vec<crate::auth_profile::AuthProfileEntry> {
@@ -759,6 +800,7 @@ mod tests {
         ProviderKeyEntry {
             name: name.to_string(),
             format: crate::provider::Format::OpenAI,
+            upstream: None,
             api_key: api_key.into(),
             base_url: None,
             proxy_url: None,

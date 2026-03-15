@@ -6,6 +6,8 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+pub const DASHBOARD_SESSION_COOKIE: &str = "prism_dashboard_session";
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
@@ -53,37 +55,20 @@ pub async fn dashboard_auth_middleware(
         )
     })?;
 
-    // Extract token from Authorization: Bearer header, falling back to ?token= query param.
-    // The query-param path is required for WebSocket upgrades (browser WebSocket API
-    // does not support custom headers).
-    let token = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .or_else(|| {
-            request.uri().query().and_then(|q| {
-                q.split('&').find_map(|pair| {
-                    let (k, v) = pair.split_once('=')?;
-                    if k == "token" {
-                        Some(v.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-        });
+    // Auth sources, in order:
+    // 1. Authorization header (test helpers / non-browser clients)
+    // 2. HttpOnly dashboard session cookie (browser path)
+    let token = extract_token(&request);
 
     let token = token.ok_or_else(|| {
         tracing::warn!(
             path = %request.uri().path(),
-            "Dashboard auth failed: missing Authorization header or token query parameter"
+            "Dashboard auth failed: missing authorization header or session cookie"
         );
         error_response(
             StatusCode::UNAUTHORIZED,
             "missing_token",
-            "Authorization header or token query parameter required",
+            "Authorization header or session cookie required",
         )
     })?;
 
@@ -107,6 +92,59 @@ pub async fn dashboard_auth_middleware(
     request.extensions_mut().insert(token_data.claims);
 
     Ok(next.run(request).await)
+}
+
+pub fn extract_token<B>(request: &Request<B>) -> Option<String> {
+    request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            extract_cookie_token(
+                request
+                    .headers()
+                    .get("cookie")
+                    .and_then(|v| v.to_str().ok()),
+            )
+        })
+}
+
+fn extract_cookie_token(header: Option<&str>) -> Option<String> {
+    let header = header?;
+    header.split(';').find_map(|item| {
+        let (name, value) = item.trim().split_once('=')?;
+        if name == DASHBOARD_SESSION_COOKIE {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+pub fn build_session_cookie(token: &str, ttl_secs: u64, secure: bool) -> String {
+    let mut cookie = format!(
+        "{name}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}",
+        name = DASHBOARD_SESSION_COOKIE,
+        value = token,
+        ttl = ttl_secs
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+pub fn clear_session_cookie(secure: bool) -> String {
+    let mut cookie = format!(
+        "{name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        name = DASHBOARD_SESSION_COOKIE,
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
 }
 
 /// Generate a JWT token for a user.

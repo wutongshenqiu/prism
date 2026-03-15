@@ -19,6 +19,7 @@ use prism_provider::health::HealthManager;
 use prism_provider::routing::CredentialRouter;
 use prism_server::{AppState, build_router};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tower::ServiceExt;
@@ -53,6 +54,7 @@ fn create_test_harness_with_auth_runtime(
             password_hash,
             jwt_secret: Some("test-secret".to_string()),
             jwt_ttl_secs: 3600,
+            localhost_only: false,
             ..DashboardConfig::default()
         },
         ..Config::default()
@@ -98,6 +100,8 @@ fn create_test_harness_with_auth_runtime(
         health_manager: Arc::new(HealthManager::new(Default::default())),
         auth_runtime,
         oauth_sessions: Arc::new(dashmap::DashMap::new()),
+        device_sessions: Arc::new(dashmap::DashMap::new()),
+        provider_probe_cache: Arc::new(dashmap::DashMap::new()),
     };
 
     TestHarness {
@@ -157,6 +161,13 @@ struct MockCodexOauthServer {
     _task: tokio::task::JoinHandle<()>,
 }
 
+struct MockCodexDeviceServer {
+    user_code_url: String,
+    token_url: String,
+    verification_url: String,
+    _task: tokio::task::JoinHandle<()>,
+}
+
 async fn spawn_mock_codex_oauth_server(token_response: Value) -> MockCodexOauthServer {
     async fn authorize() -> Json<Value> {
         Json(json!({"ok": true}))
@@ -191,6 +202,59 @@ async fn spawn_mock_codex_oauth_server(token_response: Value) -> MockCodexOauthS
     }
 }
 
+async fn spawn_mock_codex_device_server() -> MockCodexDeviceServer {
+    #[derive(Clone)]
+    struct DeviceState {
+        polls: Arc<AtomicUsize>,
+    }
+
+    async fn user_code() -> Json<Value> {
+        Json(json!({
+            "device_auth_id": "device-auth-123",
+            "user_code": "CODE-ABCD",
+            "interval": 1
+        }))
+    }
+
+    async fn token(State(state): State<DeviceState>) -> (StatusCode, Json<Value>) {
+        let poll = state.polls.fetch_add(1, Ordering::SeqCst);
+        if poll == 0 {
+            return (StatusCode::NOT_FOUND, Json(json!({"status": "pending"})));
+        }
+        (
+            StatusCode::OK,
+            Json(json!({
+                "authorization_code": "device-authorization-code",
+                "code_verifier": "device-code-verifier"
+            })),
+        )
+    }
+
+    let app = Router::new()
+        .route("/device/usercode", post(user_code))
+        .route("/device/token", post(token))
+        .with_state(DeviceState {
+            polls: Arc::new(AtomicUsize::new(0)),
+        });
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock device listener");
+    let addr = listener.local_addr().expect("mock device addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("mock device server");
+    });
+
+    MockCodexDeviceServer {
+        user_code_url: format!("http://{addr}/device/usercode"),
+        token_url: format!("http://{addr}/device/token"),
+        verification_url: format!("http://{addr}/device/verify"),
+        _task: task,
+    }
+}
+
 fn fake_id_token(email: &str, sub: &str) -> String {
     let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
     let payload = URL_SAFE_NO_PAD.encode(
@@ -202,6 +266,33 @@ fn fake_id_token(email: &str, sub: &str) -> String {
         .to_string(),
     );
     format!("{header}.{payload}.sig")
+}
+
+fn write_codex_auth_file(
+    dir: &std::path::Path,
+    email: &str,
+    account_id: &str,
+) -> std::path::PathBuf {
+    let path = dir.join("codex-auth.json");
+    let access_payload = URL_SAFE_NO_PAD.encode(
+        json!({
+            "exp": chrono::Utc::now().timestamp() + 3600,
+            "sub": account_id
+        })
+        .to_string(),
+    );
+    let access_token = format!("hdr.{access_payload}.sig");
+    let contents = json!({
+        "tokens": {
+            "access_token": access_token,
+            "refresh_token": "local-refresh-token",
+            "id_token": fake_id_token(email, account_id),
+            "account_id": account_id
+        },
+        "last_refresh": chrono::Utc::now().to_rfc3339(),
+    });
+    std::fs::write(&path, contents.to_string()).expect("write codex auth file");
+    path
 }
 
 /// Helper: send a request to the router and return (status, body as Value).
@@ -216,23 +307,19 @@ async fn send_request(harness: &TestHarness, request: Request<Body>) -> (StatusC
     (status, value)
 }
 
-/// Helper: login and return a JWT token string.
+/// Helper: create a valid JWT token string for dashboard tests.
 async fn login_and_get_token(harness: &TestHarness) -> String {
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/dashboard/auth/login")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"username": "admin", "password": "test123"}).to_string(),
-        ))
-        .unwrap();
-
-    let (status, body) = send_request(harness, req).await;
-    assert_eq!(status, StatusCode::OK, "login failed: {body:?}");
-    body["token"]
-        .as_str()
-        .expect("no token in login response")
-        .to_string()
+    let config = harness.state.config.load();
+    let secret = config
+        .dashboard
+        .resolve_jwt_secret()
+        .expect("dashboard jwt secret");
+    prism_server::middleware::dashboard_auth::generate_token(
+        "admin",
+        &secret,
+        config.dashboard.jwt_ttl_secs,
+    )
+    .expect("generate dashboard jwt")
 }
 
 /// Helper: build a GET request with JWT auth.
@@ -306,11 +393,8 @@ async fn test_login_with_valid_credentials() {
 
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        body["token"].is_string(),
-        "response should contain a JWT token"
-    );
-    assert_eq!(body["token_type"], "Bearer");
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["username"], "admin");
     assert_eq!(body["expires_in"], 3600);
 }
 
@@ -447,12 +531,9 @@ async fn test_token_refresh() {
     let req = authed_post("/api/dashboard/auth/refresh", &token, json!({}));
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["token"].is_string());
-    assert_eq!(body["token_type"], "Bearer");
-    // The new token should be different from the original
-    let new_token = body["token"].as_str().unwrap();
-    // (Both are valid JWT tokens signed with the same secret, but issued at different times)
-    assert!(new_token.starts_with("ey"));
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["username"], "admin");
+    assert_eq!(body["expires_in"], 3600);
 }
 
 // ===========================================================================
@@ -721,16 +802,12 @@ async fn test_create_provider_with_auth_profiles() {
 
     let create_body = json!({
         "format": "openai",
+        "upstream": "codex",
         "name": "Codex Gateway",
         "auth_profiles": [
             {
-                "id": "billing",
-                "mode": "api-key",
-                "secret": "sk-billing-test-1234567890abcdef"
-            },
-            {
                 "id": "codex-user",
-                "mode": "openai-codex-oauth",
+                "mode": "codex-oauth",
                 "access-token": "access-token-1234567890",
                 "refresh-token": "refresh-token-1234567890"
             }
@@ -745,23 +822,27 @@ async fn test_create_provider_with_auth_profiles() {
     let req = authed_get("/api/dashboard/providers/Codex%20Gateway", &token);
     let (status, body) = send_request(&harness, req).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["upstream"], "codex");
     let auth_profiles = body["auth_profiles"].as_array().unwrap();
-    assert_eq!(auth_profiles.len(), 2);
-    assert_eq!(auth_profiles[0]["qualified_name"], "Codex Gateway/billing");
+    assert_eq!(auth_profiles.len(), 1);
     assert_eq!(
-        auth_profiles[1]["qualified_name"],
+        auth_profiles[0]["qualified_name"],
         "Codex Gateway/codex-user"
     );
-    assert_eq!(auth_profiles[1]["mode"], "openai-codex-oauth");
-    assert_eq!(auth_profiles[1]["refresh_token_present"], true);
+    assert_eq!(auth_profiles[0]["mode"], "codex-oauth");
+    assert_eq!(auth_profiles[0]["refresh_token_present"], true);
 
     let config_path = harness.state.config_path.lock().unwrap().clone();
     let raw_contents = std::fs::read_to_string(config_path).unwrap();
     let raw_config = Config::from_yaml_raw(&raw_contents).unwrap();
-    assert_eq!(raw_config.providers[0].auth_profiles.len(), 2);
+    assert_eq!(
+        raw_config.providers[0].upstream,
+        Some(prism_core::provider::UpstreamKind::Codex)
+    );
+    assert_eq!(raw_config.providers[0].auth_profiles.len(), 1);
     assert_eq!(raw_config.providers[0].api_key, "");
-    assert_eq!(raw_config.providers[0].auth_profiles[1].access_token, None);
-    assert_eq!(raw_config.providers[0].auth_profiles[1].refresh_token, None);
+    assert_eq!(raw_config.providers[0].auth_profiles[0].access_token, None);
+    assert_eq!(raw_config.providers[0].auth_profiles[0].refresh_token, None);
 
     let runtime_store = read_auth_runtime_store(&harness);
     let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
@@ -929,14 +1010,9 @@ async fn test_start_codex_oauth() {
         &token,
         json!({
             "format": "openai",
+            "upstream": "codex",
             "name": "codex-start",
-            "auth_profiles": [
-                {
-                    "id": "codex-user",
-                    "mode": "openai-codex-oauth",
-                    "refresh-token": "seed-refresh-token"
-                }
-            ]
+            "wire_api": "responses"
         }),
     );
     let (status, body) = send_request(&harness, req).await;
@@ -984,8 +1060,9 @@ async fn test_complete_codex_oauth_persists_profile() {
         &token,
         json!({
             "format": "openai",
+            "upstream": "codex",
             "name": "codex-complete",
-            "api_key": "sk-legacy-1234567890abcdef"
+            "wire_api": "responses"
         }),
     );
     let (status, body) = send_request(&harness, req).await;
@@ -1033,7 +1110,7 @@ async fn test_complete_codex_oauth_persists_profile() {
         .find(|provider| provider.name == "codex-complete")
         .unwrap();
     assert_eq!(provider.api_key, "");
-    assert_eq!(provider.auth_profiles.len(), 2);
+    assert_eq!(provider.auth_profiles.len(), 1);
     let oauth_profile = provider
         .auth_profiles
         .iter()
@@ -1041,15 +1118,6 @@ async fn test_complete_codex_oauth_persists_profile() {
         .unwrap();
     assert_eq!(oauth_profile.access_token, None);
     assert_eq!(oauth_profile.refresh_token, None);
-    let legacy_profile = provider
-        .auth_profiles
-        .iter()
-        .find(|profile| profile.id == "codex-complete")
-        .unwrap();
-    assert_eq!(
-        legacy_profile.secret.as_deref(),
-        Some("sk-legacy-1234567890abcdef")
-    );
 
     let runtime_store = read_auth_runtime_store(&harness);
     let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
@@ -1082,11 +1150,12 @@ async fn test_refresh_codex_oauth_profile() {
         &token,
         json!({
             "format": "openai",
+            "upstream": "codex",
             "name": "codex-refresh",
             "auth_profiles": [
                 {
                     "id": "codex-user",
-                    "mode": "openai-codex-oauth",
+                    "mode": "codex-oauth",
                     "access-token": "stale-access-token",
                     "refresh-token": "stale-refresh-token"
                 }
@@ -1128,6 +1197,129 @@ async fn test_refresh_codex_oauth_profile() {
         oauth_profiles[0]["refresh_token"],
         "refreshed-refresh-token"
     );
+}
+
+#[tokio::test]
+async fn test_import_local_codex_auth_profile() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let auth_file = write_codex_auth_file(temp_dir.path(), "local@example.com", "acct_local");
+    let harness = create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::new().with_codex_auth_file(auth_file),
+    ));
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "upstream": "codex",
+            "name": "codex-local-import",
+            "wire_api": "responses"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex-local-import/local-user/import-local",
+        &token,
+        json!({}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "import-local failed: {body:?}");
+    assert_eq!(body["profile"]["email"], "local@example.com");
+    assert_eq!(body["profile"]["account_id"], "acct_local");
+    assert_eq!(body["profile"]["connected"], true);
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["provider"], "codex-local-import");
+    assert_eq!(oauth_profiles[0]["profile_id"], "local-user");
+    assert_eq!(oauth_profiles[0]["refresh_token"], "local-refresh-token");
+}
+
+#[tokio::test]
+async fn test_codex_device_flow_connects_profile() {
+    let id_token = fake_id_token("device@example.com", "acct_device");
+    let oauth = spawn_mock_codex_oauth_server(json!({
+        "access_token": "device-access-token",
+        "refresh_token": "device-refresh-token",
+        "id_token": id_token,
+        "expires_in": 3600
+    }))
+    .await;
+    let device = spawn_mock_codex_device_server().await;
+    let harness = create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::with_codex_runtime_endpoints(
+            oauth.auth_url.clone(),
+            oauth.token_url.clone(),
+            "test-client".to_string(),
+            device.user_code_url.clone(),
+            device.token_url.clone(),
+            device.verification_url.clone(),
+        ),
+    ));
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "upstream": "codex",
+            "name": "codex-device",
+            "wire_api": "responses"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/device/start",
+        &token,
+        json!({
+            "provider": "codex-device",
+            "profile_id": "device-user"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "device start failed: {body:?}");
+    assert_eq!(body["user_code"], "CODE-ABCD");
+    let state = body["state"].as_str().unwrap().to_string();
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/device/poll",
+        &token,
+        json!({ "state": state.clone() }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "first device poll failed: {body:?}");
+    assert_eq!(body["status"], "pending");
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/device/poll",
+        &token,
+        json!({ "state": state }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "second device poll failed: {body:?}"
+    );
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["profile"]["email"], "device@example.com");
+    assert_eq!(body["profile"]["account_id"], "acct_device");
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["access_token"], "device-access-token");
+    assert_eq!(oauth_profiles[0]["refresh_token"], "device-refresh-token");
 }
 
 // ===========================================================================
@@ -1617,11 +1809,10 @@ async fn test_validate_config_invalid() {
 // ===========================================================================
 
 #[tokio::test]
-async fn test_protected_endpoint_with_token_query_param_accepted() {
+async fn test_protected_endpoint_with_token_query_param_rejected() {
     let harness = create_test_harness();
     let token = login_and_get_token(&harness).await;
 
-    // Query param tokens are accepted (required for WebSocket upgrades)
     let uri = format!("/api/dashboard/providers?token={token}");
     let req = Request::builder()
         .method("GET")
@@ -1630,7 +1821,7 @@ async fn test_protected_endpoint_with_token_query_param_accepted() {
         .unwrap();
 
     let (status, _body) = send_request(&harness, req).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 // ===========================================================================

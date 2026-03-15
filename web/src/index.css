@@ -138,6 +138,11 @@ a {
   background: rgba(239, 68, 68, 0.1);
 }
 
+.health-warning {
+  color: var(--color-warning, #d97706);
+  background: rgba(245, 158, 11, 0.14);
+}
+
 /* ── Header pairs ── */
 
 .header-pair {

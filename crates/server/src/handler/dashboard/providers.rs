@@ -4,15 +4,18 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use prism_core::auth_profile::{AuthProfileEntry, OAuthTokenState};
+use prism_provider::sse::parse_sse_stream;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Instant;
+use tokio_stream::StreamExt;
 
 #[derive(Debug, Serialize)]
 struct ProviderSummary {
     name: String,
     format: String,
+    upstream: String,
     api_key_masked: String,
     base_url: Option<String>,
     models: Vec<prism_core::config::ModelMapping>,
@@ -22,10 +25,55 @@ struct ProviderSummary {
     auth_profiles: Vec<AuthProfileSummary>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeStatus {
+    Verified,
+    Failed,
+    Unknown,
+    Unsupported,
+}
+
+impl ProbeStatus {
+    fn is_verified(self) -> bool {
+        matches!(self, Self::Verified)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderProbeCheck {
+    pub capability: String,
+    pub status: ProbeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderProbeResult {
+    pub provider: String,
+    pub upstream: String,
+    pub status: String,
+    pub checked_at: String,
+    pub latency_ms: u64,
+    pub checks: Vec<ProviderProbeCheck>,
+}
+
+impl ProviderProbeResult {
+    pub fn capability_status(&self, capability: &str) -> ProbeStatus {
+        self.checks
+            .iter()
+            .find(|check| check.capability == capability)
+            .map(|check| check.status)
+            .unwrap_or(ProbeStatus::Unknown)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateProviderRequest {
     pub name: String,
     pub format: String,
+    #[serde(default)]
+    pub upstream: Option<String>,
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
@@ -66,6 +114,8 @@ fn default_weight() -> u32 {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateProviderRequest {
+    #[serde(default)]
+    pub upstream: Option<Option<String>>,
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
@@ -212,6 +262,7 @@ fn summarize_provider(
     ProviderSummary {
         name: entry.name.clone(),
         format: entry.format.as_str().to_string(),
+        upstream: entry.upstream_kind().as_str().to_string(),
         api_key_masked: provider_api_key_masked(state, entry),
         base_url: entry.base_url.clone(),
         models: entry.models.clone(),
@@ -321,11 +372,12 @@ fn validate_auth_shape(
 
 fn validate_provider_auth_profiles(
     format: prism_core::provider::Format,
+    upstream: prism_core::provider::UpstreamKind,
     base_url: Option<&str>,
     auth_profiles: &[AuthProfileEntry],
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     for profile in auth_profiles {
-        if let Err(message) = profile.validate_for_provider(format, base_url) {
+        if let Err(message) = profile.validate_for_provider(format, upstream, base_url) {
             return Err(validation_error(message));
         }
     }
@@ -356,6 +408,16 @@ fn is_valid_format(format_str: &str) -> bool {
     matches!(format_str, "openai" | "claude" | "gemini")
 }
 
+fn parse_upstream_kind(
+    format: prism_core::provider::Format,
+    upstream: Option<&str>,
+) -> Result<prism_core::provider::UpstreamKind, (StatusCode, Json<serde_json::Value>)> {
+    let Some(raw) = upstream.filter(|value| !value.trim().is_empty()) else {
+        return Ok(format.into());
+    };
+    raw.parse().map_err(validation_error)
+}
+
 /// GET /api/dashboard/providers
 pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse {
     let config = state.config.load();
@@ -380,6 +442,7 @@ pub async fn get_provider(
             let detail = json!({
                 "name": entry.name,
                 "format": entry.format.as_str(),
+                "upstream": entry.upstream_kind().as_str(),
                 "api_key_masked": provider_api_key_masked(&state, entry),
                 "base_url": entry.base_url,
                 "proxy_url": entry.proxy_url,
@@ -439,6 +502,10 @@ pub async fn create_provider(
         .format
         .parse()
         .unwrap_or(prism_core::provider::Format::OpenAI);
+    let upstream = match parse_upstream_kind(format, body.upstream.as_deref()) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
 
     let auth_profiles = match normalize_auth_profiles(&body.auth_profiles) {
         Ok(profiles) => profiles,
@@ -448,7 +515,7 @@ pub async fn create_provider(
         return response;
     }
     if let Err(response) =
-        validate_provider_auth_profiles(format, body.base_url.as_deref(), &auth_profiles)
+        validate_provider_auth_profiles(format, upstream, body.base_url.as_deref(), &auth_profiles)
     {
         return response;
     }
@@ -472,9 +539,13 @@ pub async fn create_provider(
         .map(|id| prism_core::config::ModelMapping { id, alias: None })
         .collect();
 
-    let wire_api = match body.wire_api.as_deref() {
-        Some("responses") => prism_core::provider::WireApi::Responses,
-        _ => prism_core::provider::WireApi::Chat,
+    let wire_api = if upstream == prism_core::provider::UpstreamKind::Codex {
+        prism_core::provider::WireApi::Responses
+    } else {
+        match body.wire_api.as_deref() {
+            Some("responses") => prism_core::provider::WireApi::Responses,
+            _ => prism_core::provider::WireApi::Chat,
+        }
     };
 
     let provider_name = body.name.clone();
@@ -484,6 +555,7 @@ pub async fn create_provider(
     let new_entry = prism_core::config::ProviderKeyEntry {
         name: provider_name.clone(),
         format,
+        upstream: Some(upstream),
         api_key,
         base_url: body.base_url,
         proxy_url: body.proxy_url,
@@ -503,6 +575,9 @@ pub async fn create_provider(
         vertex_project: body.vertex_project,
         vertex_location: body.vertex_location,
     };
+    if let Err(message) = new_entry.validate_shape() {
+        return validation_error(message);
+    }
 
     match update_config_file(&state, |config| {
         config.providers.push(new_entry.clone());
@@ -579,30 +654,94 @@ pub async fn update_provider(
     {
         return response;
     }
-    let effective_auth_profiles = auth_profiles
-        .clone()
-        .unwrap_or_else(|| existing_entry.auth_profiles.clone());
-    let effective_api_key = if let Some(api_key) = body.api_key.as_deref() {
-        api_key
-    } else if !effective_auth_profiles.is_empty() {
-        ""
-    } else {
-        existing_entry.api_key.as_str()
-    };
-    if let Err(response) = validate_auth_shape(Some(effective_api_key), &effective_auth_profiles) {
-        return response;
-    }
-    let effective_base_url = body
-        .base_url
-        .as_ref()
-        .map(|base_url| base_url.as_deref())
-        .unwrap_or(existing_entry.base_url.as_deref());
-    if let Err(response) = validate_provider_auth_profiles(
+    let upstream = match parse_upstream_kind(
         existing_entry.format,
-        effective_base_url,
-        &effective_auth_profiles,
+        body.upstream.as_ref().and_then(|value| value.as_deref()),
+    ) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let mut candidate_entry = existing_entry.clone();
+    candidate_entry.upstream = Some(upstream);
+    if let Some(ref key) = body.api_key {
+        candidate_entry.api_key = key.clone();
+    }
+    if let Some(ref profiles) = auth_profiles {
+        candidate_entry.auth_profiles = profiles.clone();
+        if !profiles.is_empty() && body.api_key.is_none() {
+            candidate_entry.api_key.clear();
+        }
+    }
+    if let Some(ref url) = body.base_url {
+        candidate_entry.base_url = url.clone();
+    }
+    if let Some(ref url) = body.proxy_url {
+        candidate_entry.proxy_url = url.clone();
+    }
+    if let Some(ref prefix) = body.prefix {
+        candidate_entry.prefix = prefix.clone();
+    }
+    if let Some(ref models) = body.models {
+        candidate_entry.models = models
+            .iter()
+            .map(|id| prism_core::config::ModelMapping {
+                id: id.clone(),
+                alias: None,
+            })
+            .collect();
+    }
+    if let Some(ref excluded) = body.excluded_models {
+        candidate_entry.excluded_models = excluded.clone();
+    }
+    if let Some(ref headers) = body.headers {
+        candidate_entry.headers = headers.clone();
+    }
+    if let Some(disabled) = body.disabled {
+        candidate_entry.disabled = disabled;
+    }
+    if upstream == prism_core::provider::UpstreamKind::Codex {
+        candidate_entry.wire_api = prism_core::provider::WireApi::Responses;
+    } else if let Some(ref wire_api_opt) = body.wire_api {
+        candidate_entry.wire_api = match wire_api_opt.as_deref() {
+            Some("responses") => prism_core::provider::WireApi::Responses,
+            _ => prism_core::provider::WireApi::Chat,
+        };
+    }
+    if let Some(weight) = body.weight {
+        candidate_entry.weight = weight;
+    }
+    if let Some(ref region) = body.region {
+        candidate_entry.region = region.clone();
+    }
+    if let Some(ref presentation_opt) = body.upstream_presentation {
+        candidate_entry.upstream_presentation = presentation_opt.clone().unwrap_or_default();
+    }
+    if let Some(vertex) = body.vertex {
+        candidate_entry.vertex = vertex;
+    }
+    if let Some(ref project) = body.vertex_project {
+        candidate_entry.vertex_project = project.clone();
+    }
+    if let Some(ref location) = body.vertex_location {
+        candidate_entry.vertex_location = location.clone();
+    }
+
+    if let Err(response) = validate_auth_shape(
+        Some(candidate_entry.api_key.as_str()),
+        &candidate_entry.auth_profiles,
     ) {
         return response;
+    }
+    if let Err(response) = validate_provider_auth_profiles(
+        candidate_entry.format,
+        candidate_entry.upstream_kind(),
+        candidate_entry.base_url.as_deref(),
+        &candidate_entry.auth_profiles,
+    ) {
+        return response;
+    }
+    if let Err(message) = candidate_entry.validate_shape() {
+        return validation_error(message);
     }
     let runtime_oauth_states = auth_profiles.clone().map(strip_runtime_oauth_data);
     let auth_profiles_for_write = runtime_oauth_states
@@ -616,6 +755,12 @@ pub async fn update_provider(
         if let Some(entry) = config.providers.iter_mut().find(|e| e.name == name) {
             if let Some(ref key) = body.api_key {
                 entry.api_key = key.clone();
+            }
+            if let Some(ref upstream_opt) = body.upstream {
+                entry.upstream = upstream_opt
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .and_then(|value| value.parse().ok());
             }
             if let Some(ref profiles) = auth_profiles_for_write {
                 entry.auth_profiles = profiles.clone();
@@ -650,7 +795,9 @@ pub async fn update_provider(
             if let Some(disabled) = body.disabled {
                 entry.disabled = disabled;
             }
-            if let Some(ref wire_api_opt) = body.wire_api {
+            if entry.upstream_kind() == prism_core::provider::UpstreamKind::Codex {
+                entry.wire_api = prism_core::provider::WireApi::Responses;
+            } else if let Some(ref wire_api_opt) = body.wire_api {
                 entry.wire_api = match wire_api_opt.as_deref() {
                     Some("responses") => prism_core::provider::WireApi::Responses,
                     _ => prism_core::provider::WireApi::Chat,
@@ -753,6 +900,8 @@ async fn update_config_file(
 #[derive(Debug, Deserialize)]
 pub struct FetchModelsRequest {
     pub format: String,
+    #[serde(default)]
+    pub upstream: Option<String>,
     pub api_key: String,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -767,13 +916,8 @@ fn build_reqwest_client(
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
-fn default_base_url(provider_type: &str) -> Option<&'static str> {
-    match provider_type {
-        "openai" => Some("https://api.openai.com"),
-        "claude" => Some("https://api.anthropic.com"),
-        "gemini" => Some("https://generativelanguage.googleapis.com"),
-        _ => None,
-    }
+fn default_base_url(upstream: prism_core::provider::UpstreamKind) -> &'static str {
+    upstream.default_base_url()
 }
 
 /// Strip trailing slash and known version prefixes (/v1, /v1beta) from a base URL.
@@ -845,6 +989,487 @@ fn extract_model_ids(provider_type: &str, body: &serde_json::Value) -> Vec<Strin
     }
 }
 
+fn select_health_auth(
+    state: &AppState,
+    provider_name: &str,
+) -> Option<prism_core::provider::AuthRecord> {
+    state
+        .router
+        .credential_map()
+        .get(provider_name)
+        .and_then(|records| {
+            records
+                .iter()
+                .find(|record| !record.disabled)
+                .cloned()
+                .or_else(|| records.first().cloned())
+        })
+}
+
+const CODEX_HEALTH_USER_AGENT: &str =
+    "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+const RED_DOT_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+pub fn cached_probe_result(state: &AppState, provider_name: &str) -> Option<ProviderProbeResult> {
+    state
+        .provider_probe_cache
+        .get(provider_name)
+        .map(|entry| entry.value().clone())
+}
+
+fn build_codex_probe_request(
+    client: &reqwest::Client,
+    auth: &prism_core::provider::AuthRecord,
+    body: &serde_json::Value,
+) -> reqwest::RequestBuilder {
+    let body = serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec());
+    let mut req = client
+        .post(format!("{}/responses", auth.resolved_base_url()))
+        .header("content-type", "application/json")
+        .header("accept", "text/event-stream")
+        .header("authorization", format!("Bearer {}", auth.current_secret()))
+        .header("version", "0.101.0")
+        .header("session_id", uuid::Uuid::new_v4().to_string())
+        .header("originator", "codex_cli_rs")
+        .body(body);
+    if let Some(account_id) = auth.current_account_id()
+        && !account_id.trim().is_empty()
+    {
+        req = req.header("chatgpt-account-id", account_id);
+    }
+    if !auth
+        .headers
+        .keys()
+        .any(|key| key.eq_ignore_ascii_case("user-agent"))
+    {
+        req = req.header("user-agent", CODEX_HEALTH_USER_AGENT);
+    }
+    for (k, v) in &auth.headers {
+        if prism_core::presentation::protected::is_protected(k) {
+            continue;
+        }
+        req = req.header(k.as_str(), v.as_str());
+    }
+    req
+}
+
+fn codex_probe_model(auth: &prism_core::provider::AuthRecord) -> String {
+    auth.models
+        .first()
+        .map(|entry| entry.id.clone())
+        .unwrap_or_else(|| "gpt-5".to_string())
+}
+
+fn probe_check(
+    capability: &str,
+    status: ProbeStatus,
+    message: impl Into<Option<String>>,
+) -> ProviderProbeCheck {
+    ProviderProbeCheck {
+        capability: capability.to_string(),
+        status,
+        message: message.into(),
+    }
+}
+
+async fn collect_codex_probe_response(
+    resp: reqwest::Response,
+) -> Result<(bool, serde_json::Value), String> {
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("upstream returned {status}: {body}"));
+    }
+
+    let mut saw_delta = false;
+    let mut sse_stream = parse_sse_stream(resp.bytes_stream());
+    while let Some(event) = sse_stream.next().await {
+        let event = event.map_err(|e| e.to_string())?;
+        if event.data == "[DONE]" {
+            continue;
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&event.data).map_err(|e| format!("invalid SSE payload: {e}"))?;
+        let event_type = payload
+            .get("type")
+            .and_then(|value| value.as_str())
+            .or(event.event.as_deref())
+            .unwrap_or("");
+        if event_type == "response.output_text.delta" {
+            saw_delta = true;
+        }
+        if event_type == "response.completed" {
+            let response = payload
+                .get("response")
+                .cloned()
+                .ok_or_else(|| "response.completed missing response payload".to_string())?;
+            return Ok((saw_delta, response));
+        }
+    }
+
+    Err("stream ended before response.completed".to_string())
+}
+
+fn extract_response_text(payload: &serde_json::Value) -> String {
+    payload
+        .get("output")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            let mut text = String::new();
+            for item in items {
+                if item.get("type").and_then(|value| value.as_str()) == Some("message")
+                    && let Some(content) = item.get("content").and_then(|value| value.as_array())
+                {
+                    for part in content {
+                        if part.get("type").and_then(|value| value.as_str()) == Some("output_text")
+                            && let Some(value) = part.get("text").and_then(|value| value.as_str())
+                        {
+                            text.push_str(value);
+                        }
+                    }
+                }
+            }
+            text
+        })
+        .unwrap_or_default()
+}
+
+async fn run_codex_probe(
+    client: &reqwest::Client,
+    auth: &prism_core::provider::AuthRecord,
+) -> ProviderProbeResult {
+    let started = Instant::now();
+    let model = codex_probe_model(auth);
+
+    let text_payload = json!({
+        "model": model,
+        "instructions": "",
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "Reply with exactly TEXT_PROBE_OK"
+            }]
+        }],
+        "store": false,
+        "stream": true,
+    });
+    let text_check = match build_codex_probe_request(client, auth, &text_payload)
+        .send()
+        .await
+    {
+        Ok(resp) => match collect_codex_probe_response(resp).await {
+            Ok((_saw_delta, payload)) => {
+                let text = extract_response_text(&payload);
+                if text.contains("TEXT_PROBE_OK") {
+                    probe_check("text", ProbeStatus::Verified, None)
+                } else {
+                    probe_check(
+                        "text",
+                        ProbeStatus::Failed,
+                        Some(format!("unexpected text response: {text}")),
+                    )
+                }
+            }
+            Err(err) => probe_check("text", ProbeStatus::Failed, Some(err)),
+        },
+        Err(err) => probe_check("text", ProbeStatus::Failed, Some(err.to_string())),
+    };
+
+    let stream_payload = json!({
+        "model": model,
+        "instructions": "",
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "Reply with exactly STREAM_PROBE_OK"
+            }]
+        }],
+        "store": false,
+        "stream": true,
+    });
+    let stream_check = match build_codex_probe_request(client, auth, &stream_payload)
+        .send()
+        .await
+    {
+        Ok(resp) => match collect_codex_probe_response(resp).await {
+            Ok((saw_delta, payload)) => {
+                let text = extract_response_text(&payload);
+                if saw_delta && text.contains("STREAM_PROBE_OK") {
+                    probe_check("stream", ProbeStatus::Verified, None)
+                } else if !saw_delta {
+                    probe_check(
+                        "stream",
+                        ProbeStatus::Failed,
+                        Some("no output_text delta event observed".to_string()),
+                    )
+                } else {
+                    probe_check(
+                        "stream",
+                        ProbeStatus::Failed,
+                        Some(format!("unexpected stream response: {text}")),
+                    )
+                }
+            }
+            Err(err) => probe_check("stream", ProbeStatus::Failed, Some(err)),
+        },
+        Err(err) => probe_check("stream", ProbeStatus::Failed, Some(err.to_string())),
+    };
+
+    let tools_payload = json!({
+        "model": model,
+        "instructions": "",
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "Call the probe_tool function exactly once."
+            }]
+        }],
+        "tools": [{
+            "type": "function",
+            "name": "probe_tool",
+            "description": "Health probe tool",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }],
+        "tool_choice": "required",
+        "store": false,
+        "stream": true,
+    });
+    let tools_check = match build_codex_probe_request(client, auth, &tools_payload)
+        .send()
+        .await
+    {
+        Ok(resp) => match collect_codex_probe_response(resp).await {
+            Ok((_saw_delta, payload)) => {
+                let found = payload
+                    .get("output")
+                    .and_then(|value| value.as_array())
+                    .map(|items| {
+                        items.iter().any(|item| {
+                            item.get("type")
+                                .and_then(|value| value.as_str())
+                                .is_some_and(|value| {
+                                    value.contains("function_call") || value.contains("tool_call")
+                                })
+                                || item
+                                    .get("name")
+                                    .and_then(|value| value.as_str())
+                                    .is_some_and(|value| value == "probe_tool")
+                        })
+                    })
+                    .unwrap_or(false);
+                if found {
+                    probe_check("tools", ProbeStatus::Verified, None)
+                } else {
+                    probe_check(
+                        "tools",
+                        ProbeStatus::Failed,
+                        Some("response completed without a tool call".to_string()),
+                    )
+                }
+            }
+            Err(err) => {
+                let status = if err.contains("Unsupported") || err.contains("unknown_parameter") {
+                    ProbeStatus::Unsupported
+                } else {
+                    ProbeStatus::Failed
+                };
+                probe_check("tools", status, Some(err))
+            }
+        },
+        Err(err) => probe_check("tools", ProbeStatus::Failed, Some(err.to_string())),
+    };
+
+    let images_payload = json!({
+        "model": model,
+        "instructions": "",
+        "input": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "The image is a solid red square. Answer with exactly red."
+                },
+                {
+                    "type": "input_image",
+                    "image_url": RED_DOT_PNG_DATA_URL
+                }
+            ]
+        }],
+        "store": false,
+        "stream": true,
+    });
+    let images_check = match build_codex_probe_request(client, auth, &images_payload)
+        .send()
+        .await
+    {
+        Ok(resp) => match collect_codex_probe_response(resp).await {
+            Ok((_saw_delta, payload)) => {
+                let text = extract_response_text(&payload).to_lowercase();
+                if text.contains("red") {
+                    probe_check("images", ProbeStatus::Verified, None)
+                } else {
+                    probe_check(
+                        "images",
+                        ProbeStatus::Failed,
+                        Some(format!("unexpected image response: {text}")),
+                    )
+                }
+            }
+            Err(err) => {
+                let status = if err.contains("Unsupported") || err.contains("unknown_parameter") {
+                    ProbeStatus::Unsupported
+                } else {
+                    ProbeStatus::Failed
+                };
+                probe_check("images", status, Some(err))
+            }
+        },
+        Err(err) => probe_check("images", ProbeStatus::Failed, Some(err.to_string())),
+    };
+
+    let checks = vec![
+        text_check,
+        stream_check,
+        tools_check,
+        images_check,
+        probe_check(
+            "json_schema",
+            ProbeStatus::Unknown,
+            Some("no live probe implemented".to_string()),
+        ),
+        probe_check(
+            "reasoning",
+            ProbeStatus::Unknown,
+            Some("no live probe implemented".to_string()),
+        ),
+        probe_check(
+            "count_tokens",
+            ProbeStatus::Unsupported,
+            Some("Codex backend does not expose count_tokens".to_string()),
+        ),
+    ];
+
+    let status = if checks.iter().any(|check| {
+        (check.capability == "text" || check.capability == "stream") && !check.status.is_verified()
+    }) {
+        "error"
+    } else if checks.iter().all(|check| {
+        matches!(
+            check.status,
+            ProbeStatus::Verified | ProbeStatus::Unsupported | ProbeStatus::Unknown
+        )
+    }) && checks.iter().any(|check| {
+        matches!(
+            check.status,
+            ProbeStatus::Unsupported | ProbeStatus::Unknown
+        )
+    }) {
+        "warning"
+    } else {
+        "ok"
+    };
+
+    ProviderProbeResult {
+        provider: auth.provider_name.clone(),
+        upstream: auth.upstream.to_string(),
+        status: status.to_string(),
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        latency_ms: started.elapsed().as_millis() as u64,
+        checks,
+    }
+}
+
+async fn run_generic_health_probe(
+    provider_name: &str,
+    auth: &prism_core::provider::AuthRecord,
+    client: &reqwest::Client,
+) -> ProviderProbeResult {
+    let started = Instant::now();
+    let response = build_models_request(
+        client,
+        auth.provider.as_str(),
+        &auth.current_secret(),
+        &auth.resolved_base_url(),
+        Some(&auth.headers),
+    );
+    let auth_check = match response {
+        Ok(req) => match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                probe_check("auth", ProbeStatus::Verified, None)
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => probe_check(
+                "auth",
+                ProbeStatus::Failed,
+                Some("credential rejected by upstream".to_string()),
+            ),
+            Ok(resp) => probe_check(
+                "auth",
+                ProbeStatus::Failed,
+                Some(format!("upstream returned {}", resp.status())),
+            ),
+            Err(err) => probe_check("auth", ProbeStatus::Failed, Some(err.to_string())),
+        },
+        Err(err) => probe_check("auth", ProbeStatus::Failed, Some(err)),
+    };
+
+    ProviderProbeResult {
+        provider: provider_name.to_string(),
+        upstream: auth.upstream.to_string(),
+        status: if auth_check.status.is_verified() {
+            "ok".to_string()
+        } else {
+            "error".to_string()
+        },
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        latency_ms: started.elapsed().as_millis() as u64,
+        checks: vec![
+            auth_check,
+            probe_check(
+                "text",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "stream",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "tools",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "images",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "json_schema",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "reasoning",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+            probe_check(
+                "count_tokens",
+                ProbeStatus::Unknown,
+                Some("no live probe implemented for this upstream".to_string()),
+            ),
+        ],
+    }
+}
+
 /// POST /api/dashboard/providers/fetch-models
 pub async fn fetch_models(
     State(state): State<AppState>,
@@ -861,21 +1486,28 @@ pub async fn fetch_models(
             ),
         );
     }
+    let parsed_format: prism_core::provider::Format = match format.parse() {
+        Ok(value) => value,
+        Err(_) => prism_core::provider::Format::OpenAI,
+    };
+    let upstream = match parse_upstream_kind(parsed_format, body.upstream.as_deref()) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if upstream == prism_core::provider::UpstreamKind::Codex {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "error": "validation_failed",
+                "message": "Codex upstream does not support model discovery; configure models manually"
+            })),
+        );
+    }
 
     // Resolve base URL
     let base_url = match body.base_url.as_deref().filter(|s| !s.is_empty()) {
         Some(url) => url.to_string(),
-        None => match default_base_url(format) {
-            Some(url) => url.to_string(),
-            None => {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(
-                        json!({"error": "validation_failed", "message": "base_url is required for this provider"}),
-                    ),
-                );
-            }
-        },
+        None => default_base_url(upstream).to_string(),
     };
 
     let global_proxy = state.config.load().proxy_url.clone();
@@ -1009,26 +1641,28 @@ pub async fn health_check(
         }
     };
 
-    let ptype = entry.format.as_str();
-
-    // Resolve base URL: entry-level, then default
-    let base_url = entry
-        .base_url
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .or_else(|| default_base_url(ptype))
-        .unwrap_or("")
-        .to_string();
-
-    if base_url.is_empty() {
+    let Some(auth) = select_health_auth(&state, &entry.name) else {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"status": "error", "message": "No base_url configured for this provider"})),
+            Json(
+                json!({"status": "error", "message": "No credential configured for this provider"}),
+            ),
+        );
+    };
+    if let Err(err) = state.auth_runtime.prepare_auth(&state, &auth).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"status": "error", "message": err.to_string()})),
+        );
+    }
+    if auth.current_secret().trim().is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"status": "error", "message": "Provider credential is disconnected"})),
         );
     }
 
-    // Use entry-level proxy, fall back to global proxy
-    let proxy_url = entry.proxy_url.as_deref().or(config.proxy_url.as_deref());
+    let proxy_url = auth.effective_proxy(config.proxy_url.as_deref());
 
     let client = match build_reqwest_client(&state.http_client_pool, proxy_url, 10) {
         Ok(c) => c,
@@ -1040,142 +1674,14 @@ pub async fn health_check(
         }
     };
 
-    // Try /v1/models first, fallback to a minimal chat completions probe
-    let start = Instant::now();
-    let models_req = build_models_request(
-        &client,
-        ptype,
-        &entry.api_key,
-        &base_url,
-        Some(&entry.headers),
-    );
+    let result = if auth.upstream == prism_core::provider::UpstreamKind::Codex {
+        run_codex_probe(&client, &auth).await
+    } else {
+        run_generic_health_probe(&entry.name, &auth, &client).await
+    };
+    state
+        .provider_probe_cache
+        .insert(entry.name.clone(), result.clone());
 
-    let mut success = false;
-    if let Ok(req) = models_req {
-        match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                success = true;
-            }
-            Ok(resp) if resp.status().as_u16() == 404 || resp.status().as_u16() == 405 => {
-                // /v1/models not supported, try chat completions probe
-            }
-            Ok(resp) => {
-                let status = resp.status();
-                let body_text = resp.text().await.unwrap_or_default();
-                let latency_ms = start.elapsed().as_millis() as u64;
-                return (
-                    StatusCode::OK,
-                    Json(
-                        json!({"status": "error", "latency_ms": latency_ms, "message": format!("Upstream returned {status}: {body_text}")}),
-                    ),
-                );
-            }
-            Err(e) => {
-                return (
-                    StatusCode::OK,
-                    Json(
-                        json!({"status": "error", "message": format!("Failed to reach upstream: {e}")}),
-                    ),
-                );
-            }
-        }
-    }
-
-    // Fallback: send a minimal chat completions request with max_tokens=1
-    if !success {
-        let base = normalize_base_url(&base_url);
-        let chat_url = match ptype {
-            "gemini" => {
-                // Gemini uses a different endpoint; just report models endpoint unsupported
-                let latency_ms = start.elapsed().as_millis() as u64;
-                return (
-                    StatusCode::OK,
-                    Json(
-                        json!({"status": "error", "latency_ms": latency_ms, "message": "Models endpoint not available for this provider"}),
-                    ),
-                );
-            }
-            "claude" => format!("{base}/v1/messages"),
-            _ => format!("{base}/v1/chat/completions"),
-        };
-
-        // Send an intentionally invalid request (empty body) to probe connectivity
-        // and key validity without consuming tokens.
-        // - 400 = reachable, key accepted (just bad params) -> healthy
-        // - 401/403 = reachable but key invalid -> report error
-        // - 5xx = server error -> report error
-        let mut req = client
-            .post(&chat_url)
-            .header("content-type", "application/json")
-            .body("{}");
-        // Add auth headers
-        match ptype {
-            "claude" => {
-                req = req
-                    .header("x-api-key", &entry.api_key)
-                    .header("anthropic-version", "2023-06-01");
-            }
-            _ => {
-                req = req.header("Authorization", format!("Bearer {}", entry.api_key));
-            }
-        }
-        // Add custom headers
-        for (k, v) in &entry.headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-
-        match req.send().await {
-            Ok(resp) => {
-                let latency_ms = start.elapsed().as_millis() as u64;
-                let status_code = resp.status().as_u16();
-                // 400 = reachable & key valid (bad params expected)
-                // 401/403 = key invalid
-                // 5xx = server error
-                match status_code {
-                    400 | 422 => {
-                        return (
-                            StatusCode::OK,
-                            Json(json!({"status": "ok", "latency_ms": latency_ms})),
-                        );
-                    }
-                    401 | 403 => {
-                        return (
-                            StatusCode::OK,
-                            Json(
-                                json!({"status": "error", "latency_ms": latency_ms, "message": "Authentication failed: invalid API key"}),
-                            ),
-                        );
-                    }
-                    _ if status_code < 500 => {
-                        return (
-                            StatusCode::OK,
-                            Json(json!({"status": "ok", "latency_ms": latency_ms})),
-                        );
-                    }
-                    _ => {}
-                }
-                let body_text = resp.text().await.unwrap_or_default();
-                return (
-                    StatusCode::OK,
-                    Json(
-                        json!({"status": "error", "latency_ms": latency_ms, "message": format!("Upstream returned {status_code}: {body_text}")}),
-                    ),
-                );
-            }
-            Err(e) => {
-                return (
-                    StatusCode::OK,
-                    Json(
-                        json!({"status": "error", "message": format!("Failed to reach upstream: {e}")}),
-                    ),
-                );
-            }
-        }
-    }
-
-    let latency_ms = start.elapsed().as_millis() as u64;
-    (
-        StatusCode::OK,
-        Json(json!({"status": "ok", "latency_ms": latency_ms})),
-    )
+    (StatusCode::OK, Json(json!(result)))
 }

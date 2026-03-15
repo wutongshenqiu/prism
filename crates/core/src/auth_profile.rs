@@ -1,5 +1,5 @@
 use crate::presentation::UpstreamPresentationConfig;
-use crate::provider::Format;
+use crate::provider::{Format, UpstreamKind};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -15,20 +15,18 @@ pub enum AuthMode {
     #[default]
     ApiKey,
     BearerToken,
-    OpenaiCodexOauth,
+    #[serde(rename = "codex-oauth")]
+    CodexOAuth,
     AnthropicClaudeSubscription,
 }
 
 impl AuthMode {
     pub fn is_managed(self) -> bool {
-        matches!(
-            self,
-            Self::OpenaiCodexOauth | Self::AnthropicClaudeSubscription
-        )
+        matches!(self, Self::CodexOAuth | Self::AnthropicClaudeSubscription)
     }
 
     pub fn supports_refresh(self) -> bool {
-        matches!(self, Self::OpenaiCodexOauth)
+        matches!(self, Self::CodexOAuth)
     }
 }
 
@@ -115,7 +113,7 @@ impl AuthProfileEntry {
                     ));
                 }
             }
-            AuthMode::OpenaiCodexOauth | AuthMode::AnthropicClaudeSubscription => {
+            AuthMode::CodexOAuth | AuthMode::AnthropicClaudeSubscription => {
                 let has_secret = self.secret.as_deref().is_some_and(|s| !s.trim().is_empty());
                 if has_secret {
                     return Err(format!(
@@ -137,27 +135,33 @@ impl AuthProfileEntry {
     pub fn validate_for_provider(
         &self,
         format: Format,
+        upstream: UpstreamKind,
         base_url: Option<&str>,
     ) -> Result<(), String> {
         match self.mode {
-            AuthMode::OpenaiCodexOauth => {
-                if format != Format::OpenAI {
+            AuthMode::CodexOAuth => {
+                if upstream != UpstreamKind::Codex || format != Format::OpenAI {
                     return Err(
-                        "openai-codex-oauth is only supported for OpenAI-format providers"
+                        "codex-oauth is only supported for Codex upstream providers using OpenAI wire format"
+                            .to_string(),
+                    );
+                }
+                if !is_official_codex_base_url(base_url) {
+                    return Err(
+                        "codex-oauth requires the official https://chatgpt.com/backend-api/codex base URL"
                             .to_string(),
                     );
                 }
                 if !matches!(self.header, AuthHeaderKind::Auto | AuthHeaderKind::Bearer) {
                     return Err(
-                        "openai-codex-oauth profiles must use auto or bearer auth header"
-                            .to_string(),
+                        "codex-oauth profiles must use auto or bearer auth header".to_string()
                     );
                 }
             }
             AuthMode::AnthropicClaudeSubscription => {
-                if format != Format::Claude {
+                if upstream != UpstreamKind::Claude || format != Format::Claude {
                     return Err(
-                        "anthropic-claude-subscription is only supported for Claude-format providers"
+                        "anthropic-claude-subscription is only supported for Claude upstream providers"
                             .to_string(),
                     );
                 }
@@ -202,7 +206,7 @@ impl AuthProfileEntry {
     ) -> AuthHeaderKind {
         match self.header {
             AuthHeaderKind::Auto => match self.mode {
-                AuthMode::BearerToken | AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+                AuthMode::BearerToken | AuthMode::CodexOAuth => AuthHeaderKind::Bearer,
                 AuthMode::AnthropicClaudeSubscription => AuthHeaderKind::XApiKey,
                 AuthMode::ApiKey => match format {
                     Format::OpenAI => AuthHeaderKind::Bearer,
@@ -304,6 +308,20 @@ pub fn is_official_anthropic_base_url(base_url: Option<&str>) -> bool {
         .is_some()
 }
 
+pub fn is_official_codex_base_url(base_url: Option<&str>) -> bool {
+    let raw = base_url.unwrap_or(UpstreamKind::Codex.default_base_url());
+    Url::parse(raw)
+        .ok()
+        .and_then(|url| {
+            (url.scheme() == "https"
+                && url.host_str() == Some("chatgpt.com")
+                && (url.port().is_none() || url.port() == Some(443))
+                && url.path().trim_end_matches('/') == "/backend-api/codex")
+                .then_some(())
+        })
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,7 +352,7 @@ mod tests {
     fn test_validate_oauth_profile() {
         let profile = AuthProfileEntry {
             id: "codex".into(),
-            mode: AuthMode::OpenaiCodexOauth,
+            mode: AuthMode::CodexOAuth,
             disabled: false,
             ..Default::default()
         };
@@ -372,7 +390,11 @@ mod tests {
             ..Default::default()
         };
         let err = profile
-            .validate_for_provider(Format::Claude, Some("https://proxy.example.com"))
+            .validate_for_provider(
+                Format::Claude,
+                UpstreamKind::Claude,
+                Some("https://proxy.example.com"),
+            )
             .unwrap_err();
         assert!(err.contains("official"));
     }
@@ -384,6 +406,36 @@ mod tests {
         )));
         assert!(!is_official_anthropic_base_url(Some(
             "https://api.anthropic.com.example.com"
+        )));
+    }
+
+    #[test]
+    fn test_validate_for_provider_rejects_non_official_codex_base_url() {
+        let profile = AuthProfileEntry {
+            id: "codex".into(),
+            mode: AuthMode::CodexOAuth,
+            ..Default::default()
+        };
+        let err = profile
+            .validate_for_provider(
+                Format::OpenAI,
+                UpstreamKind::Codex,
+                Some("https://proxy.example.com"),
+            )
+            .unwrap_err();
+        assert!(err.contains("official"));
+    }
+
+    #[test]
+    fn test_is_official_codex_base_url() {
+        assert!(is_official_codex_base_url(Some(
+            "https://chatgpt.com/backend-api/codex"
+        )));
+        assert!(!is_official_codex_base_url(Some(
+            "https://chatgpt.com/backend-api/codex/proxy"
+        )));
+        assert!(!is_official_codex_base_url(Some(
+            "https://chatgpt.com.example.com/backend-api/codex"
         )));
     }
 }

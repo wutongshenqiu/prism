@@ -14,12 +14,84 @@ pub use prism_types::format::{Format, WireApi};
 
 use prism_domain::capability::UpstreamProtocol;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpstreamKind {
+    #[default]
+    OpenAI,
+    Codex,
+    Claude,
+    Gemini,
+}
+
+impl UpstreamKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAI => "openai",
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+            Self::Gemini => "gemini",
+        }
+    }
+
+    pub fn default_base_url(self) -> &'static str {
+        match self {
+            Self::OpenAI => "https://api.openai.com",
+            Self::Codex => "https://chatgpt.com/backend-api/codex",
+            Self::Claude => "https://api.anthropic.com",
+            Self::Gemini => "https://generativelanguage.googleapis.com",
+        }
+    }
+
+    pub fn wire_format(self) -> Format {
+        match self {
+            Self::OpenAI | Self::Codex => Format::OpenAI,
+            Self::Claude => Format::Claude,
+            Self::Gemini => Format::Gemini,
+        }
+    }
+}
+
+impl std::fmt::Display for UpstreamKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for UpstreamKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "openai" => Ok(Self::OpenAI),
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            "gemini" => Ok(Self::Gemini),
+            _ => Err(format!("unknown upstream kind: {s}")),
+        }
+    }
+}
+
+impl From<Format> for UpstreamKind {
+    fn from(value: Format) -> Self {
+        match value {
+            Format::OpenAI => Self::OpenAI,
+            Format::Claude => Self::Claude,
+            Format::Gemini => Self::Gemini,
+        }
+    }
+}
+
 /// Convert a wire format to the corresponding upstream protocol.
 pub fn upstream_protocol(format: Format) -> UpstreamProtocol {
-    match format {
-        Format::OpenAI => UpstreamProtocol::OpenAi,
-        Format::Claude => UpstreamProtocol::Anthropic,
-        Format::Gemini => UpstreamProtocol::Gemini,
+    upstream_protocol_for_kind(UpstreamKind::from(format))
+}
+
+pub fn upstream_protocol_for_kind(kind: UpstreamKind) -> UpstreamProtocol {
+    match kind {
+        UpstreamKind::OpenAI | UpstreamKind::Codex => UpstreamProtocol::OpenAi,
+        UpstreamKind::Claude => UpstreamProtocol::Anthropic,
+        UpstreamKind::Gemini => UpstreamProtocol::Gemini,
     }
 }
 
@@ -28,6 +100,7 @@ pub fn upstream_protocol(format: Format) -> UpstreamProtocol {
 pub struct AuthRecord {
     pub id: String,
     pub provider: Format,
+    pub upstream: UpstreamKind,
     /// Provider name from config (used for routing identity).
     pub provider_name: String,
     pub api_key: String,
@@ -71,6 +144,7 @@ impl std::fmt::Debug for AuthRecord {
         f.debug_struct("AuthRecord")
             .field("id", &self.id)
             .field("provider", &self.provider)
+            .field("upstream", &self.upstream)
             .field("provider_name", &self.provider_name)
             .field("api_key", &"***")
             .field("auth_profile_id", &self.auth_profile_id)
@@ -98,7 +172,7 @@ impl AuthRecord {
 
     /// Resolve base URL using the format's canonical default.
     pub fn resolved_base_url(&self) -> String {
-        self.base_url_or_default(self.provider.default_base_url())
+        self.base_url_or_default(self.upstream.default_base_url())
     }
 
     /// Resolve the current credential secret.
@@ -116,7 +190,7 @@ impl AuthRecord {
     pub fn resolved_auth_header_kind(&self) -> AuthHeaderKind {
         match self.auth_header {
             AuthHeaderKind::Auto => match self.auth_mode {
-                AuthMode::BearerToken | AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+                AuthMode::BearerToken | AuthMode::CodexOAuth => AuthHeaderKind::Bearer,
                 AuthMode::AnthropicClaudeSubscription => AuthHeaderKind::XApiKey,
                 AuthMode::ApiKey => match self.provider {
                     Format::OpenAI => AuthHeaderKind::Bearer,
@@ -138,6 +212,13 @@ impl AuthRecord {
             },
             explicit => explicit,
         }
+    }
+
+    pub fn current_account_id(&self) -> Option<String> {
+        self.oauth_state
+            .as_ref()
+            .and_then(|state| state.read().ok())
+            .and_then(|state| state.account_id.clone())
     }
 
     /// Resolve the effective proxy URL (entry-level → global fallback).

@@ -18,6 +18,7 @@ interface ModelEntry {
 }
 
 type CapabilityState = boolean | null;
+type ProbeState = 'verified' | 'failed' | 'unknown' | 'unsupported';
 
 function CapabilityBadge({
   state,
@@ -41,6 +42,29 @@ function CapabilityBadge({
         {label || 'No'}
       </span>
     );
+  }
+  return <span className="type-badge">Unknown</span>;
+}
+
+function ProbeBadge({ state }: { state: ProbeState }) {
+  if (state === 'verified') {
+    return (
+      <span className="type-badge type-badge--green">
+        <CheckCircle size={12} />
+        Verified
+      </span>
+    );
+  }
+  if (state === 'failed') {
+    return (
+      <span className="type-badge type-badge--red">
+        <XCircle size={12} />
+        Failed
+      </span>
+    );
+  }
+  if (state === 'unsupported') {
+    return <span className="type-badge">Unsupported</span>;
   }
   return <span className="type-badge">Unknown</span>;
 }
@@ -131,13 +155,14 @@ export default function ModelsCapabilities() {
   // Capability summary per provider — sourced from capabilities API
   const providerCapabilities = useMemo(() => {
     return activeProviders.map((p) => {
-      const caps = capabilityMap[p.name]?.capabilities;
       return {
         name: p.name,
         format: p.format,
         modelsCount: p.models.length,
-        supportsStream: caps?.supports_stream ?? null,
-        supportsTools: caps?.supports_tools ?? null,
+        textProbe: capabilityMap[p.name]?.probe.text.status ?? 'unknown',
+        streamProbe: capabilityMap[p.name]?.probe.stream.status ?? 'unknown',
+        toolsProbe: capabilityMap[p.name]?.probe.tools.status ?? 'unknown',
+        imagesProbe: capabilityMap[p.name]?.probe.images.status ?? 'unknown',
         wireApi: p.wire_api,
         hasPresentation: !!p.upstream_presentation && p.upstream_presentation.profile !== 'native',
       };
@@ -175,7 +200,11 @@ export default function ModelsCapabilities() {
               <p>No active providers configured</p>
             </div>
           ) : (
-            <div className="table-wrapper">
+            <>
+              <p className="text-muted" style={{ marginBottom: '1rem' }}>
+                Runtime truth is populated from provider probes. <strong>Unknown</strong> means no live probe has been run yet.
+              </p>
+              <div className="table-wrapper">
               <table className="table">
                 <thead>
                   <tr>
@@ -183,8 +212,10 @@ export default function ModelsCapabilities() {
                     <th>Format</th>
                     <th style={{ textAlign: 'center' }}>Models</th>
                     <th style={{ textAlign: 'center' }}>Wire API</th>
+                    <th style={{ textAlign: 'center' }}>Text</th>
                     <th style={{ textAlign: 'center' }}>Streaming</th>
                     <th style={{ textAlign: 'center' }}>Tools</th>
+                    <th style={{ textAlign: 'center' }}>Images</th>
                     <th style={{ textAlign: 'center' }}>Presentation</th>
                   </tr>
                 </thead>
@@ -198,10 +229,16 @@ export default function ModelsCapabilities() {
                         <span className="type-badge">{cap.wireApi}</span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <CapabilityBadge state={cap.supportsStream} />
+                        <ProbeBadge state={cap.textProbe} />
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <CapabilityBadge state={cap.supportsTools} />
+                        <ProbeBadge state={cap.streamProbe} />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <ProbeBadge state={cap.toolsProbe} />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <ProbeBadge state={cap.imagesProbe} />
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         {cap.hasPresentation
@@ -213,7 +250,8 @@ export default function ModelsCapabilities() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>

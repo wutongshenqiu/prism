@@ -87,6 +87,8 @@ impl TestServer {
             health_manager: Arc::new(HealthManager::new(Default::default())),
             auth_runtime: Arc::new(prism_server::auth_runtime::AuthRuntimeManager::new()),
             oauth_sessions: Arc::new(Default::default()),
+            device_sessions: Arc::new(Default::default()),
+            provider_probe_cache: Arc::new(Default::default()),
         };
 
         let app_router = prism_server::build_router(state);
@@ -126,6 +128,7 @@ fn make_key_entry(
     ProviderKeyEntry {
         name: name.to_string(),
         format,
+        upstream: None,
         api_key: api_key.to_string(),
         base_url: base_url.map(String::from),
         proxy_url: None,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { providersApi } from '../services/api';
-import type { Provider, ProviderAuthProfile, ProviderCreateRequest, FormatType, ProfileKind, ActivationMode, PresentationPreviewResponse } from '../types';
+import type { Provider, ProviderAuthProfile, ProviderCreateRequest, FormatType, UpstreamType, ProfileKind, ActivationMode, PresentationPreviewResponse, ProviderHealthResult } from '../types';
 import StatusBadge from '../components/StatusBadge';
 import TagList from '../components/TagList';
 import { Server, Plus, Pencil, Trash2, X, RefreshCw, HeartPulse, PlusCircle, MinusCircle, Copy, Eye, ChevronDown, ChevronUp } from 'lucide-react';
@@ -12,10 +12,24 @@ const FORMAT_OPTIONS: { value: FormatType; label: string }[] = [
   { value: 'gemini', label: 'Gemini (Google)' },
 ];
 
-const DEFAULT_BASE_URLS: Record<FormatType, string> = {
+const DEFAULT_BASE_URLS: Record<UpstreamType, string> = {
   openai: 'https://api.openai.com',
+  codex: 'https://chatgpt.com/backend-api/codex',
   claude: 'https://api.anthropic.com',
   gemini: 'https://generativelanguage.googleapis.com',
+};
+
+const UPSTREAM_OPTIONS: Record<FormatType, Array<{ value: UpstreamType; label: string; description: string }>> = {
+  openai: [
+    { value: 'openai', label: 'OpenAI API', description: 'Usage-billed OpenAI-compatible APIs such as OpenAI, DeepSeek, Groq' },
+    { value: 'codex', label: 'Codex', description: 'ChatGPT/Codex subscription backend at chatgpt.com/backend-api/codex' },
+  ],
+  claude: [
+    { value: 'claude', label: 'Claude', description: 'Anthropic Claude API' },
+  ],
+  gemini: [
+    { value: 'gemini', label: 'Gemini', description: 'Google Gemini API' },
+  ],
 };
 
 const PROFILE_OPTIONS: { value: ProfileKind; label: string; description: string }[] = [
@@ -33,6 +47,7 @@ interface HeaderPair {
 interface FormState {
   name: string;
   format: FormatType;
+  upstream: UpstreamType;
   base_url: string;
   proxy_url: string;
   api_key: string;
@@ -61,6 +76,7 @@ interface NoticeState {
 const emptyForm: FormState = {
   name: '',
   format: 'openai',
+  upstream: 'openai',
   base_url: DEFAULT_BASE_URLS.openai,
   proxy_url: '',
   api_key: '',
@@ -92,7 +108,7 @@ export default function Providers() {
   const [saving, setSaving] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
-  const [healthResults, setHealthResults] = useState<Record<string, { status: string; latency_ms?: number; message?: string }>>({});
+  const [healthResults, setHealthResults] = useState<Record<string, ProviderHealthResult>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [previewResult, setPreviewResult] = useState<PresentationPreviewResponse | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -104,7 +120,7 @@ export default function Providers() {
         return 'API key';
       case 'bearer-token':
         return 'Bearer token';
-      case 'openai-codex-oauth':
+      case 'codex-oauth':
         return 'Codex OAuth';
       case 'anthropic-claude-subscription':
         return 'Claude Subscription';
@@ -195,6 +211,7 @@ export default function Providers() {
     setForm({
       name: detail.name,
       format: detail.format,
+      upstream: detail.upstream,
       base_url: detail.base_url ?? '',
       proxy_url: detail.proxy_url ?? '',
       api_key: '',
@@ -263,7 +280,8 @@ export default function Providers() {
         await providersApi.update(editName, {
           base_url: form.base_url || null,
           proxy_url: form.proxy_url || null,
-          api_key: form.api_key || undefined,
+          upstream: form.upstream,
+          api_key: form.upstream === 'codex' ? undefined : (form.api_key || undefined),
           prefix: form.prefix || null,
           disabled: form.disabled,
           models,
@@ -278,9 +296,10 @@ export default function Providers() {
         const data: ProviderCreateRequest = {
           name: providerName,
           format: form.format,
+          upstream: form.upstream,
           base_url: form.base_url || undefined,
           proxy_url: form.proxy_url || undefined,
-          api_key: form.api_key,
+          api_key: form.upstream === 'codex' ? undefined : form.api_key,
           prefix: form.prefix || undefined,
           disabled: form.disabled,
           models,
@@ -351,11 +370,27 @@ export default function Providers() {
   };
 
   const handleFormatChange = (fmt: FormatType) => {
+    const nextUpstream = UPSTREAM_OPTIONS[fmt][0]?.value ?? fmt;
     setForm((prev) => ({
       ...prev,
       format: fmt,
-      base_url: prev.base_url === DEFAULT_BASE_URLS[prev.format]
-        ? DEFAULT_BASE_URLS[fmt]
+      upstream: nextUpstream,
+      wire_api: nextUpstream === 'codex' ? 'responses' : prev.wire_api,
+      api_key: nextUpstream === 'codex' ? '' : prev.api_key,
+      base_url: prev.base_url === DEFAULT_BASE_URLS[prev.upstream]
+        ? DEFAULT_BASE_URLS[nextUpstream]
+        : prev.base_url,
+    }));
+  };
+
+  const handleUpstreamChange = (upstream: UpstreamType) => {
+    setForm((prev) => ({
+      ...prev,
+      upstream,
+      wire_api: upstream === 'codex' ? 'responses' : (prev.wire_api === 'responses' ? prev.wire_api : 'chat'),
+      api_key: upstream === 'codex' ? '' : prev.api_key,
+      base_url: prev.base_url === DEFAULT_BASE_URLS[prev.upstream]
+        ? DEFAULT_BASE_URLS[upstream]
         : prev.base_url,
     }));
   };
@@ -365,6 +400,7 @@ export default function Providers() {
     try {
       const result = await providersApi.fetchModels({
         format: form.format,
+        upstream: form.upstream,
         api_key: form.api_key,
         base_url: form.base_url || undefined,
       });
@@ -384,12 +420,29 @@ export default function Providers() {
     } catch (err) {
       setHealthResults((prev) => ({
         ...prev,
-        [name]: { status: 'error', message: err instanceof Error ? err.message : 'Health check failed' },
+        [name]: {
+          provider: name,
+          upstream: 'unknown',
+          status: 'error',
+          checked_at: new Date().toISOString(),
+          latency_ms: 0,
+          checks: [{
+            capability: 'probe',
+            status: 'failed',
+            message: err instanceof Error ? err.message : 'Health check failed',
+          }],
+        },
       }));
     } finally {
       setHealthChecking(null);
     }
   };
+
+  const summarizeProbe = (result: ProviderHealthResult) =>
+    result.checks
+      .filter((check) => ['text', 'stream', 'tools', 'images'].includes(check.capability))
+      .map((check) => `${check.capability}:${check.status}`)
+      .join(' · ');
 
   const handlePresentationPreview = async () => {
     if (!editName) return;
@@ -473,9 +526,14 @@ export default function Providers() {
                       )}
                     </td>
                     <td>
-                      <span className="type-badge">
-                        {FORMAT_OPTIONS.find((t) => t.value === provider.format)?.label ?? provider.format}
-                      </span>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="type-badge">
+                          {FORMAT_OPTIONS.find((t) => t.value === provider.format)?.label ?? provider.format}
+                        </span>
+                        <span className="type-badge" style={{ opacity: 0.85 }}>
+                          {UPSTREAM_OPTIONS[provider.format].find((t) => t.value === provider.upstream)?.label ?? provider.upstream}
+                        </span>
+                      </div>
                     </td>
                     <td>
                       <span className="type-badge" style={{ opacity: provider.upstream_presentation?.profile && provider.upstream_presentation.profile !== 'native' ? 1 : 0.5 }}>
@@ -510,14 +568,27 @@ export default function Providers() {
                     </td>
                     <td>
                       {healthResults[provider.name] ? (
-                        <span
-                          className={`health-badge ${healthResults[provider.name].status === 'ok' ? 'health-ok' : 'health-error'}`}
-                          title={healthResults[provider.name].message || `${healthResults[provider.name].latency_ms}ms`}
+                        <div
+                          className={`health-badge ${
+                            healthResults[provider.name].status === 'ok'
+                              ? 'health-ok'
+                              : healthResults[provider.name].status === 'warning'
+                                ? 'health-warning'
+                                : 'health-error'
+                          }`}
+                          title={healthResults[provider.name].checks
+                            .map((check) => `${check.capability}: ${check.status}${check.message ? ` (${check.message})` : ''}`)
+                            .join('\n')}
                         >
                           {healthResults[provider.name].status === 'ok'
                             ? `✓ ${healthResults[provider.name].latency_ms}ms`
-                            : '✗ Error'}
-                        </span>
+                            : healthResults[provider.name].status === 'warning'
+                              ? `! ${healthResults[provider.name].latency_ms}ms`
+                              : '✗ Error'}
+                          <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: 2 }}>
+                            {summarizeProbe(healthResults[provider.name])}
+                          </div>
+                        </div>
                       ) : (
                         <StatusBadge
                           status={provider.disabled ? 'inactive' : 'active'}
@@ -630,27 +701,48 @@ export default function Providers() {
               </div>
 
               <div className="form-group">
+                <label>Upstream Family</label>
+                <select
+                  value={form.upstream}
+                  onChange={(e) => handleUpstreamChange(e.target.value as UpstreamType)}
+                >
+                  {UPSTREAM_OPTIONS[form.format].map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                  {UPSTREAM_OPTIONS[form.format].find((option) => option.value === form.upstream)?.description}
+                </span>
+              </div>
+
+              <div className="form-group">
                 <label>Base URL</label>
                 <input
                   type="text"
                   value={form.base_url}
                   onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-                  placeholder={DEFAULT_BASE_URLS[form.format]}
+                  placeholder={DEFAULT_BASE_URLS[form.upstream]}
                 />
               </div>
 
-              <div className="form-group">
-                <label>API Key {editName && '(leave empty to keep current)'}</label>
-                <input
-                  type="password"
-                  value={form.api_key}
-                  onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                  placeholder={editName ? '********' : 'sk-...'}
-                />
-                <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
-                  Optional when this provider will be backed by explicit auth profiles.
-                </span>
-              </div>
+              {form.upstream !== 'codex' ? (
+                <div className="form-group">
+                  <label>API Key {editName && '(leave empty to keep current)'}</label>
+                  <input
+                    type="password"
+                    value={form.api_key}
+                    onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                    placeholder={editName ? '********' : 'sk-...'}
+                  />
+                  <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                    Optional when this provider will be backed by explicit auth profiles.
+                  </span>
+                </div>
+              ) : (
+                <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
+                  Codex providers do not accept static API keys. Create a `Codex OAuth` auth profile after saving this provider.
+                </div>
+              )}
 
               <div className="form-group">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -659,8 +751,10 @@ export default function Providers() {
                     type="button"
                     className="btn btn-ghost btn-sm"
                     onClick={handleFetchModels}
-                    disabled={fetchingModels || (!form.api_key && !editName)}
-                    title={editName && !form.api_key ? 'Enter API key to fetch models' : 'Fetch available models from provider'}
+                    disabled={form.upstream === 'codex' || fetchingModels || (!form.api_key && !editName)}
+                    title={form.upstream === 'codex'
+                      ? 'Codex model discovery is not supported'
+                      : (editName && !form.api_key ? 'Enter API key to fetch models' : 'Fetch available models from provider')}
                   >
                     <RefreshCw size={14} className={fetchingModels ? 'spinning' : ''} />
                     {fetchingModels ? 'Fetching...' : 'Fetch Models'}
@@ -977,10 +1071,16 @@ export default function Providers() {
                     <select
                       value={form.wire_api}
                       onChange={(e) => setForm({ ...form, wire_api: e.target.value })}
+                      disabled={form.upstream === 'codex'}
                     >
                       <option value="chat">Chat Completions</option>
                       <option value="responses">Responses API</option>
                     </select>
+                    {form.upstream === 'codex' && (
+                      <span className="form-help" style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                        Codex always uses the Responses backend.
+                      </span>
+                    )}
                   </div>
                 )}
 

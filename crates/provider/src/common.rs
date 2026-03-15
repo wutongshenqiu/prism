@@ -128,12 +128,14 @@ mod tests {
     use super::*;
     use prism_core::auth_profile::AuthMode;
     use prism_core::circuit_breaker::NoopCircuitBreaker;
+    use prism_core::provider::UpstreamKind;
     use std::sync::Arc;
 
     fn make_auth() -> AuthRecord {
         AuthRecord {
             id: "auth-1".into(),
             provider: Format::OpenAI,
+            upstream: UpstreamKind::OpenAI,
             provider_name: "openai".into(),
             api_key: "secret".into(),
             base_url: None,

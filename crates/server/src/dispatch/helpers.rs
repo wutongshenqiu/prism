@@ -122,12 +122,15 @@ pub(super) fn inject_route_headers(
     let mut summary = format!("profile={profile}");
     if let Some(p) = provider {
         summary.push_str(&format!(" provider={p}"));
+        headers.insert("x-prism-route-provider", p.parse().unwrap());
     }
     if let Some(c) = credential_name {
         summary.push_str(&format!(" credential={c}"));
+        headers.insert("x-prism-route-credential", c.parse().unwrap());
     }
     if let Some(m) = model {
         summary.push_str(&format!(" model={m}"));
+        headers.insert("x-prism-route-model", m.parse().unwrap());
     }
     headers.insert("x-prism-route-summary", summary.parse().unwrap());
 
