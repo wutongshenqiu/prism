@@ -166,6 +166,7 @@ impl RouteIntrospectionRequest {
             region: self.region,
             stream: self.stream,
             headers: self.headers,
+            allowed_credentials: Vec::new(),
             required_capabilities: None,
         }
     }

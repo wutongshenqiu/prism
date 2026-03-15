@@ -126,6 +126,7 @@ impl Default for ProviderCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prism_core::auth_profile::{AuthHeaderKind, AuthMode};
     use prism_core::circuit_breaker::NoopCircuitBreaker;
     use prism_core::provider::ModelEntry;
     use std::sync::Arc;
@@ -153,6 +154,10 @@ mod tests {
             cloak: None,
             wire_api: Default::default(),
             credential_name: Some(format!("name-{id}")),
+            auth_profile_id: format!("name-{id}"),
+            auth_mode: AuthMode::ApiKey,
+            auth_header: AuthHeaderKind::Auto,
+            oauth_state: None,
             weight: 100,
             region: None,
             upstream_presentation: Default::default(),

@@ -66,6 +66,10 @@ fn allowed_formats_for_path(path_suffix: &str) -> Option<Vec<Format>> {
     }
 }
 
+fn matches_scoped_credential(candidate: &str, requested: &str) -> bool {
+    candidate == requested || candidate.rsplit('/').next() == Some(requested)
+}
+
 /// POST /api/provider/{provider}/v1/chat/completions
 pub async fn provider_chat_completions(
     State(state): State<AppState>,
@@ -127,6 +131,15 @@ async fn provider_dispatch(
         if allowed_credentials.is_empty() {
             return Err(ProxyError::BadRequest(format!(
                 "no accessible credentials for provider '{provider}' with current API key"
+            )));
+        }
+    }
+
+    if let Some(ref requested) = parsed.auth_profile {
+        allowed_credentials.retain(|candidate| matches_scoped_credential(candidate, requested));
+        if allowed_credentials.is_empty() {
+            return Err(ProxyError::BadRequest(format!(
+                "unknown auth profile '{requested}' for provider '{provider}'"
             )));
         }
     }

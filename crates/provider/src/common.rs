@@ -1,4 +1,5 @@
 use crate::sse::parse_sse_stream;
+use prism_core::auth_profile::AuthHeaderKind;
 use prism_core::error::ProxyError;
 use prism_core::provider::*;
 use prism_core::proxy::HttpClientPool;
@@ -25,6 +26,23 @@ pub fn apply_headers(
     }
     for (k, v) in &auth.headers {
         req = req.header(k.as_str(), v.as_str());
+    }
+    req
+}
+
+/// Apply the resolved auth header to a request builder.
+pub fn apply_auth(mut req: reqwest::RequestBuilder, auth: &AuthRecord) -> reqwest::RequestBuilder {
+    let secret = auth.current_secret();
+    match auth.resolved_auth_header_kind() {
+        AuthHeaderKind::Bearer | AuthHeaderKind::Auto => {
+            req = req.header("authorization", format!("Bearer {}", secret));
+        }
+        AuthHeaderKind::XApiKey => {
+            req = req.header("x-api-key", secret);
+        }
+        AuthHeaderKind::XGoogApiKey => {
+            req = req.header("x-goog-api-key", secret);
+        }
     }
     req
 }

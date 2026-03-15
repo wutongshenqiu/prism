@@ -1,6 +1,12 @@
 use arc_swap::ArcSwap;
+use axum::Json;
+use axum::Router;
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::{Request, StatusCode};
+use axum::routing::{get, post};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use prism_core::config::{Config, DashboardConfig};
 use prism_core::cost::CostCalculator;
 use prism_core::memory_log_store::InMemoryLogStore;
@@ -27,6 +33,14 @@ struct TestHarness {
 }
 
 fn create_test_harness() -> TestHarness {
+    create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::new(),
+    ))
+}
+
+fn create_test_harness_with_auth_runtime(
+    auth_runtime: Arc<prism_server::auth_runtime::AuthRuntimeManager>,
+) -> TestHarness {
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
     let config_path = temp_dir.path().join("config.yaml");
 
@@ -48,8 +62,13 @@ fn create_test_harness() -> TestHarness {
     let yaml = config.to_yaml().expect("failed to serialize config");
     std::fs::write(&config_path, &yaml).expect("failed to write config");
 
+    auth_runtime
+        .initialize(config_path.to_str().unwrap(), &config)
+        .expect("failed to initialize auth runtime");
+
     let config_arc = Arc::new(ArcSwap::new(Arc::new(config.clone())));
     let credential_router = Arc::new(CredentialRouter::new(Default::default()));
+    credential_router.set_oauth_states(auth_runtime.oauth_snapshot());
     credential_router.update_from_config(&config);
 
     let http_client_pool = Arc::new(prism_core::proxy::HttpClientPool::new());
@@ -57,6 +76,8 @@ fn create_test_harness() -> TestHarness {
     let translators = Arc::new(prism_translator::build_registry());
     let metrics = Arc::new(Metrics::new());
     let log_store: Arc<dyn LogStore> = Arc::new(InMemoryLogStore::new(1000, None));
+    let catalog = Arc::new(ProviderCatalog::new());
+    catalog.update_from_credentials(&credential_router.credential_map());
 
     let state = AppState {
         config: config_arc,
@@ -73,14 +94,114 @@ fn create_test_harness() -> TestHarness {
         http_client_pool,
         start_time: Instant::now(),
         login_limiter: Arc::new(prism_server::handler::dashboard::auth::LoginRateLimiter::new()),
-        catalog: Arc::new(ProviderCatalog::new()),
+        catalog,
         health_manager: Arc::new(HealthManager::new(Default::default())),
+        auth_runtime,
+        oauth_sessions: Arc::new(dashmap::DashMap::new()),
     };
 
     TestHarness {
         state,
         _temp_dir: temp_dir,
     }
+}
+
+fn reload_runtime_config(harness: &TestHarness) {
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let new_config = Config::load(&config_path).expect("failed to reload config");
+    harness
+        .state
+        .auth_runtime
+        .sync_with_config(&new_config)
+        .expect("failed to sync auth runtime");
+    harness
+        .state
+        .router
+        .set_oauth_states(harness.state.auth_runtime.oauth_snapshot());
+    harness.state.router.update_from_config(&new_config);
+    harness
+        .state
+        .catalog
+        .update_from_credentials(&harness.state.router.credential_map());
+    harness.state.config.store(Arc::new(new_config));
+}
+
+fn read_auth_runtime_store(harness: &TestHarness) -> Value {
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let config_path = std::path::PathBuf::from(config_path);
+    let file_name = config_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config.yaml");
+    let store_path = config_path.with_file_name(format!("{file_name}.auth-runtime.json"));
+    if !store_path.exists() {
+        return json!({
+            "version": 1,
+            "oauth_profiles": []
+        });
+    }
+
+    let contents =
+        std::fs::read_to_string(store_path).expect("failed to read auth runtime store file");
+    serde_json::from_str(&contents).expect("failed to parse auth runtime store file")
+}
+
+#[derive(Clone)]
+struct MockOauthState {
+    token_response: Value,
+}
+
+struct MockCodexOauthServer {
+    auth_url: String,
+    token_url: String,
+    _task: tokio::task::JoinHandle<()>,
+}
+
+async fn spawn_mock_codex_oauth_server(token_response: Value) -> MockCodexOauthServer {
+    async fn authorize() -> Json<Value> {
+        Json(json!({"ok": true}))
+    }
+
+    async fn token(State(state): State<MockOauthState>, body: String) -> (StatusCode, Json<Value>) {
+        assert!(
+            body.contains("client_id="),
+            "expected oauth client_id in token request: {body}"
+        );
+        (StatusCode::OK, Json(state.token_response))
+    }
+
+    let state = MockOauthState { token_response };
+    let app = Router::new()
+        .route("/oauth/authorize", get(authorize))
+        .route("/oauth/token", post(token))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock oauth listener");
+    let addr = listener.local_addr().expect("mock oauth addr");
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("mock oauth server");
+    });
+
+    MockCodexOauthServer {
+        auth_url: format!("http://{addr}/oauth/authorize"),
+        token_url: format!("http://{addr}/oauth/token"),
+        _task: task,
+    }
+}
+
+fn fake_id_token(email: &str, sub: &str) -> String {
+    let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(
+        json!({
+            "email": email,
+            "sub": sub,
+            "account_id": sub,
+        })
+        .to_string(),
+    );
+    format!("{header}.{payload}.sig")
 }
 
 /// Helper: send a request to the router and return (status, body as Value).
@@ -534,8 +655,15 @@ async fn test_create_provider_with_empty_api_key() {
     });
     let req = authed_post("/api/dashboard/providers", &token, create_body);
     let (status, body) = send_request(&harness, req).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["error"], "validation_failed");
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+
+    reload_runtime_config(&harness);
+
+    let req = authed_get("/api/dashboard/providers/Empty%20Key%20Provider", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["api_key_masked"], "");
+    assert_eq!(body["auth_profiles"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -584,6 +712,322 @@ async fn test_create_openai_provider_for_deepseek() {
     assert_eq!(body["format"], "openai");
     assert_eq!(body["name"], "DeepSeek");
     assert_eq!(body["base_url"], "https://api.deepseek.com/v1");
+}
+
+#[tokio::test]
+async fn test_create_provider_with_auth_profiles() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let create_body = json!({
+        "format": "openai",
+        "name": "Codex Gateway",
+        "auth_profiles": [
+            {
+                "id": "billing",
+                "mode": "api-key",
+                "secret": "sk-billing-test-1234567890abcdef"
+            },
+            {
+                "id": "codex-user",
+                "mode": "openai-codex-oauth",
+                "access-token": "access-token-1234567890",
+                "refresh-token": "refresh-token-1234567890"
+            }
+        ]
+    });
+    let req = authed_post("/api/dashboard/providers", &token, create_body);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+
+    reload_runtime_config(&harness);
+
+    let req = authed_get("/api/dashboard/providers/Codex%20Gateway", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let auth_profiles = body["auth_profiles"].as_array().unwrap();
+    assert_eq!(auth_profiles.len(), 2);
+    assert_eq!(auth_profiles[0]["qualified_name"], "Codex Gateway/billing");
+    assert_eq!(
+        auth_profiles[1]["qualified_name"],
+        "Codex Gateway/codex-user"
+    );
+    assert_eq!(auth_profiles[1]["mode"], "openai-codex-oauth");
+    assert_eq!(auth_profiles[1]["refresh_token_present"], true);
+
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let raw_contents = std::fs::read_to_string(config_path).unwrap();
+    let raw_config = Config::from_yaml_raw(&raw_contents).unwrap();
+    assert_eq!(raw_config.providers[0].auth_profiles.len(), 2);
+    assert_eq!(raw_config.providers[0].api_key, "");
+    assert_eq!(raw_config.providers[0].auth_profiles[1].access_token, None);
+    assert_eq!(raw_config.providers[0].auth_profiles[1].refresh_token, None);
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["provider"], "Codex Gateway");
+    assert_eq!(oauth_profiles[0]["profile_id"], "codex-user");
+    assert_eq!(oauth_profiles[0]["access_token"], "access-token-1234567890");
+    assert_eq!(
+        oauth_profiles[0]["refresh_token"],
+        "refresh-token-1234567890"
+    );
+}
+
+#[tokio::test]
+async fn test_list_auth_profiles() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "name": "auth-profile-openai",
+            "auth_profiles": [
+                {
+                    "id": "billing",
+                    "mode": "api-key",
+                    "secret": "sk-auth-profile-1234567890abcdef"
+                }
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_get("/api/dashboard/auth-profiles", &token);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let profiles = body["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0]["provider"], "auth-profile-openai");
+    assert_eq!(profiles[0]["qualified_name"], "auth-profile-openai/billing");
+}
+
+#[tokio::test]
+async fn test_start_codex_oauth() {
+    let mock = spawn_mock_codex_oauth_server(json!({
+        "access_token": "unused",
+        "refresh_token": "unused"
+    }))
+    .await;
+    let harness = create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::with_codex_endpoints(
+            mock.auth_url.clone(),
+            mock.token_url.clone(),
+            "test-client".to_string(),
+        ),
+    ));
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "name": "codex-start",
+            "auth_profiles": [
+                {
+                    "id": "codex-user",
+                    "mode": "openai-codex-oauth",
+                    "refresh-token": "seed-refresh-token"
+                }
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/oauth/start",
+        &token,
+        json!({
+            "provider": "codex-start",
+            "profile_id": "codex-user",
+            "redirect_uri": "http://127.0.0.1:1455/callback"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "oauth start failed: {body:?}");
+    assert!(body["state"].as_str().unwrap().len() > 10);
+    let auth_url = body["auth_url"].as_str().unwrap();
+    assert!(auth_url.starts_with(&mock.auth_url));
+    assert!(auth_url.contains("client_id=test-client"));
+}
+
+#[tokio::test]
+async fn test_complete_codex_oauth_persists_profile() {
+    let id_token = fake_id_token("codex@example.com", "acct_123");
+    let mock = spawn_mock_codex_oauth_server(json!({
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "id_token": id_token,
+        "expires_in": 3600
+    }))
+    .await;
+    let harness = create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::with_codex_endpoints(
+            mock.auth_url.clone(),
+            mock.token_url.clone(),
+            "test-client".to_string(),
+        ),
+    ));
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "name": "codex-complete",
+            "api_key": "sk-legacy-1234567890abcdef"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/oauth/start",
+        &token,
+        json!({
+            "provider": "codex-complete",
+            "profile_id": "codex-user",
+            "redirect_uri": "http://127.0.0.1:1455/callback"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "oauth start failed: {body:?}");
+    let state = body["state"].as_str().unwrap().to_string();
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex/oauth/complete",
+        &token,
+        json!({
+            "state": state,
+            "code": "oauth-test-code"
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "oauth complete failed: {body:?}");
+    assert_eq!(
+        body["profile"]["qualified_name"],
+        "codex-complete/codex-user"
+    );
+    assert_eq!(body["profile"]["email"], "codex@example.com");
+    assert_eq!(body["profile"]["account_id"], "acct_123");
+
+    reload_runtime_config(&harness);
+
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let raw_contents = std::fs::read_to_string(config_path).unwrap();
+    let raw_config = Config::from_yaml_raw(&raw_contents).unwrap();
+    let provider = raw_config
+        .providers
+        .iter()
+        .find(|provider| provider.name == "codex-complete")
+        .unwrap();
+    assert_eq!(provider.api_key, "");
+    assert_eq!(provider.auth_profiles.len(), 2);
+    let oauth_profile = provider
+        .auth_profiles
+        .iter()
+        .find(|profile| profile.id == "codex-user")
+        .unwrap();
+    assert_eq!(oauth_profile.access_token, None);
+    assert_eq!(oauth_profile.refresh_token, None);
+    let legacy_profile = provider
+        .auth_profiles
+        .iter()
+        .find(|profile| profile.id == "codex-complete")
+        .unwrap();
+    assert_eq!(
+        legacy_profile.secret.as_deref(),
+        Some("sk-legacy-1234567890abcdef")
+    );
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["access_token"], "new-access-token");
+    assert_eq!(oauth_profiles[0]["refresh_token"], "new-refresh-token");
+}
+
+#[tokio::test]
+async fn test_refresh_codex_oauth_profile() {
+    let id_token = fake_id_token("refresh@example.com", "acct_refresh");
+    let mock = spawn_mock_codex_oauth_server(json!({
+        "access_token": "refreshed-access-token",
+        "refresh_token": "refreshed-refresh-token",
+        "id_token": id_token,
+        "expires_in": 7200
+    }))
+    .await;
+    let harness = create_test_harness_with_auth_runtime(Arc::new(
+        prism_server::auth_runtime::AuthRuntimeManager::with_codex_endpoints(
+            mock.auth_url.clone(),
+            mock.token_url.clone(),
+            "test-client".to_string(),
+        ),
+    ));
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "openai",
+            "name": "codex-refresh",
+            "auth_profiles": [
+                {
+                    "id": "codex-user",
+                    "mode": "openai-codex-oauth",
+                    "access-token": "stale-access-token",
+                    "refresh-token": "stale-refresh-token"
+                }
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/codex-refresh/codex-user/refresh",
+        &token,
+        json!({}),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "oauth refresh failed: {body:?}");
+    assert_eq!(body["profile"]["email"], "refresh@example.com");
+    assert_eq!(body["profile"]["account_id"], "acct_refresh");
+
+    reload_runtime_config(&harness);
+
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let raw_contents = std::fs::read_to_string(config_path).unwrap();
+    let raw_config = Config::from_yaml_raw(&raw_contents).unwrap();
+    let provider = raw_config
+        .providers
+        .iter()
+        .find(|provider| provider.name == "codex-refresh")
+        .unwrap();
+    assert_eq!(provider.auth_profiles[0].access_token, None);
+    assert_eq!(provider.auth_profiles[0].refresh_token, None);
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["access_token"], "refreshed-access-token");
+    assert_eq!(
+        oauth_profiles[0]["refresh_token"],
+        "refreshed-refresh-token"
+    );
 }
 
 // ===========================================================================

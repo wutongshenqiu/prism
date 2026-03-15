@@ -20,11 +20,13 @@ pub async fn responses(
 ) -> Result<Response, ProxyError> {
     let parsed = super::parse_request(&headers, &body)?;
 
-    let allowed_credentials = ctx
-        .auth_key
-        .as_ref()
-        .map(|e| e.allowed_credentials.clone())
-        .unwrap_or_default();
+    let allowed_credentials = super::merge_requested_credential(
+        ctx.auth_key
+            .as_ref()
+            .map(|e| e.allowed_credentials.clone())
+            .unwrap_or_default(),
+        parsed.auth_profile.as_deref(),
+    )?;
 
     dispatch(
         &state,

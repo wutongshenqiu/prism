@@ -28,6 +28,31 @@ export interface Provider {
   weight: number;
   region: string | null;
   upstream_presentation?: UpstreamPresentation;
+  auth_profiles?: ProviderAuthProfile[];
+}
+
+export type AuthMode = 'api-key' | 'bearer-token' | 'openai-codex-oauth';
+
+export interface ProviderAuthProfile {
+  id: string;
+  qualified_name: string;
+  mode: AuthMode;
+  header: string;
+  connected: boolean;
+  secret_masked?: string | null;
+  access_token_masked?: string | null;
+  refresh_token_present: boolean;
+  id_token_present: boolean;
+  expires_at?: string | null;
+  account_id?: string | null;
+  email?: string | null;
+  last_refresh?: string | null;
+  headers?: Record<string, string>;
+  disabled: boolean;
+  weight: number;
+  region?: string | null;
+  prefix?: string | null;
+  upstream_presentation?: UpstreamPresentation;
 }
 
 export interface ModelMapping {
@@ -63,7 +88,7 @@ export interface ProviderCreateRequest {
   format: FormatType;
   base_url?: string;
   proxy_url?: string;
-  api_key: string;
+  api_key?: string;
   prefix?: string;
   disabled: boolean;
   models: string[];
@@ -73,6 +98,7 @@ export interface ProviderCreateRequest {
   weight?: number;
   region?: string;
   upstream_presentation?: UpstreamPresentation;
+  auth_profiles?: ProviderAuthProfile[];
 }
 
 export interface ProviderUpdateRequest {
@@ -88,6 +114,63 @@ export interface ProviderUpdateRequest {
   weight?: number;
   region?: string | null;
   upstream_presentation?: UpstreamPresentation | null;
+  auth_profiles?: ProviderAuthProfile[];
+}
+
+export interface AuthProfile {
+  provider: string;
+  format: FormatType;
+  id: string;
+  qualified_name: string;
+  mode: AuthMode;
+  header: string;
+  connected: boolean;
+  secret_masked?: string | null;
+  access_token_masked?: string | null;
+  refresh_token_present: boolean;
+  id_token_present: boolean;
+  expires_at?: string | null;
+  account_id?: string | null;
+  email?: string | null;
+  last_refresh?: string | null;
+  headers?: Record<string, string>;
+  disabled: boolean;
+  weight: number;
+  region?: string | null;
+  prefix?: string | null;
+  upstream_presentation?: UpstreamPresentation;
+}
+
+export interface AuthProfileUpsertRequest {
+  provider?: string;
+  id?: string;
+  mode: AuthMode;
+  header?: string;
+  secret?: string | null;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  weight?: number;
+  region?: string | null;
+  prefix?: string | null;
+  upstream_presentation?: UpstreamPresentation;
+}
+
+export interface CodexOauthStartRequest {
+  provider: string;
+  profile_id: string;
+  redirect_uri: string;
+}
+
+export interface CodexOauthStartResponse {
+  state: string;
+  auth_url: string;
+  provider: string;
+  profile_id: string;
+  expires_in: number;
+}
+
+export interface CodexOauthCompleteResponse {
+  profile: AuthProfile;
 }
 
 // ── Provider Capabilities ──

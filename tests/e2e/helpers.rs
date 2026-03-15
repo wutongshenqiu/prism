@@ -85,6 +85,8 @@ impl TestServer {
             ),
             catalog,
             health_manager: Arc::new(HealthManager::new(Default::default())),
+            auth_runtime: Arc::new(prism_server::auth_runtime::AuthRuntimeManager::new()),
+            oauth_sessions: Arc::new(Default::default()),
         };
 
         let app_router = prism_server::build_router(state);
@@ -138,6 +140,7 @@ fn make_key_entry(
         weight: 1,
         region: None,
         credential_source: None,
+        auth_profiles: vec![],
         vertex: false,
         vertex_project: None,
         vertex_location: None,

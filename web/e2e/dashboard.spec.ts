@@ -1,34 +1,41 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
-// Vite dev server serves the SPA and proxies /api/dashboard to Prism backend
-const FRONTEND = process.env.PRISM_FRONTEND_URL || 'http://localhost:3000';
-// Prism backend for direct API calls
-const BACKEND = process.env.PRISM_BASE_URL || 'http://localhost:8317';
-const USERNAME = 'admin';
-const PASSWORD = 'test123';
+const FRONTEND = process.env.PRISM_FRONTEND_URL || 'http://127.0.0.1:4173';
+const BACKEND = process.env.PRISM_BASE_URL || 'http://127.0.0.1:18317';
+const USERNAME = process.env.PRISM_DASHBOARD_USERNAME || 'playwright';
+const PASSWORD = process.env.PRISM_DASHBOARD_PASSWORD || 'test123';
+const PROXY_KEY = process.env.PRISM_PROXY_KEY || 'sk-proxy-playwright';
 
-async function login(page: import('@playwright/test').Page) {
-  await page.goto(FRONTEND);
+async function login(page: Page) {
+  await page.goto(`${FRONTEND}/login`);
   await page.waitForSelector('#username', { timeout: 10000 });
   await page.fill('#username', USERNAME);
   await page.fill('#password', PASSWORD);
   await page.click('button[type="submit"]');
-  // Wait for navigation away from login
-  await page.waitForFunction(() => !document.querySelector('#username'), { timeout: 15000 });
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible({ timeout: 15000 });
+}
+
+async function loginApi(request: APIRequestContext) {
+  const response = await request.post(`${BACKEND}/api/dashboard/auth/login`, {
+    data: { username: USERNAME, password: PASSWORD },
+  });
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  return body.token as string;
 }
 
 test.describe('Dashboard Login', () => {
   test('shows login page', async ({ page }) => {
-    await page.goto(FRONTEND);
-    await expect(page.locator('h1')).toContainText('Prism', { timeout: 10000 });
+    await page.goto(`${FRONTEND}/login`);
+    await expect(page.getByRole('heading', { name: /Prism Gateway/i })).toBeVisible({ timeout: 10000 });
     await expect(page.locator('#username')).toBeVisible();
     await expect(page.locator('#password')).toBeVisible();
   });
 
   test('rejects wrong credentials', async ({ page }) => {
-    await page.goto(FRONTEND);
+    await page.goto(`${FRONTEND}/login`);
     await page.waitForSelector('#username', { timeout: 10000 });
-    await page.fill('#username', 'admin');
+    await page.fill('#username', USERNAME);
     await page.fill('#password', 'wrongpassword');
     await page.click('button[type="submit"]');
     await expect(page.locator('.login-error')).toBeVisible({ timeout: 10000 });
@@ -36,7 +43,7 @@ test.describe('Dashboard Login', () => {
 
   test('successful login navigates to dashboard', async ({ page }) => {
     await login(page);
-    await expect(page.locator('body')).toContainText(/Total Requests|Overview|Dashboard/i, { timeout: 15000 });
+    await expect(page.locator('.metric-card')).toHaveCount(6);
   });
 });
 
@@ -47,66 +54,249 @@ test.describe('Dashboard Pages', () => {
 
   test('overview page shows metric cards', async ({ page }) => {
     await expect(page.locator('.metric-card').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('body')).toContainText(/Total Requests|Success Rate|Avg Latency/i);
   });
 
-  test('providers page lists providers', async ({ page }) => {
+  test('providers page renders managed auth profile summary', async ({ page }) => {
     await page.getByRole('link', { name: /providers/i }).click();
-    await expect(page.locator('body')).toContainText(/bailian/i, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
+    await expect(page.locator('body')).toContainText('codex-gateway');
+    await expect(page.getByTestId('provider-auth-profiles-codex-gateway')).toContainText('Auth profiles: api, codex-user');
   });
 
-  test('request logs page shows entries', async ({ page }) => {
-    await page.getByRole('link', { name: /request/i }).click();
-    await expect(page.locator('body')).toContainText(/qwen|Request Logs/i, { timeout: 15000 });
+  test('editing a managed provider shows warning and presentation preview', async ({ page }) => {
+    await page.getByRole('link', { name: /providers/i }).click();
+    await page.getByTitle('Edit').first().click();
+    await expect(page.locator('.alert.alert-warning')).toContainText('This provider uses managed auth profiles');
+    await expect(page.locator('.modal-body')).toContainText('codex-user');
+    await page.getByRole('button', { name: /preview presentation/i }).click();
+    await expect(page.locator('.modal-body')).toContainText(/Profile:\s+codex-cli/i);
+    await expect(page.locator('.modal-body')).toContainText(/user-agent:\s+Codex\/1.0.0/i);
+    await page.getByRole('button', { name: /manage auth profiles/i }).click();
+    await expect(page).toHaveURL(/\/auth-profiles\?provider=codex-gateway/);
+    await expect(page.getByRole('heading', { name: 'Auth Profiles' })).toBeVisible();
+    await expect(page.getByTestId('auth-profile-row-codex-gateway/api')).toBeVisible();
+  });
+
+  test('providers page can create and delete a legacy api-key provider', async ({ page }) => {
+    const providerName = `playwright-temp-${Date.now()}`;
+    page.once('dialog', (dialog) => dialog.accept());
+
+    await page.getByRole('link', { name: /providers/i }).click();
+    await page.getByRole('button', { name: /add provider/i }).click();
+    await page.locator('input[placeholder="e.g., deepseek, openai-prod"]').fill(providerName);
+    await page.locator('input[placeholder="sk-..."]').fill('sk-temp-provider');
+    await page.locator('input[placeholder="gpt-4o, gpt-4o-mini, gpt-3.5-turbo"]').fill('gpt-4.1-mini');
+    await page.getByRole('button', { name: /^create$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Provider "${providerName}" created successfully.`);
+    await expect(page.locator('tr', { hasText: providerName })).toBeVisible();
+
+    const row = page.locator('tr', { hasText: providerName });
+    await row.getByTitle('Delete').click();
+
+    await expect(page.locator('body')).toContainText(`Provider "${providerName}" deleted successfully.`);
+    await expect(page.locator('tr', { hasText: providerName })).toHaveCount(0);
+  });
+
+  test('request logs page loads with empty-state friendly copy', async ({ page }) => {
+    await page.getByRole('link', { name: /requests/i }).click();
+    await expect(page.getByRole('heading', { name: 'Request Logs' })).toBeVisible();
+    await expect(page.locator('body')).toContainText(/0 total requests|No request logs/i);
+  });
+
+  test('auth profiles page can create, edit, and delete an api-key profile', async ({ page }) => {
+    const profileId = `pw-api-${Date.now()}`;
+    page.once('dialog', (dialog) => dialog.accept());
+
+    await page.getByRole('link', { name: /auth profiles/i }).click();
+    await expect(page.getByRole('heading', { name: 'Auth Profiles' })).toBeVisible();
+
+    await page.getByRole('button', { name: /add auth profile/i }).click();
+    await page.locator('.modal select').first().selectOption('claude-gateway');
+    await page.getByPlaceholder('e.g. billing, oauth-user').fill(profileId);
+    await page.getByPlaceholder('sk-...').fill('sk-auth-profile-playwright');
+    await page.getByRole('button', { name: /^create$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" created.`);
+    const row = page.getByTestId(`auth-profile-row-claude-gateway/${profileId}`);
+    await expect(row).toBeVisible();
+    await expect(row).toContainText('Connected');
+
+    await row.getByTitle('Edit').click();
+    await page.locator('.modal input[type="number"]').fill('3');
+    await page.getByPlaceholder('optional').nth(1).fill('claude/');
+    await page.getByRole('button', { name: /^update$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" updated.`);
+    await expect(row).toContainText('weight 3');
+    await expect(row).toContainText('claude/');
+
+    await row.getByTitle('Delete').click();
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" deleted.`);
+    await expect(page.getByTestId(`auth-profile-row-claude-gateway/${profileId}`)).toHaveCount(0);
+  });
+
+  test('auth profiles page can connect, refresh, and delete a codex oauth profile', async ({ page }) => {
+    const profileId = `pw-oauth-${Date.now()}`;
+    page.once('dialog', (dialog) => dialog.accept());
+
+    await page.getByRole('link', { name: /auth profiles/i }).click();
+    await page.getByRole('button', { name: /add auth profile/i }).click();
+    await page.locator('.modal select').first().selectOption('codex-gateway');
+    await page.getByPlaceholder('e.g. billing, oauth-user').fill(profileId);
+    await page.locator('.modal select').nth(1).selectOption('openai-codex-oauth');
+    await page.getByRole('button', { name: /^create$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Auth profile "codex-gateway/${profileId}" created.`);
+    let row = page.getByTestId(`auth-profile-row-codex-gateway/${profileId}`);
+    await expect(row).toContainText('Disconnected');
+
+    await Promise.all([
+      page.waitForURL(/\/auth-profiles\/callback/),
+      row.getByTitle('Connect OAuth').click(),
+    ]);
+    await page.waitForURL((url) => url.pathname === '/auth-profiles');
+    await expect(page.getByRole('heading', { name: 'Auth Profiles' })).toBeVisible();
+    await expect(page.locator('body')).toContainText(`OAuth login completed for ${profileId}.`);
+
+    row = page.getByTestId(`auth-profile-row-codex-gateway/${profileId}`);
+    await expect(row).toContainText('Connected');
+    await expect(row).toContainText('oauth-playwright@example.com');
+
+    await row.getByTitle('Refresh token').click();
+    await expect(page.locator('body')).toContainText(`Auth profile "codex-gateway/${profileId}" refreshed.`);
+    await expect(row).toContainText('Connected');
+
+    await row.getByTitle('Delete').click();
+    await expect(page.locator('body')).toContainText(`Auth profile "codex-gateway/${profileId}" deleted.`);
+    await expect(page.getByTestId(`auth-profile-row-codex-gateway/${profileId}`)).toHaveCount(0);
   });
 
   test('routing page loads', async ({ page }) => {
     await page.getByRole('link', { name: /routing/i }).click();
-    await expect(page.locator('body')).toContainText(/routing|profile/i, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'Routing', exact: true })).toBeVisible();
+    await expect(page.locator('body')).toContainText(/balanced|lowest-cost|lowest-latency|stable/i);
   });
 
   test('system page shows health info', async ({ page }) => {
     await page.getByRole('link', { name: /system/i }).click();
-    await expect(page.locator('body')).toContainText(/uptime|version|system/i, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'System' })).toBeVisible();
+    await expect(page.locator('body')).toContainText(/Uptime|Version|Provider Health/i);
+    await expect(page.locator('body')).toContainText(/codex-gateway|claude-gateway/i);
   });
 });
 
-test.describe('API E2E', () => {
-  test('non-streaming chat completion', async ({ request }) => {
-    const resp = await request.post(`${BACKEND}/v1/chat/completions`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: {
-        model: 'qwen3-coder-plus',
-        messages: [{ role: 'user', content: 'Say pong' }],
-        max_tokens: 10,
-      },
+test.describe('Dashboard API', () => {
+  test('dashboard auth-profiles endpoint returns nested auth profile state', async ({ request }) => {
+    const token = await loginApi(request);
+    const resp = await request.get(`${BACKEND}/api/dashboard/auth-profiles`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     expect(resp.status()).toBe(200);
     const body = await resp.json();
-    expect(body.choices).toBeDefined();
-    expect(body.choices[0].message.content).toBeTruthy();
+    expect(body.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: 'codex-gateway',
+          id: 'api',
+          mode: 'api-key',
+        }),
+        expect.objectContaining({
+          provider: 'codex-gateway',
+          id: 'codex-user',
+          mode: 'openai-codex-oauth',
+          refresh_token_present: true,
+        }),
+      ]),
+    );
   });
 
-  test('streaming chat completion', async ({ request }) => {
-    const resp = await request.post(`${BACKEND}/v1/chat/completions`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: {
-        model: 'qwen3-coder-plus',
-        messages: [{ role: 'user', content: 'Say pong' }],
-        max_tokens: 10,
-        stream: true,
-      },
+  test('dashboard providers endpoint returns auth profile summaries', async ({ request }) => {
+    const token = await loginApi(request);
+    const resp = await request.get(`${BACKEND}/api/dashboard/providers`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     expect(resp.status()).toBe(200);
-    const text = await resp.text();
-    expect(text).toContain('data:');
-    expect(text).toContain('[DONE]');
+    const body = await resp.json();
+    expect(body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'codex-gateway',
+          auth_profiles: expect.arrayContaining([
+            expect.objectContaining({ id: 'api', mode: 'api-key' }),
+            expect.objectContaining({ id: 'codex-user', mode: 'openai-codex-oauth' }),
+          ]),
+        }),
+      ]),
+    );
   });
 
-  test('models endpoint', async ({ request }) => {
-    const resp = await request.get(`${BACKEND}/v1/models`);
+  test('codex oauth lifecycle endpoints start, complete, and refresh a managed auth profile', async ({ request }) => {
+    const token = await loginApi(request);
+
+    const startResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex/oauth/start`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        provider: 'codex-gateway',
+        profile_id: 'codex-session',
+        redirect_uri: 'http://127.0.0.1/callback',
+      },
+    });
+    expect(startResp.status()).toBe(200);
+    const startBody = await startResp.json();
+    expect(startBody.profile_id).toBe('codex-session');
+    expect(startBody.auth_url).toContain('playwright-codex-client');
+    expect(startBody.state).toBeTruthy();
+
+    const completeResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex/oauth/complete`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        state: startBody.state,
+        code: 'playwright-code',
+      },
+    });
+    expect(completeResp.status()).toBe(200);
+    const completeBody = await completeResp.json();
+    expect(completeBody.profile).toEqual(
+      expect.objectContaining({
+        provider: 'codex-gateway',
+        id: 'codex-session',
+        mode: 'openai-codex-oauth',
+        refresh_token_present: true,
+        email: 'oauth-playwright@example.com',
+      }),
+    );
+
+    const refreshResp = await request.post(`${BACKEND}/api/dashboard/auth-profiles/codex-gateway/codex-session/refresh`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(refreshResp.status()).toBe(200);
+    const refreshBody = await refreshResp.json();
+    expect(refreshBody.profile).toEqual(
+      expect.objectContaining({
+        provider: 'codex-gateway',
+        id: 'codex-session',
+        mode: 'openai-codex-oauth',
+        refresh_token_present: true,
+        account_id: 'acct_refresh',
+      }),
+    );
+  });
+
+  test('models endpoint exposes configured models for proxy keys', async ({ request }) => {
+    const resp = await request.get(`${BACKEND}/v1/models`, {
+      headers: { 'x-api-key': PROXY_KEY },
+    });
     expect(resp.status()).toBe(200);
     const body = await resp.json();
-    expect(body.data.some((m: any) => m.id === 'qwen3-coder-plus')).toBe(true);
+    expect(body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'gpt-5' }),
+        expect.objectContaining({ id: 'gpt-5-mini' }),
+        expect.objectContaining({ id: 'sonnet' }),
+      ]),
+    );
   });
 
   test('health endpoint', async ({ request }) => {

@@ -24,9 +24,9 @@ impl OpenAICompatExecutor {
         let client = common::build_client(auth, self.global_proxy.as_deref(), &self.client_pool)?;
         let req = client
             .post(url)
-            .header("authorization", format!("Bearer {}", auth.api_key))
             .header("content-type", "application/json")
             .body(body.to_vec());
+        let req = common::apply_auth(req, auth);
         Ok(common::apply_headers(req, request_headers, auth))
     }
 }

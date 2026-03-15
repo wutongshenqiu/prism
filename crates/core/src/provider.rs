@@ -1,3 +1,4 @@
+use crate::auth_profile::{AuthHeaderKind, AuthMode, SharedOAuthTokenState};
 use crate::circuit_breaker::{CircuitBreakerPolicy, CircuitState};
 use crate::error::ProxyError;
 use async_trait::async_trait;
@@ -43,6 +44,14 @@ pub struct AuthRecord {
     pub wire_api: WireApi,
     /// Human-readable name for this credential.
     pub credential_name: Option<String>,
+    /// Stable auth profile id for this credential.
+    pub auth_profile_id: String,
+    /// Auth material mode.
+    pub auth_mode: AuthMode,
+    /// Header policy for sending auth upstream.
+    pub auth_header: AuthHeaderKind,
+    /// Shared OAuth token state for refreshable credentials.
+    pub oauth_state: Option<SharedOAuthTokenState>,
     /// Weight for weighted round-robin routing (default: 1).
     pub weight: u32,
     /// Region for geo-aware routing.
@@ -64,6 +73,8 @@ impl std::fmt::Debug for AuthRecord {
             .field("provider", &self.provider)
             .field("provider_name", &self.provider_name)
             .field("api_key", &"***")
+            .field("auth_profile_id", &self.auth_profile_id)
+            .field("auth_mode", &self.auth_mode)
             .field("circuit_breaker_state", &self.circuit_state())
             .finish()
     }
@@ -88,6 +99,44 @@ impl AuthRecord {
     /// Resolve base URL using the format's canonical default.
     pub fn resolved_base_url(&self) -> String {
         self.base_url_or_default(self.provider.default_base_url())
+    }
+
+    /// Resolve the current credential secret.
+    pub fn current_secret(&self) -> String {
+        if let Some(state) = &self.oauth_state
+            && let Ok(guard) = state.read()
+            && !guard.access_token.is_empty()
+        {
+            return guard.access_token.clone();
+        }
+        self.api_key.clone()
+    }
+
+    /// Resolve the effective auth header kind for the current credential.
+    pub fn resolved_auth_header_kind(&self) -> AuthHeaderKind {
+        match self.auth_header {
+            AuthHeaderKind::Auto => match self.auth_mode {
+                AuthMode::BearerToken | AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+                AuthMode::ApiKey => match self.provider {
+                    Format::OpenAI => AuthHeaderKind::Bearer,
+                    Format::Gemini => {
+                        if self.vertex {
+                            AuthHeaderKind::Bearer
+                        } else {
+                            AuthHeaderKind::XGoogApiKey
+                        }
+                    }
+                    Format::Claude => {
+                        if self.resolved_base_url().contains("anthropic.com") {
+                            AuthHeaderKind::XApiKey
+                        } else {
+                            AuthHeaderKind::Bearer
+                        }
+                    }
+                },
+            },
+            explicit => explicit,
+        }
     }
 
     /// Resolve the effective proxy URL (entry-level → global fallback).

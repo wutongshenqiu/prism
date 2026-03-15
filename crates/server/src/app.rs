@@ -30,6 +30,7 @@ pub struct Application {
     credential_router: Arc<CredentialRouter>,
     catalog: Arc<ProviderCatalog>,
     health_manager: Arc<HealthManager>,
+    auth_runtime: Arc<crate::auth_runtime::AuthRuntimeManager>,
     rate_limiter: Arc<CompositeRateLimiter>,
     cost_calculator: Arc<prism_core::cost::CostCalculator>,
     http_client_pool: Arc<prism_core::proxy::HttpClientPool>,
@@ -89,7 +90,12 @@ impl Application {
             .get(&config.routing.default_profile)
             .map(|p| p.credential_policy.strategy)
             .unwrap_or_default();
+        let auth_runtime = Arc::new(crate::auth_runtime::AuthRuntimeManager::new());
+        auth_runtime
+            .initialize(&args.config_path, &config)
+            .map_err(anyhow::Error::msg)?;
         let credential_router = Arc::new(CredentialRouter::new(default_cred_strategy));
+        credential_router.set_oauth_states(auth_runtime.oauth_snapshot());
         credential_router.update_from_config(&config);
 
         // Build catalog and health manager (from same credential data as router)
@@ -155,6 +161,8 @@ impl Application {
             login_limiter: Arc::new(crate::handler::dashboard::auth::LoginRateLimiter::new()),
             catalog: catalog.clone(),
             health_manager: health_manager.clone(),
+            auth_runtime: auth_runtime.clone(),
+            oauth_sessions: Arc::new(dashmap::DashMap::new()),
         };
         let app_router = crate::build_router(state);
 
@@ -168,6 +176,7 @@ impl Application {
             credential_router,
             catalog,
             health_manager,
+            auth_runtime,
             rate_limiter,
             cost_calculator,
             http_client_pool,
@@ -187,6 +196,7 @@ impl Application {
             credential_router,
             catalog,
             health_manager: _health_manager,
+            auth_runtime,
             rate_limiter,
             cost_calculator,
             http_client_pool,
@@ -202,7 +212,12 @@ impl Application {
         let watcher_rate_limiter = rate_limiter.clone();
         let watcher_cost_calculator = cost_calculator.clone();
         let watcher_pool = http_client_pool.clone();
+        let watcher_auth_runtime = auth_runtime.clone();
         let _watcher = ConfigWatcher::start(config_path.clone(), config.clone(), move |new_cfg| {
+            if let Err(err) = watcher_auth_runtime.sync_with_config(new_cfg) {
+                tracing::error!("Auth runtime sync failed on config reload: {err}");
+            }
+            watcher_router.set_oauth_states(watcher_auth_runtime.oauth_snapshot());
             watcher_router.update_from_config(new_cfg);
             watcher_catalog.update_from_credentials(&watcher_router.credential_map());
             watcher_rate_limiter.update_config(&new_cfg.rate_limit);
@@ -225,11 +240,16 @@ impl Application {
         let reload_cost_calculator = cost_calculator.clone();
         let reload_pool = http_client_pool;
         let reload_path = config_path.clone();
+        let reload_auth_runtime = auth_runtime.clone();
         let reload_lifecycle: Arc<dyn Lifecycle> = Arc::from(prism_lifecycle::detect_lifecycle());
         let reload_fn = move || {
             reload_lifecycle.on_reloading();
             match Config::load(&reload_path) {
                 Ok(new_cfg) => {
+                    if let Err(err) = reload_auth_runtime.sync_with_config(&new_cfg) {
+                        tracing::error!("Auth runtime sync failed on SIGHUP reload: {err}");
+                    }
+                    reload_router.set_oauth_states(reload_auth_runtime.oauth_snapshot());
                     reload_router.update_from_config(&new_cfg);
                     reload_catalog.update_from_credentials(&reload_router.credential_map());
                     reload_rate_limiter.update_config(&new_cfg.rate_limit);

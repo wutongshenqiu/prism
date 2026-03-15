@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 
 const mockProvidersApi = vi.hoisted(() => ({
   list: vi.fn(),
@@ -16,6 +17,14 @@ vi.mock('../../services/api', () => ({
 }));
 
 const { default: Providers } = await import('../../pages/Providers');
+
+function renderProviders() {
+  return render(
+    <MemoryRouter>
+      <Providers />
+    </MemoryRouter>
+  );
+}
 
 describe('Providers page', () => {
   beforeEach(() => {
@@ -43,7 +52,7 @@ describe('Providers page', () => {
       data: { message: 'Provider created successfully' },
     });
 
-    render(<Providers />);
+    renderProviders();
 
     await screen.findByText('No providers configured');
     await user.click(screen.getByRole('button', { name: /add first provider/i }));
@@ -82,7 +91,7 @@ describe('Providers page', () => {
       data: { message: 'Provider created successfully' },
     });
 
-    render(<Providers />);
+    renderProviders();
 
     await screen.findByText('No providers configured');
     await user.click(screen.getByRole('button', { name: /add first provider/i }));

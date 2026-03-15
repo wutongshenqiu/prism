@@ -19,6 +19,9 @@ pub struct RouteRequestFeatures {
     pub stream: bool,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Restrict routing to a set of credential names or glob patterns.
+    #[serde(default)]
+    pub allowed_credentials: Vec<String>,
     /// Capabilities required by the canonical request.
     /// When set, the planner filters out providers that cannot satisfy them.
     #[serde(default, skip_serializing_if = "Option::is_none")]

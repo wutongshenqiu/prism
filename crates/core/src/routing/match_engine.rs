@@ -183,6 +183,7 @@ mod tests {
             region: None,
             stream: false,
             headers: BTreeMap::new(),
+            allowed_credentials: Vec::new(),
             required_capabilities: None,
         }
     }

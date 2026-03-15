@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use prism_core::auth_profile::{AuthHeaderKind, AuthProfileEntry, OAuthTokenState};
 use prism_core::circuit_breaker::{
     CircuitBreakerConfig, CircuitBreakerPolicy, CircuitState, NoopCircuitBreaker,
     ThreeStateCircuitBreaker,
@@ -27,15 +28,18 @@ pub fn check_credential_access(patterns: &[String], credential_name: Option<&str
     let Some(name) = credential_name else {
         return false;
     };
-    patterns
-        .iter()
-        .any(|pattern| prism_core::glob::glob_match(pattern, name))
+    let short_name = name.rsplit('/').next().unwrap_or(name);
+    patterns.iter().any(|pattern| {
+        prism_core::glob::glob_match(pattern, name)
+            || prism_core::glob::glob_match(pattern, short_name)
+    })
 }
 
 pub struct CredentialRouter {
     credentials: RwLock<HashMap<String, Vec<AuthRecord>>>,
     /// Index: credential_id → (provider_name, index in Vec) for O(1) lookup.
     credential_index: RwLock<HashMap<String, (String, usize)>>,
+    runtime_oauth_states: RwLock<HashMap<String, OAuthTokenState>>,
     counters: RwLock<HashMap<String, AtomicUsize>>,
     strategy: RwLock<CredentialStrategy>,
     /// EWMA latency per credential_id (ms).
@@ -53,12 +57,19 @@ impl CredentialRouter {
         Self {
             credentials: RwLock::new(HashMap::new()),
             credential_index: RwLock::new(HashMap::new()),
+            runtime_oauth_states: RwLock::new(HashMap::new()),
             counters: RwLock::new(HashMap::new()),
             strategy: RwLock::new(strategy),
             latency_ewma: RwLock::new(HashMap::new()),
             ewma_alpha: RwLock::new(0.3),
             cb_config: RwLock::new(CircuitBreakerConfig::default()),
             cooldowns: DashMap::new(),
+        }
+    }
+
+    pub fn set_oauth_states(&self, states: HashMap<String, OAuthTokenState>) {
+        if let Ok(mut guard) = self.runtime_oauth_states.write() {
+            *guard = states;
         }
     }
 
@@ -249,11 +260,18 @@ impl CredentialRouter {
 
         let cb_config = config.circuit_breaker.clone();
 
+        let runtime_oauth_states = self
+            .runtime_oauth_states
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
         let mut map: HashMap<String, Vec<AuthRecord>> = HashMap::new();
 
         for entry in &config.providers {
-            let auth = build_auth_record(entry, &cb_config);
-            map.entry(entry.name.clone()).or_default().push(auth);
+            for profile in entry.expanded_auth_profiles() {
+                let auth = build_auth_record(entry, &profile, &cb_config, &runtime_oauth_states);
+                map.entry(entry.name.clone()).or_default().push(auth);
+            }
         }
 
         if let Ok(mut creds) = self.credentials.write() {
@@ -261,10 +279,22 @@ impl CredentialRouter {
             for (provider_name, new_entries) in map.iter_mut() {
                 if let Some(old_entries) = creds.get(provider_name) {
                     for new_auth in new_entries.iter_mut() {
-                        if let Some(old_auth) =
-                            old_entries.iter().find(|o| o.api_key == new_auth.api_key)
+                        if let Some(old_auth) = old_entries
+                            .iter()
+                            .find(|o| o.auth_profile_id == new_auth.auth_profile_id)
                         {
                             new_auth.circuit_breaker = old_auth.circuit_breaker.clone();
+                            let oauth_key = format!("{provider_name}/{}", new_auth.auth_profile_id);
+                            if let Some(runtime_state) = runtime_oauth_states.get(&oauth_key) {
+                                if let Some(shared) = old_auth.oauth_state.clone() {
+                                    if let Ok(mut guard) = shared.write() {
+                                        *guard = runtime_state.clone();
+                                    }
+                                    new_auth.oauth_state = Some(shared);
+                                }
+                            } else {
+                                new_auth.oauth_state = old_auth.oauth_state.clone();
+                            }
                         }
                     }
                 }
@@ -367,7 +397,9 @@ impl CredentialRouter {
 
 fn build_auth_record(
     entry: &prism_core::config::ProviderKeyEntry,
+    profile: &AuthProfileEntry,
     cb_config: &CircuitBreakerConfig,
+    runtime_oauth_states: &HashMap<String, OAuthTokenState>,
 ) -> AuthRecord {
     let models = entry
         .models
@@ -384,18 +416,45 @@ fn build_auth_record(
         Arc::new(NoopCircuitBreaker)
     };
 
+    let mut headers = entry.headers.clone();
+    for (k, v) in &profile.headers {
+        headers.insert(k.clone(), v.clone());
+    }
+
+    let use_profile_presentation = profile.upstream_presentation.profile
+        != prism_core::presentation::ProfileKind::Native
+        || !profile.upstream_presentation.custom_headers.is_empty()
+        || profile.upstream_presentation.strict_mode
+        || !profile.upstream_presentation.sensitive_words.is_empty()
+        || profile.upstream_presentation.cache_user_id;
+
+    let oauth_key = format!("{}/{}", entry.name, profile.id);
+    let runtime_oauth_state = runtime_oauth_states.get(&oauth_key).cloned();
+    let effective_oauth_state = runtime_oauth_state
+        .clone()
+        .or_else(|| OAuthTokenState::from_profile(profile));
+
     AuthRecord {
         id: uuid::Uuid::new_v4().to_string(),
         provider: entry.format,
         provider_name: entry.name.clone(),
-        api_key: entry.api_key.clone(),
+        api_key: profile
+            .secret
+            .clone()
+            .or_else(|| {
+                effective_oauth_state
+                    .as_ref()
+                    .map(|state| state.access_token.clone())
+            })
+            .or_else(|| profile.access_token.clone())
+            .unwrap_or_default(),
         base_url: entry.base_url.clone(),
         proxy_url: entry.proxy_url.clone(),
-        headers: entry.headers.clone(),
+        headers,
         models,
         excluded_models: entry.excluded_models.clone(),
-        prefix: entry.prefix.clone(),
-        disabled: entry.disabled,
+        prefix: profile.prefix.clone().or_else(|| entry.prefix.clone()),
+        disabled: entry.disabled || profile.disabled,
         circuit_breaker,
         cloak: if matches!(entry.format, Format::Claude) {
             Some(entry.cloak.clone())
@@ -403,10 +462,23 @@ fn build_auth_record(
             None
         },
         wire_api: entry.wire_api,
-        credential_name: Some(entry.name.clone()),
-        weight: entry.weight.max(1),
-        region: entry.region.clone(),
-        upstream_presentation: entry.upstream_presentation.clone(),
+        credential_name: Some(format!("{}/{}", entry.name, profile.id)),
+        auth_profile_id: profile.id.clone(),
+        auth_mode: profile.mode,
+        auth_header: match profile.header {
+            AuthHeaderKind::Auto => {
+                profile.resolved_header_kind(entry.format, entry.vertex, entry.base_url.as_deref())
+            }
+            explicit => explicit,
+        },
+        oauth_state: effective_oauth_state.map(|state| Arc::new(RwLock::new(state))),
+        weight: profile.weight.max(1),
+        region: profile.region.clone().or_else(|| entry.region.clone()),
+        upstream_presentation: if use_profile_presentation {
+            profile.upstream_presentation.clone()
+        } else {
+            entry.upstream_presentation.clone()
+        },
         vertex: entry.vertex,
         vertex_project: entry.vertex_project.clone(),
         vertex_location: entry.vertex_location.clone(),
@@ -416,6 +488,7 @@ fn build_auth_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prism_core::auth_profile::AuthMode;
     use prism_core::routing::config::CredentialStrategy;
 
     /// Build a test AuthRecord with sensible defaults.
@@ -442,6 +515,10 @@ mod tests {
             cloak: None,
             wire_api: Default::default(),
             credential_name: Some(id.to_string()),
+            auth_profile_id: id.to_string(),
+            auth_mode: AuthMode::ApiKey,
+            auth_header: AuthHeaderKind::Auto,
+            oauth_state: None,
             weight: 1,
             region: None,
             upstream_presentation: Default::default(),
@@ -742,6 +819,13 @@ mod tests {
         let patterns = vec!["exact-key".to_string()];
         assert!(check_credential_access(&patterns, Some("exact-key")));
         assert!(!check_credential_access(&patterns, Some("exact-key-2")));
+    }
+
+    #[test]
+    fn test_credential_access_matches_qualified_name_suffix() {
+        let patterns = vec!["billing".to_string()];
+        assert!(check_credential_access(&patterns, Some("openai/billing")));
+        assert!(!check_credential_access(&patterns, Some("openai/personal")));
     }
 
     // === allowed_credentials filtering in pick ===

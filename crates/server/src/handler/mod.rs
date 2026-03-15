@@ -28,6 +28,8 @@ pub(crate) struct ParsedRequest {
     pub user_agent: Option<String>,
     /// Debug mode: return routing details in response headers.
     pub debug: bool,
+    /// Optional request-scoped auth profile pin.
+    pub auth_profile: Option<String>,
 }
 
 pub(crate) fn parse_request(
@@ -68,13 +70,51 @@ pub(crate) fn parse_request(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v == "true" || v == "1");
 
+    let auth_profile = headers
+        .get("x-prism-auth-profile")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string);
+
     Ok(ParsedRequest {
         model,
         models,
         stream,
         user_agent,
         debug,
+        auth_profile,
     })
+}
+
+pub(crate) fn merge_requested_credential(
+    mut allowed_credentials: Vec<String>,
+    requested_credential: Option<&str>,
+) -> Result<Vec<String>, ProxyError> {
+    let Some(requested) = requested_credential else {
+        return Ok(allowed_credentials);
+    };
+
+    if allowed_credentials.is_empty() {
+        return Ok(vec![requested.to_string()]);
+    }
+
+    let authorized = allowed_credentials.iter().any(|pattern| {
+        prism_core::glob::glob_match(pattern, requested)
+            || prism_core::glob::glob_match(
+                pattern,
+                requested.rsplit('/').next().unwrap_or(requested),
+            )
+    });
+    if !authorized {
+        return Err(ProxyError::Auth(format!(
+            "requested auth profile '{requested}' is not allowed for this API key"
+        )));
+    }
+
+    allowed_credentials.clear();
+    allowed_credentials.push(requested.to_string());
+    Ok(allowed_credentials)
 }
 
 /// Shared dispatch logic for chat_completions and messages handlers.
@@ -88,11 +128,13 @@ pub(crate) async fn dispatch_api_request(
 ) -> Result<Response, ProxyError> {
     let parsed = parse_request(headers, &body)?;
 
-    let allowed_credentials = ctx
-        .auth_key
-        .as_ref()
-        .map(|e| e.allowed_credentials.clone())
-        .unwrap_or_default();
+    let allowed_credentials = merge_requested_credential(
+        ctx.auth_key
+            .as_ref()
+            .map(|e| e.allowed_credentials.clone())
+            .unwrap_or_default(),
+        parsed.auth_profile.as_deref(),
+    )?;
 
     dispatch(
         state,
@@ -240,5 +282,29 @@ mod tests {
         let headers = HeaderMap::new();
         let parsed = parse_request(&headers, &body).unwrap();
         assert!(parsed.models.is_none());
+    }
+
+    #[test]
+    fn test_parse_request_auth_profile_pin() {
+        let body = make_body(serde_json::json!({"model": "gpt-4"}));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-prism-auth-profile", "openai/billing".parse().unwrap());
+        let parsed = parse_request(&headers, &body).unwrap();
+        assert_eq!(parsed.auth_profile.as_deref(), Some("openai/billing"));
+    }
+
+    #[test]
+    fn test_merge_requested_credential_with_allowlist() {
+        let allowed =
+            merge_requested_credential(vec!["openai/*".to_string()], Some("openai/billing"))
+                .unwrap();
+        assert_eq!(allowed, vec!["openai/billing".to_string()]);
+    }
+
+    #[test]
+    fn test_merge_requested_credential_rejects_unauthorized_pin() {
+        let err = merge_requested_credential(vec!["openai/*".to_string()], Some("claude/personal"))
+            .unwrap_err();
+        assert!(err.to_string().contains("not allowed"));
     }
 }

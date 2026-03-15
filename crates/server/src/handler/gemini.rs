@@ -65,11 +65,19 @@ async fn dispatch_gemini(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v == "true" || v == "1");
 
-    let allowed_credentials = ctx
-        .auth_key
-        .as_ref()
-        .map(|e| e.allowed_credentials.clone())
-        .unwrap_or_default();
+    let requested_credential = headers
+        .get("x-prism-auth-profile")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    let allowed_credentials = super::merge_requested_credential(
+        ctx.auth_key
+            .as_ref()
+            .map(|e| e.allowed_credentials.clone())
+            .unwrap_or_default(),
+        requested_credential,
+    )?;
 
     dispatch(
         state,

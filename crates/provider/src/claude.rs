@@ -36,15 +36,8 @@ impl ClaudeExecutor {
             .header("content-type", "application/json")
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("anthropic-beta", ANTHROPIC_BETA);
-
-        // Determine whether to use x-api-key (for anthropic.com) or Bearer auth.
-        let base_url = auth.base_url_or_default(DEFAULT_BASE_URL);
-        if base_url.contains("anthropic.com") {
-            req = req.header("x-api-key", &auth.api_key);
-        } else {
-            req = req.header("authorization", format!("Bearer {}", auth.api_key));
-        }
-
+        let _base_url = auth.base_url_or_default(DEFAULT_BASE_URL);
+        req = common::apply_auth(req, auth);
         req = common::apply_headers(req, &request.headers, auth);
         Ok(req.body(request.payload.to_vec()))
     }

@@ -4,8 +4,10 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use prism_core::auth_profile::AuthHeaderKind;
 use prism_core::context::RequestContext;
 use prism_core::error::ProxyError;
+use prism_core::provider::Format;
 
 /// POST /v1/messages/count_tokens — Proxy to Claude's token counting endpoint.
 pub async fn count_tokens(
@@ -32,22 +34,33 @@ pub async fn count_tokens(
         )));
     }
 
-    let allowed_credentials = ctx
-        .auth_key
-        .as_ref()
-        .map(|e| e.allowed_credentials.clone())
-        .unwrap_or_default();
+    let requested_credential = headers
+        .get("x-prism-auth-profile")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let allowed_credentials = super::merge_requested_credential(
+        ctx.auth_key
+            .as_ref()
+            .map(|e| e.allowed_credentials.clone())
+            .unwrap_or_default(),
+        requested_credential,
+    )?;
 
-    // Pick a Claude credential that supports this model
     let auth = state
         .router
-        .pick(
-            "claude",
-            model,
-            &[],
-            ctx.client_region.as_deref(),
-            &allowed_credentials,
-        )
+        .resolve_providers(model)
+        .into_iter()
+        .filter(|(_, format)| *format == Format::Claude)
+        .find_map(|(provider_name, _)| {
+            state.router.pick(
+                &provider_name,
+                model,
+                &[],
+                ctx.client_region.as_deref(),
+                &allowed_credentials,
+            )
+        })
         .ok_or_else(|| ProxyError::NoCredentials {
             provider: "claude".into(),
             model: model.to_string(),
@@ -74,11 +87,17 @@ pub async fn count_tokens(
         .header("content-type", "application/json")
         .header("anthropic-version", "2023-06-01");
 
-    // Auth: x-api-key for anthropic.com, Bearer for proxied endpoints
-    if base_url.contains("anthropic.com") {
-        req = req.header("x-api-key", &auth.api_key);
-    } else {
-        req = req.header("authorization", format!("Bearer {}", auth.api_key));
+    let secret = auth.current_secret();
+    match auth.resolved_auth_header_kind() {
+        AuthHeaderKind::XApiKey => {
+            req = req.header("x-api-key", secret);
+        }
+        AuthHeaderKind::XGoogApiKey => {
+            req = req.header("x-goog-api-key", secret);
+        }
+        AuthHeaderKind::Bearer | AuthHeaderKind::Auto => {
+            req = req.header("authorization", format!("Bearer {}", secret));
+        }
     }
 
     // Forward anthropic-beta if present in incoming headers

@@ -155,8 +155,13 @@ impl<'a> ExecutionController<'a> {
                 provider: target_format.as_str().to_string(),
                 model: attempt.model.clone(),
             })?;
+        self.state
+            .auth_runtime
+            .prepare_auth(self.state, &auth)
+            .await?;
 
         let actual_model = auth.resolve_model_id(&attempt.model);
+        let auth_secret = auth.current_secret();
 
         let executor = self
             .state
@@ -222,7 +227,7 @@ impl<'a> ExecutionController<'a> {
             target_format,
             model: &actual_model,
             user_agent: req.user_agent.as_deref(),
-            api_key: &auth.api_key,
+            api_key: &auth_secret,
         };
         let presentation_result = prism_core::presentation::apply(
             &auth.upstream_presentation,

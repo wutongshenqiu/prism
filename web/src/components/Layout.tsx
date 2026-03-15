@@ -10,6 +10,7 @@ import {
   GitBranch,
   FileCode,
   Users,
+  KeyRound,
   Activity,
   ScrollText,
   LogOut,
@@ -51,6 +52,7 @@ const navSections: NavSection[] = [
     label: 'Access Control',
     items: [
       { to: '/tenants', icon: Users, label: 'Tenants & Keys' },
+      { to: '/auth-profiles', icon: KeyRound, label: 'Auth Profiles' },
     ],
   },
   {

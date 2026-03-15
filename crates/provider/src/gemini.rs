@@ -31,13 +31,7 @@ impl GeminiExecutor {
         let client = common::build_client(auth, self.global_proxy.as_deref(), &self.client_pool)?;
 
         let req = client.post(url).header("content-type", "application/json");
-
-        let req = if auth.vertex {
-            req.header("authorization", format!("Bearer {}", auth.api_key))
-        } else {
-            req.header("x-goog-api-key", &auth.api_key)
-        };
-
+        let req = common::apply_auth(req, auth);
         let req = req.body(request.payload.to_vec());
         Ok(common::apply_headers(req, &request.headers, auth))
     }
@@ -120,6 +114,7 @@ impl ProviderExecutor for GeminiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prism_core::auth_profile::{AuthHeaderKind, AuthMode};
     use prism_core::circuit_breaker::NoopCircuitBreaker;
 
     fn make_gemini_auth() -> AuthRecord {
@@ -139,6 +134,10 @@ mod tests {
             cloak: None,
             wire_api: Default::default(),
             credential_name: None,
+            auth_profile_id: "gemini".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            auth_header: AuthHeaderKind::Auto,
+            oauth_state: None,
             weight: 1,
             region: None,
             upstream_presentation: Default::default(),
@@ -151,6 +150,7 @@ mod tests {
     fn make_vertex_auth() -> AuthRecord {
         let mut auth = make_gemini_auth();
         auth.api_key = "ya29.access-token".to_string();
+        auth.auth_header = AuthHeaderKind::Bearer;
         auth.vertex = true;
         auth.vertex_project = Some("my-project".to_string());
         auth.vertex_location = Some("us-central1".to_string());

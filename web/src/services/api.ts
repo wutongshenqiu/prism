@@ -24,6 +24,12 @@ import type {
   ConfigValidateResponse,
   TenantSummary,
   TenantMetricsResponse,
+  AuthProfile,
+  AuthProfileUpsertRequest,
+  CodexOauthStartRequest,
+  CodexOauthStartResponse,
+  CodexOauthCompleteResponse,
+  ProviderAuthProfile,
 } from '../types';
 
 const api = axios.create({
@@ -107,17 +113,91 @@ export const authApi = {
   refresh: () => api.post<LoginResponse>('/auth/refresh'),
 };
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function asStringMap(value: unknown): Record<string, string> {
+  const record = asRecord(value);
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([, entry]) => typeof entry === 'string')
+      .map(([key, entry]) => [key, entry as string]),
+  );
+}
+
+function normalizeAuthProfile(raw: unknown): AuthProfile {
+  const record = asRecord(raw);
+  return {
+    provider: String(record.provider ?? ''),
+    format: (record.format as AuthProfile['format']) ?? 'openai',
+    id: String(record.id ?? ''),
+    qualified_name: String(record.qualified_name ?? ''),
+    mode: (record.mode as AuthProfile['mode']) ?? 'api-key',
+    header: String(record.header ?? 'auto'),
+    connected: Boolean(record.connected),
+    secret_masked: (record.secret_masked as string | null) ?? null,
+    access_token_masked: (record.access_token_masked as string | null) ?? null,
+    refresh_token_present: Boolean(record.refresh_token_present),
+    id_token_present: Boolean(record.id_token_present),
+    expires_at: (record.expires_at as string | null) ?? null,
+    account_id: (record.account_id as string | null) ?? null,
+    email: (record.email as string | null) ?? null,
+    last_refresh: (record.last_refresh as string | null) ?? null,
+    headers: asStringMap(record.headers),
+    disabled: Boolean(record.disabled),
+    weight: Number(record.weight ?? 1),
+    region: (record.region as string | null) ?? null,
+    prefix: (record.prefix as string | null) ?? null,
+    upstream_presentation: (record.upstream_presentation as AuthProfile['upstream_presentation']) ?? undefined,
+  };
+}
+
+function normalizeProvider(raw: unknown): Provider {
+  const record = asRecord(raw);
+  const models = Array.isArray(record.models) ? record.models : [];
+  const authProfiles = Array.isArray(record.auth_profiles) ? record.auth_profiles : [];
+  return {
+    name: String(record.name ?? ''),
+    format: (record.format as Provider['format']) ?? 'openai',
+    base_url: (record.base_url as string | null) ?? null,
+    proxy_url: (record.proxy_url as string | null) ?? null,
+    api_key_masked: String(record.api_key_masked ?? ''),
+    api_key: (record.api_key as string | undefined) ?? undefined,
+    prefix: (record.prefix as string | null) ?? null,
+    disabled: Boolean(record.disabled),
+    models: models.map((item) => {
+      const model = asRecord(item);
+      return {
+        id: String(model.id ?? ''),
+        alias: (model.alias as string | null) ?? null,
+      };
+    }),
+    excluded_models: Array.isArray(record.excluded_models) ? record.excluded_models.map(String) : [],
+    headers: asStringMap(record.headers),
+    wire_api: (record.wire_api as Provider['wire_api']) ?? 'chat',
+    weight: Number(record.weight ?? 1),
+    region: (record.region as string | null) ?? null,
+    upstream_presentation: (record.upstream_presentation as Provider['upstream_presentation']) ?? undefined,
+    auth_profiles: authProfiles.map((item) => normalizeAuthProfile(item) as ProviderAuthProfile),
+  };
+}
+
 // ── Providers ──
 
 export const providersApi = {
   list: () =>
     api.get('/providers').then((res) => {
       const raw = res.data.providers || res.data;
-      const data = Array.isArray(raw) ? raw as Provider[] : [];
+      const data = Array.isArray(raw) ? raw.map(normalizeProvider) : [];
       return { ...res, data };
     }) as Promise<{ data: Provider[] } & Record<string, unknown>>,
 
-  get: (name: string) => api.get<Provider>(`/providers/${encodeURIComponent(name)}`),
+  get: (name: string) =>
+    api.get(`/providers/${encodeURIComponent(name)}`).then((res) => ({
+      ...res,
+      data: normalizeProvider(res.data),
+    })) as Promise<{ data: Provider } & Record<string, unknown>>,
 
   create: (data: ProviderCreateRequest) =>
     api.post<Provider>('/providers', data),
@@ -142,6 +222,39 @@ export const providersApi = {
   capabilities: () =>
     api.get<{ providers: ProviderCapabilityEntry[] }>('/providers/capabilities')
       .then((res) => res.data.providers),
+};
+
+// ── Auth Profiles ──
+
+export const authProfilesApi = {
+  list: () =>
+    api.get('/auth-profiles').then((res) => {
+      const raw = res.data.profiles || [];
+      const data = Array.isArray(raw) ? raw.map(normalizeAuthProfile) : [];
+      return { ...res, data };
+    }) as Promise<{ data: AuthProfile[] } & Record<string, unknown>>,
+
+  create: (data: AuthProfileUpsertRequest & { provider: string; id: string }) =>
+    api.post('/auth-profiles', data).then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
+
+  replace: (provider: string, profileId: string, data: AuthProfileUpsertRequest) =>
+    api.put(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}`, data)
+      .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
+
+  delete: (provider: string, profileId: string) =>
+    api.delete(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}`),
+
+  startCodexOauth: (data: CodexOauthStartRequest) =>
+    api.post<CodexOauthStartResponse>('/auth-profiles/codex/oauth/start', data)
+      .then((res) => res.data),
+
+  completeCodexOauth: (state: string, code: string) =>
+    api.post<CodexOauthCompleteResponse>('/auth-profiles/codex/oauth/complete', { state, code })
+      .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
+
+  refresh: (provider: string, profileId: string) =>
+    api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/refresh`)
+      .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 };
 
 // ── Auth Keys ──

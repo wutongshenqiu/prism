@@ -203,6 +203,18 @@ impl Config {
                 "duplicate provider name: {}",
                 entry.name
             );
+            let mut seen_profile_ids = std::collections::HashSet::new();
+            for profile in &entry.auth_profiles {
+                profile
+                    .validate()
+                    .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
+                anyhow::ensure!(
+                    seen_profile_ids.insert(&profile.id),
+                    "duplicate auth profile id '{}' in provider '{}'",
+                    profile.id,
+                    entry.name
+                );
+            }
         }
         self.routing
             .validate()
@@ -320,16 +332,22 @@ fn resolve_provider_secrets(entries: &mut [ProviderKeyEntry]) -> Result<(), anyh
             entry.api_key = crate::secret::resolve(&entry.api_key)
                 .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
         }
+
+        for profile in &mut entry.auth_profiles {
+            profile.resolve_secrets().map_err(|e| {
+                anyhow::anyhow!(
+                    "provider '{}' auth-profile '{}': {e}",
+                    entry.name,
+                    profile.id
+                )
+            })?;
+        }
     }
     Ok(())
 }
 
-/// Remove entries with empty api_key (unless they have a credential_source),
-/// then normalize base_url and header casing.
-fn sanitize_entries(entries: &mut Vec<ProviderKeyEntry>) {
-    // Remove entries with empty API keys that don't have a credential_source
-    entries.retain(|e| !e.api_key.is_empty() || e.credential_source.is_some());
-
+/// Normalize provider entries for runtime and persistence.
+fn sanitize_entries(entries: &mut [ProviderKeyEntry]) {
     // Normalize entries
     for entry in entries.iter_mut() {
         // Strip trailing slash from base_url
@@ -345,6 +363,9 @@ fn sanitize_entries(entries: &mut Vec<ProviderKeyEntry>) {
             .map(|(k, v)| (k.to_lowercase(), v))
             .collect();
         entry.headers = headers;
+        for profile in &mut entry.auth_profiles {
+            profile.normalize();
+        }
     }
 }
 
@@ -584,6 +605,9 @@ pub struct ProviderKeyEntry {
     /// Optional credential source (defaults to static API key from `api_key` field).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_source: Option<crate::credential_source::CredentialSource>,
+    /// Nested auth profiles for this logical provider family.
+    #[serde(default)]
+    pub auth_profiles: Vec<crate::auth_profile::AuthProfileEntry>,
     /// Upstream presentation configuration (profile-first identity for upstream requests).
     #[serde(default)]
     pub upstream_presentation: crate::presentation::UpstreamPresentationConfig,
@@ -596,6 +620,34 @@ pub struct ProviderKeyEntry {
     /// Vertex AI location (required when `vertex: true`, e.g. "us-central1").
     #[serde(default)]
     pub vertex_location: Option<String>,
+}
+
+impl ProviderKeyEntry {
+    /// Expand auth profiles. If none are configured, legacy provider-level auth
+    /// fields are exposed as a single implicit profile using the provider name.
+    pub fn expanded_auth_profiles(&self) -> Vec<crate::auth_profile::AuthProfileEntry> {
+        if !self.auth_profiles.is_empty() {
+            return self.auth_profiles.clone();
+        }
+
+        if self.api_key.is_empty() {
+            return Vec::new();
+        }
+
+        vec![crate::auth_profile::AuthProfileEntry {
+            id: self.name.clone(),
+            mode: crate::auth_profile::AuthMode::ApiKey,
+            header: crate::auth_profile::AuthHeaderKind::Auto,
+            secret: (!self.api_key.is_empty()).then(|| self.api_key.clone()),
+            headers: self.headers.clone(),
+            disabled: self.disabled,
+            weight: self.weight.max(1),
+            region: self.region.clone(),
+            prefix: self.prefix.clone(),
+            upstream_presentation: self.upstream_presentation.clone(),
+            ..Default::default()
+        }]
+    }
 }
 
 fn default_weight() -> u32 {
@@ -718,6 +770,7 @@ mod tests {
             weight: 1,
             region: None,
             credential_source: None,
+            auth_profiles: vec![],
             vertex: false,
             vertex_project: None,
             vertex_location: None,
@@ -734,14 +787,16 @@ mod tests {
         e3.format = crate::provider::Format::Claude;
         let mut entries = vec![e1, e2, e3];
         sanitize_entries(&mut entries);
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         assert_eq!(
             entries[0].base_url.as_deref(),
             Some("https://api.example.com")
         );
         assert!(entries[0].headers.contains_key("x-custom"));
-        assert_eq!(entries[1].name, "p3");
-        assert_eq!(entries[1].format, crate::provider::Format::Claude);
+        assert_eq!(entries[1].name, "p2");
+        assert!(entries[1].expanded_auth_profiles().is_empty());
+        assert_eq!(entries[2].name, "p3");
+        assert_eq!(entries[2].format, crate::provider::Format::Claude);
     }
 
     #[test]
@@ -775,6 +830,7 @@ providers:
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.providers[0].models.len(), 1);
         assert_eq!(config.providers[0].format, crate::provider::Format::Claude);
+        assert!(config.providers[0].auth_profiles.is_empty());
     }
 
     #[test]
@@ -954,6 +1010,39 @@ providers:
         // from_yaml resolves them
         let resolved = Config::from_yaml(&yaml).unwrap();
         assert_eq!(resolved.providers[0].api_key, "file-secret-value");
+    }
+
+    #[test]
+    fn test_nested_auth_profiles_yaml() {
+        let yaml = r#"
+providers:
+  - name: anthropic
+    format: claude
+    auth-profiles:
+      - id: billing
+        mode: api-key
+        secret: "sk-ant-api"
+      - id: subscription
+        mode: bearer-token
+        secret: "token-123"
+"#;
+        let config = Config::from_yaml(yaml).unwrap();
+        let provider = &config.providers[0];
+        assert_eq!(provider.auth_profiles.len(), 2);
+        assert_eq!(provider.auth_profiles[0].id, "billing");
+        assert_eq!(
+            provider.auth_profiles[1].mode,
+            crate::auth_profile::AuthMode::BearerToken
+        );
+    }
+
+    #[test]
+    fn test_expanded_auth_profiles_legacy() {
+        let entry = make_test_entry("legacy", "sk-legacy");
+        let profiles = entry.expanded_auth_profiles();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, "legacy");
+        assert_eq!(profiles[0].secret.as_deref(), Some("sk-legacy"));
     }
 
     #[test]

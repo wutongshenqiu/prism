@@ -99,6 +99,12 @@ pub async fn reload_config(State(state): State<AppState>) -> impl IntoResponse {
 
     match prism_core::config::Config::load(&config_path) {
         Ok(new_cfg) => {
+            if let Err(err) = state.auth_runtime.sync_with_config(&new_cfg) {
+                tracing::error!("Dashboard reload auth runtime sync failed: {err}");
+            }
+            state
+                .router
+                .set_oauth_states(state.auth_runtime.oauth_snapshot());
             state.router.update_from_config(&new_cfg);
             state
                 .catalog
@@ -211,6 +217,17 @@ pub async fn apply_config(
     }
 
     // Step 4: Reload runtime
+    if let Err(err) = state.auth_runtime.sync_with_config(&runtime_config) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                json!({"error": "reload_failed", "message": format!("Failed to sync auth runtime: {err}")}),
+            ),
+        );
+    }
+    state
+        .router
+        .set_oauth_states(state.auth_runtime.oauth_snapshot());
     state.router.update_from_config(&runtime_config);
     state
         .catalog

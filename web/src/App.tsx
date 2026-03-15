@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import RequestLogs from './pages/RequestLogs';
 import Providers from './pages/Providers';
+import AuthProfiles from './pages/AuthProfiles';
 import Routing from './pages/Routing';
 import System from './pages/System';
 import Logs from './pages/Logs';
@@ -15,6 +16,7 @@ import Tenants from './pages/Tenants';
 import Protocols from './pages/Protocols';
 import ModelsCapabilities from './pages/ModelsCapabilities';
 import Replay from './pages/Replay';
+import AuthProfileCallback from './pages/AuthProfileCallback';
 import './App.css';
 
 export default function App() {
@@ -40,6 +42,8 @@ export default function App() {
           <Route path="requests" element={<RequestLogs />} />
           <Route path="protocols" element={<Protocols />} />
           <Route path="providers" element={<Providers />} />
+          <Route path="auth-profiles" element={<AuthProfiles />} />
+          <Route path="auth-profiles/callback" element={<AuthProfileCallback />} />
           <Route path="models" element={<ModelsCapabilities />} />
           <Route path="routing" element={<Routing />} />
           <Route path="replay" element={<Replay />} />

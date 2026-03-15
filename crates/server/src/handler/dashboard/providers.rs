@@ -3,8 +3,10 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use prism_core::auth_profile::{AuthMode, AuthProfileEntry, OAuthTokenState};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::time::Instant;
 
 #[derive(Debug, Serialize)]
@@ -17,13 +19,17 @@ struct ProviderSummary {
     disabled: bool,
     wire_api: prism_core::provider::WireApi,
     upstream_presentation: prism_core::presentation::UpstreamPresentationConfig,
+    auth_profiles: Vec<AuthProfileSummary>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateProviderRequest {
     pub name: String,
     pub format: String,
-    pub api_key: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub auth_profiles: Vec<AuthProfileEntry>,
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
@@ -46,6 +52,12 @@ pub struct CreateProviderRequest {
     pub region: Option<String>,
     #[serde(default)]
     pub upstream_presentation: Option<prism_core::presentation::UpstreamPresentationConfig>,
+    #[serde(default)]
+    pub vertex: bool,
+    #[serde(default)]
+    pub vertex_project: Option<String>,
+    #[serde(default)]
+    pub vertex_location: Option<String>,
 }
 
 fn default_weight() -> u32 {
@@ -56,6 +68,8 @@ fn default_weight() -> u32 {
 pub struct UpdateProviderRequest {
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub auth_profiles: Option<Vec<AuthProfileEntry>>,
     #[serde(default)]
     pub base_url: Option<Option<String>>,
     #[serde(default)]
@@ -78,6 +92,34 @@ pub struct UpdateProviderRequest {
     pub region: Option<Option<String>>,
     #[serde(default)]
     pub upstream_presentation: Option<Option<prism_core::presentation::UpstreamPresentationConfig>>,
+    #[serde(default)]
+    pub vertex: Option<bool>,
+    #[serde(default)]
+    pub vertex_project: Option<Option<String>>,
+    #[serde(default)]
+    pub vertex_location: Option<Option<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthProfileSummary {
+    id: String,
+    qualified_name: String,
+    mode: prism_core::auth_profile::AuthMode,
+    header: prism_core::auth_profile::AuthHeaderKind,
+    secret_masked: Option<String>,
+    access_token_masked: Option<String>,
+    refresh_token_present: bool,
+    id_token_present: bool,
+    expires_at: Option<String>,
+    account_id: Option<String>,
+    email: Option<String>,
+    last_refresh: Option<String>,
+    headers: HashMap<String, String>,
+    disabled: bool,
+    weight: u32,
+    region: Option<String>,
+    prefix: Option<String>,
+    upstream_presentation: prism_core::presentation::UpstreamPresentationConfig,
 }
 
 fn mask_key(key: &str) -> String {
@@ -85,6 +127,193 @@ fn mask_key(key: &str) -> String {
         return "****".to_string();
     }
     format!("{}****{}", &key[..4], &key[key.len() - 4..])
+}
+
+fn mask_optional_key(key: Option<&str>) -> Option<String> {
+    key.filter(|value| !value.is_empty()).map(mask_key)
+}
+
+fn provider_api_key_masked(
+    state: &AppState,
+    entry: &prism_core::config::ProviderKeyEntry,
+) -> String {
+    if !entry.api_key.is_empty() {
+        return mask_key(&entry.api_key);
+    }
+
+    entry
+        .expanded_auth_profiles()
+        .into_iter()
+        .find_map(|profile| {
+            let hydrated = state
+                .auth_runtime
+                .apply_runtime_state(&entry.name, &profile)
+                .unwrap_or(profile);
+            hydrated
+                .secret
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    hydrated
+                        .access_token
+                        .as_deref()
+                        .filter(|value| !value.is_empty())
+                })
+                .map(mask_key)
+        })
+        .unwrap_or_default()
+}
+
+fn summarize_auth_profile(provider_name: &str, profile: &AuthProfileEntry) -> AuthProfileSummary {
+    AuthProfileSummary {
+        id: profile.id.clone(),
+        qualified_name: format!("{provider_name}/{}", profile.id),
+        mode: profile.mode,
+        header: profile.header,
+        secret_masked: mask_optional_key(profile.secret.as_deref()),
+        access_token_masked: mask_optional_key(profile.access_token.as_deref()),
+        refresh_token_present: profile
+            .refresh_token
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+        id_token_present: profile
+            .id_token
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+        expires_at: profile.expires_at.clone(),
+        account_id: profile.account_id.clone(),
+        email: profile.email.clone(),
+        last_refresh: profile.last_refresh.clone(),
+        headers: profile.headers.clone(),
+        disabled: profile.disabled,
+        weight: profile.weight.max(1),
+        region: profile.region.clone(),
+        prefix: profile.prefix.clone(),
+        upstream_presentation: profile.upstream_presentation.clone(),
+    }
+}
+
+fn summarize_provider(
+    state: &AppState,
+    entry: &prism_core::config::ProviderKeyEntry,
+) -> ProviderSummary {
+    let auth_profiles = entry
+        .expanded_auth_profiles()
+        .into_iter()
+        .map(|profile| {
+            let hydrated = state
+                .auth_runtime
+                .apply_runtime_state(&entry.name, &profile)
+                .unwrap_or(profile);
+            summarize_auth_profile(&entry.name, &hydrated)
+        })
+        .collect();
+
+    ProviderSummary {
+        name: entry.name.clone(),
+        format: entry.format.as_str().to_string(),
+        api_key_masked: provider_api_key_masked(state, entry),
+        base_url: entry.base_url.clone(),
+        models: entry.models.clone(),
+        disabled: entry.disabled,
+        wire_api: entry.wire_api,
+        upstream_presentation: entry.upstream_presentation.clone(),
+        auth_profiles,
+    }
+}
+
+fn normalize_auth_profiles(
+    profiles: &[AuthProfileEntry],
+) -> Result<Vec<AuthProfileEntry>, (StatusCode, Json<serde_json::Value>)> {
+    let mut normalized = profiles.to_vec();
+    for profile in &mut normalized {
+        profile.normalize();
+        if let Err(err) = profile.validate() {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "validation_failed", "message": err})),
+            ));
+        }
+    }
+    Ok(normalized)
+}
+
+fn strip_runtime_oauth_data(
+    profiles: Vec<AuthProfileEntry>,
+) -> (Vec<AuthProfileEntry>, Vec<(String, OAuthTokenState)>) {
+    let mut stripped = Vec::with_capacity(profiles.len());
+    let mut runtime_states = Vec::new();
+
+    for mut profile in profiles {
+        if profile.mode == AuthMode::OpenaiCodexOauth
+            && let Some(state) = OAuthTokenState::from_profile(&profile)
+        {
+            let has_runtime_material = !state.access_token.is_empty()
+                || !state.refresh_token.is_empty()
+                || state.id_token.is_some()
+                || state.account_id.is_some()
+                || state.email.is_some()
+                || state.expires_at.is_some()
+                || state.last_refresh.is_some();
+            if has_runtime_material {
+                runtime_states.push((profile.id.clone(), state));
+            }
+            profile.access_token = None;
+            profile.refresh_token = None;
+            profile.id_token = None;
+            profile.expires_at = None;
+            profile.account_id = None;
+            profile.email = None;
+            profile.last_refresh = None;
+        }
+        stripped.push(profile);
+    }
+
+    (stripped, runtime_states)
+}
+
+fn seed_runtime_oauth_states(
+    state: &AppState,
+    provider_name: &str,
+    runtime_states: &[(String, OAuthTokenState)],
+) -> Result<(), String> {
+    if runtime_states.is_empty() {
+        return Ok(());
+    }
+
+    for (profile_id, oauth_state) in runtime_states {
+        state
+            .auth_runtime
+            .store_state(provider_name, profile_id, oauth_state.clone())?;
+    }
+
+    let config = state.config.load();
+    state
+        .router
+        .set_oauth_states(state.auth_runtime.oauth_snapshot());
+    state.router.update_from_config(&config);
+    state
+        .catalog
+        .update_from_credentials(&state.router.credential_map());
+    Ok(())
+}
+
+fn validate_auth_shape(
+    api_key: Option<&str>,
+    auth_profiles: &[AuthProfileEntry],
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let has_api_key = api_key.is_some_and(|value| !value.trim().is_empty());
+    let has_profiles = !auth_profiles.is_empty();
+    if has_api_key && has_profiles {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "error": "validation_failed",
+                "message": "api_key and auth_profiles are mutually exclusive"
+            })),
+        ));
+    }
+    Ok(())
 }
 
 fn is_valid_format(format_str: &str) -> bool {
@@ -97,16 +326,7 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
     let mut providers = Vec::new();
 
     for entry in config.providers.iter() {
-        providers.push(ProviderSummary {
-            name: entry.name.clone(),
-            format: entry.format.as_str().to_string(),
-            api_key_masked: mask_key(&entry.api_key),
-            base_url: entry.base_url.clone(),
-            models: entry.models.clone(),
-            disabled: entry.disabled,
-            wire_api: entry.wire_api,
-            upstream_presentation: entry.upstream_presentation.clone(),
-        });
+        providers.push(summarize_provider(&state, entry));
     }
 
     (StatusCode::OK, Json(json!({ "providers": providers })))
@@ -124,7 +344,7 @@ pub async fn get_provider(
             let detail = json!({
                 "name": entry.name,
                 "format": entry.format.as_str(),
-                "api_key_masked": mask_key(&entry.api_key),
+                "api_key_masked": provider_api_key_masked(&state, entry),
                 "base_url": entry.base_url,
                 "proxy_url": entry.proxy_url,
                 "prefix": entry.prefix,
@@ -136,6 +356,20 @@ pub async fn get_provider(
                 "weight": entry.weight,
                 "region": entry.region,
                 "upstream_presentation": entry.upstream_presentation,
+                "vertex": entry.vertex,
+                "vertex_project": entry.vertex_project,
+                "vertex_location": entry.vertex_location,
+                "auth_profiles": entry
+                    .expanded_auth_profiles()
+                    .into_iter()
+                    .map(|profile| {
+                        let hydrated = state
+                            .auth_runtime
+                            .apply_runtime_state(&entry.name, &profile)
+                            .unwrap_or(profile);
+                        summarize_auth_profile(&entry.name, &hydrated)
+                    })
+                    .collect::<Vec<_>>(),
             });
             (StatusCode::OK, Json(detail))
         }
@@ -165,11 +399,12 @@ pub async fn create_provider(
             ),
         );
     }
-    if body.api_key.is_empty() {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": "validation_failed", "message": "api_key is required"})),
-        );
+    let auth_profiles = match normalize_auth_profiles(&body.auth_profiles) {
+        Ok(profiles) => profiles,
+        Err(response) => return response,
+    };
+    if let Err(response) = validate_auth_shape(body.api_key.as_deref(), &auth_profiles) {
+        return response;
     }
 
     // Check name uniqueness
@@ -202,11 +437,13 @@ pub async fn create_provider(
     };
 
     let provider_name = body.name.clone();
+    let api_key = body.api_key.unwrap_or_default();
+    let (auth_profiles, runtime_oauth_states) = strip_runtime_oauth_data(auth_profiles);
 
     let new_entry = prism_core::config::ProviderKeyEntry {
         name: provider_name.clone(),
         format,
-        api_key: body.api_key,
+        api_key,
         base_url: body.base_url,
         proxy_url: body.proxy_url,
         prefix: body.prefix,
@@ -220,9 +457,10 @@ pub async fn create_provider(
         weight: body.weight,
         region: body.region,
         credential_source: None,
-        vertex: false,
-        vertex_project: None,
-        vertex_location: None,
+        auth_profiles,
+        vertex: body.vertex,
+        vertex_project: body.vertex_project,
+        vertex_location: body.vertex_location,
     };
 
     match update_config_file(&state, |config| {
@@ -231,6 +469,19 @@ pub async fn create_provider(
     .await
     {
         Ok(()) => {
+            if let Err(err) =
+                seed_runtime_oauth_states(&state, &provider_name, &runtime_oauth_states)
+            {
+                tracing::error!(
+                    name = %provider_name,
+                    error = %err,
+                    "Provider created but runtime oauth seeding failed"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "runtime_auth_seed_failed", "message": err})),
+                );
+            }
             tracing::info!(
                 name = %provider_name,
                 format = %body.format,
@@ -273,10 +524,38 @@ pub async fn update_provider(
     }
 
     let name_for_log = name.clone();
+    let auth_profiles = match body
+        .auth_profiles
+        .as_ref()
+        .map(|profiles| normalize_auth_profiles(profiles))
+        .transpose()
+    {
+        Ok(profiles) => profiles,
+        Err(response) => return response,
+    };
+    if let Some(ref profiles) = auth_profiles
+        && let Err(response) = validate_auth_shape(body.api_key.as_deref(), profiles)
+    {
+        return response;
+    }
+    let runtime_oauth_states = auth_profiles.clone().map(strip_runtime_oauth_data);
+    let auth_profiles_for_write = runtime_oauth_states
+        .as_ref()
+        .map(|(profiles, _)| profiles.clone());
+    let runtime_oauth_states = runtime_oauth_states
+        .map(|(_, states)| states)
+        .unwrap_or_default();
+
     match update_config_file(&state, move |config| {
         if let Some(entry) = config.providers.iter_mut().find(|e| e.name == name) {
             if let Some(ref key) = body.api_key {
                 entry.api_key = key.clone();
+            }
+            if let Some(ref profiles) = auth_profiles_for_write {
+                entry.auth_profiles = profiles.clone();
+                if !profiles.is_empty() && body.api_key.is_none() {
+                    entry.api_key.clear();
+                }
             }
             if let Some(ref url) = body.base_url {
                 entry.base_url = url.clone();
@@ -320,11 +599,33 @@ pub async fn update_provider(
             if let Some(ref presentation_opt) = body.upstream_presentation {
                 entry.upstream_presentation = presentation_opt.clone().unwrap_or_default();
             }
+            if let Some(vertex) = body.vertex {
+                entry.vertex = vertex;
+            }
+            if let Some(ref project) = body.vertex_project {
+                entry.vertex_project = project.clone();
+            }
+            if let Some(ref location) = body.vertex_location {
+                entry.vertex_location = location.clone();
+            }
         }
     })
     .await
     {
         Ok(()) => {
+            if let Err(err) =
+                seed_runtime_oauth_states(&state, &name_for_log, &runtime_oauth_states)
+            {
+                tracing::error!(
+                    provider = %name_for_log,
+                    error = %err,
+                    "Provider updated but runtime oauth seeding failed"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "runtime_auth_seed_failed", "message": err})),
+                );
+            }
             tracing::info!(provider = %name_for_log, "Provider updated via dashboard");
             (
                 StatusCode::OK,
@@ -484,6 +785,13 @@ pub async fn update_config_versioned(
         .map_err(|e| ConfigTxError::Internal(format!("Failed to load runtime config: {e}")))?;
 
     // Update all derived runtime state (same as watcher/SIGHUP paths)
+    state
+        .auth_runtime
+        .sync_with_config(&runtime_config)
+        .map_err(|e| ConfigTxError::Internal(format!("Failed to sync auth runtime: {e}")))?;
+    state
+        .router
+        .set_oauth_states(state.auth_runtime.oauth_snapshot());
     state.router.update_from_config(&runtime_config);
     state
         .catalog

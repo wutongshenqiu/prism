@@ -213,6 +213,19 @@ struct ScoredCandidate {
     upstream_protocol: prism_domain::capability::UpstreamProtocol,
 }
 
+fn credential_allowed(patterns: &[String], credential_name: &str) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    let short_name = credential_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(credential_name);
+    patterns
+        .iter()
+        .any(|pattern| glob_match(pattern, credential_name) || glob_match(pattern, short_name))
+}
+
 fn collect_candidates(
     model: &str,
     pinned_providers: &Option<Vec<String>>,
@@ -253,6 +266,14 @@ fn collect_candidates(
         for cred in &provider.credentials {
             // Lazy label — only computed on first rejection
             let cand_label = || format!("{}/{}", provider.name, cred.name);
+
+            if !credential_allowed(&features.allowed_credentials, &cred.name) {
+                rejections.push(RouteRejection {
+                    candidate: cand_label(),
+                    reason: RejectReason::AccessDenied,
+                });
+                continue;
+            }
 
             // Disabled
             if cred.disabled {
@@ -421,6 +442,7 @@ mod tests {
             region: None,
             stream: false,
             headers: BTreeMap::new(),
+            allowed_credentials: Vec::new(),
             required_capabilities: None,
         }
     }
@@ -770,5 +792,53 @@ mod tests {
 
         let plan = RoutePlanner::plan(&features, &config, &inventory, &health);
         assert_eq!(plan.attempts.len(), 1);
+    }
+
+    #[test]
+    fn test_plan_filters_allowed_credentials() {
+        let mut features = test_features("gpt-4");
+        features.allowed_credentials = vec!["openai/personal".to_string()];
+        let config = RoutingConfig::default();
+        let inventory = InventorySnapshot {
+            providers: vec![ProviderEntry {
+                format: Format::OpenAI,
+                name: "openai".to_string(),
+                credentials: vec![
+                    CredentialEntry {
+                        id: "cred-1".to_string(),
+                        name: "openai/billing".to_string(),
+                        models: vec!["gpt-4".to_string()],
+                        excluded_models: vec![],
+                        region: None,
+                        weight: 100,
+                        disabled: false,
+                    },
+                    CredentialEntry {
+                        id: "cred-2".to_string(),
+                        name: "openai/personal".to_string(),
+                        models: vec!["gpt-4".to_string()],
+                        excluded_models: vec![],
+                        region: None,
+                        weight: 100,
+                        disabled: false,
+                    },
+                ],
+                capabilities: prism_domain::capability::default_capabilities_for_protocol(
+                    prism_domain::capability::UpstreamProtocol::OpenAi,
+                ),
+                upstream_protocol: prism_domain::capability::UpstreamProtocol::OpenAi,
+            }],
+        };
+        let health = healthy();
+
+        let plan = RoutePlanner::plan(&features, &config, &inventory, &health);
+        assert_eq!(plan.attempts.len(), 1);
+        assert_eq!(plan.attempts[0].credential_name, "openai/personal");
+        assert!(
+            plan.trace
+                .rejections
+                .iter()
+                .any(|rejection| rejection.reason == RejectReason::AccessDenied)
+        );
     }
 }

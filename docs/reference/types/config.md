@@ -12,75 +12,38 @@ The root configuration struct. Loaded from YAML via `Config::load()`. Uses `#[se
 
 ```rust
 pub struct Config {
-    // Server
     pub host: String,
     pub port: u16,
     pub tls: TlsConfig,
-
-    // Client auth
     pub auth_keys: Vec<AuthKeyEntry>,
-    #[serde(skip)]
-    pub auth_key_store: AuthKeyStore,    // built from auth_keys during sanitize()
-
-    // Global proxy
+    pub auth_key_store: AuthKeyStore,
     pub proxy_url: Option<String>,
-
-    // Debug & logging
     pub debug: bool,
     pub logging_to_file: bool,
     pub log_dir: Option<String>,
-
-    // Routing
     pub routing: RoutingConfig,
     pub request_retry: u32,
     pub max_retry_interval: u64,
-
-    // Timeouts
     pub connect_timeout: u64,
     pub request_timeout: u64,
-
-    // Streaming
     pub streaming: StreamingConfig,
     pub body_limit_mb: usize,
-
-    // Retry
     pub retry: RetryConfig,
-
-    // Payload manipulation
     pub payload: PayloadConfig,
-
-    // Headers
     pub passthrough_headers: Vec<String>,
     pub claude_header_defaults: HashMap<String, String>,
     pub force_model_prefix: bool,
     pub non_stream_keepalive_secs: u64,
-
-    // Cost tracking
     pub model_prices: HashMap<String, ModelPrice>,
-
-    // Rate limiting
     pub rate_limit: RateLimitConfig,
-
-    // Circuit breaker
     pub circuit_breaker: CircuitBreakerConfig,
-
-    // Response cache
     pub cache: CacheConfig,
-
-    // Audit logging
-    pub audit: AuditConfig,
-
-    // Dashboard
+    pub log_store: LogStoreConfig,
     pub dashboard: DashboardConfig,
-
-    // Daemon
     pub daemon: DaemonConfig,
-
-    // Provider credentials
-    pub claude_api_key: Vec<ProviderKeyEntry>,
-    pub openai_api_key: Vec<ProviderKeyEntry>,
-    pub gemini_api_key: Vec<ProviderKeyEntry>,
-    pub openai_compatibility: Vec<ProviderKeyEntry>,
+    pub thinking_cache: ThinkingCacheConfig,
+    pub quota_cooldown_default_secs: u64,
+    pub providers: Vec<ProviderKeyEntry>,
 }
 ```
 
@@ -113,27 +76,36 @@ pub struct Config {
 | `rate_limit` | `RateLimitConfig` | disabled | `rate-limit` |
 | `circuit_breaker` | `CircuitBreakerConfig` | enabled | `circuit-breaker` |
 | `cache` | `CacheConfig` | disabled | `cache` |
-| `audit` | `AuditConfig` | disabled | `audit` |
+| `log_store` | `LogStoreConfig` | memory backend | `log-store` (`audit` accepted as alias) |
 | `dashboard` | `DashboardConfig` | disabled | `dashboard` |
 | `daemon` | `DaemonConfig` | see below | `daemon` |
-| `claude_api_key` | `Vec<ProviderKeyEntry>` | `[]` | `claude-api-key` |
-| `openai_api_key` | `Vec<ProviderKeyEntry>` | `[]` | `openai-api-key` |
-| `gemini_api_key` | `Vec<ProviderKeyEntry>` | `[]` | `gemini-api-key` |
-| `openai_compatibility` | `Vec<ProviderKeyEntry>` | `[]` | `openai-compatibility` |
+| `thinking_cache` | `ThinkingCacheConfig` | disabled | `thinking-cache` |
+| `quota_cooldown_default_secs` | `u64` | `60` | `quota-cooldown-default-secs` |
+| `providers` | `Vec<ProviderKeyEntry>` | `[]` | `providers` |
 
 ### Key methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `load` | `fn load(path: &str) -> Result<Self, anyhow::Error>` | Reads YAML, deserializes, sanitizes, and validates. |
-| `all_provider_keys` | `fn all_provider_keys(&self) -> impl Iterator<Item = &ProviderKeyEntry>` | Iterates all provider key entries across all provider types. |
+| `load_from_str` | `fn load_from_str(contents: &str) -> Result<Self, anyhow::Error>` | Parses YAML from an in-memory string and runs sanitize + validate. |
+| `from_yaml_raw` | `fn from_yaml_raw(yaml: &str) -> Result<Self, anyhow::Error>` | Parses YAML without resolving `env://` or `file://` secrets, used by dashboard writeback flows. |
+| `to_yaml` | `fn to_yaml(&self) -> Result<String, anyhow::Error>` | Serializes the current config back to YAML. |
+| `all_provider_keys` | `fn all_provider_keys(&self) -> impl Iterator<Item = &ProviderKeyEntry>` | Iterates the unified `providers[]` array. |
 
 ### Sanitization (on load)
 
-- Entries with empty `api_key` (and no `credential_source`) are removed.
 - Trailing slashes are stripped from `base_url`.
 - Header keys are normalized to lowercase.
+- Nested auth profiles are normalized the same way, including header keys and zero-weight correction.
 - `auth_key_store` is built from `auth_keys` for O(1) lookups.
+- Secret-bearing fields are resolved through the secret resolver when using the validated load path.
+
+### Validation highlights
+
+- Provider names must be unique within `providers[]`.
+- Auth profile IDs must be unique within each provider.
+- Provider and global proxy URLs are validated at load time.
 
 ---
 
@@ -722,12 +694,14 @@ payload:
 
 ## ProviderKeyEntry
 
-Per-credential configuration for a single API key.
+Logical provider-family configuration. A provider entry owns protocol behavior, model catalog, shared routing hints, and zero or more auth profiles.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ProviderKeyEntry {
+    pub name: String,
+    pub format: Format,
     pub api_key: String,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -744,8 +718,6 @@ pub struct ProviderKeyEntry {
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
     pub cloak: CloakConfig,
     #[serde(default)]
     pub wire_api: WireApi,
@@ -753,46 +725,164 @@ pub struct ProviderKeyEntry {
     pub weight: u32,
     #[serde(default)]
     pub region: Option<String>,
+    #[serde(default)]
+    pub credential_source: Option<CredentialSource>,
+    #[serde(default)]
+    pub auth_profiles: Vec<AuthProfileEntry>,
+    #[serde(default)]
+    pub upstream_presentation: UpstreamPresentationConfig,
+    #[serde(default)]
+    pub vertex: bool,
+    #[serde(default)]
+    pub vertex_project: Option<String>,
+    #[serde(default)]
+    pub vertex_location: Option<String>,
 }
 ```
 
 | Field | Type | Default | YAML key | Description |
 |-------|------|---------|----------|-------------|
-| `api_key` | `String` | required | `api-key` | Provider API key. Entries with empty keys are removed during sanitization. |
+| `name` | `String` | required | `name` | Stable logical provider name used for routing identity and dashboard APIs. |
+| `format` | `Format` | required | `format` | Wire protocol family: `openai`, `claude`, or `gemini`. |
+| `api_key` | `String` | `""` | `api-key` | Legacy provider-level secret. If `auth_profiles[]` is empty, Prism exposes it as one implicit API-key auth profile named after the provider. |
 | `base_url` | `Option<String>` | `None` | `base-url` | Override provider base URL. Trailing slashes are stripped. |
-| `proxy_url` | `Option<String>` | `None` | `proxy-url` | Per-credential proxy URL. Falls back to global `proxy_url`. |
-| `prefix` | `Option<String>` | `None` | `prefix` | Model name prefix (e.g., `"openai/"`) for namespace isolation. |
+| `proxy_url` | `Option<String>` | `None` | `proxy-url` | Per-provider proxy URL. Falls back to global `proxy_url`. |
+| `prefix` | `Option<String>` | `None` | `prefix` | Legacy provider-level model prefix. When explicit auth profiles exist, profile-level `prefix` is the effective routing prefix. |
 | `models` | `Vec<ModelMapping>` | `[]` | `models` | Explicit model list. If empty, all models are accepted. |
 | `excluded_models` | `Vec<String>` | `[]` | `excluded-models` | Glob patterns for models to exclude. |
-| `headers` | `HashMap<String, String>` | `{}` | `headers` | Extra headers to inject on upstream requests. Keys normalized to lowercase. |
-| `disabled` | `bool` | `false` | `disabled` | Disable this credential without removing it. |
-| `name` | `Option<String>` | `None` | `name` | Human-readable name for logging/identification. |
-| `cloak` | `CloakConfig` | `CloakMode::Never` | `cloak` | Claude cloaking configuration. Only used for Claude provider entries. |
-| `wire_api` | `WireApi` | `Chat` | `wire-api` | Wire API format for OpenAI-compatible providers. |
-| `weight` | `u32` | `1` | `weight` | Weight for weighted round-robin routing (range 1-100). |
-| `region` | `Option<String>` | `None` | `region` | Region identifier for geo-aware routing. |
+| `headers` | `HashMap<String, String>` | `{}` | `headers` | Shared headers applied to upstream requests. Keys are normalized to lowercase. |
+| `disabled` | `bool` | `false` | `disabled` | Disables the provider and all implicit auth derived from it. |
+| `cloak` | `CloakConfig` | `CloakMode::Never` | `cloak` | Claude cloaking configuration. |
+| `wire_api` | `WireApi` | `Chat` | `wire-api` | Wire API format for OpenAI-family upstreams (`chat` or `responses`). |
+| `weight` | `u32` | `1` | `weight` | Legacy provider-level routing weight. Explicit auth profiles can override it per profile. |
+| `region` | `Option<String>` | `None` | `region` | Legacy provider-level region hint. Explicit auth profiles can override it per profile. |
+| `credential_source` | `Option<CredentialSource>` | `None` | `credential-source` | Optional provider-level secret source for legacy `api_key` auth. |
+| `auth_profiles` | `Vec<AuthProfileEntry>` | `[]` | `auth-profiles` | Explicit auth profiles nested under this provider. |
+| `upstream_presentation` | `UpstreamPresentationConfig` | defaults | `upstream-presentation` | Shared upstream identity/presentation policy for requests sent through this provider. |
+| `vertex` | `bool` | `false` | `vertex` | Enables Vertex AI request shaping for Gemini-family upstreams. |
+| `vertex_project` | `Option<String>` | `None` | `vertex-project` | Vertex AI project ID. |
+| `vertex_location` | `Option<String>` | `None` | `vertex-location` | Vertex AI region, for example `us-central1`. |
+
+### Key behavior
+
+- `expanded_auth_profiles()` returns explicit `auth_profiles[]` when present.
+- If `auth_profiles[]` is empty and `api_key` is set, Prism synthesizes one implicit API-key auth profile using the provider name as the profile ID.
+- A provider entry may intentionally have no auth material yet; dashboard auth-profile APIs can attach profiles later.
 
 ### YAML example
 
 ```yaml
-claude-api-key:
-  - api-key: "sk-ant-xxx"
+providers:
+  - name: "anthropic"
+    format: "claude"
     base-url: "https://api.anthropic.com"
-    prefix: "claude/"
-    name: "primary-claude"
-    weight: 2
-    region: us-east
     models:
       - id: "claude-sonnet-4-20250514"
         alias: "sonnet"
-    excluded-models:
-      - "claude-2*"
-    cloak:
-      mode: auto
-      strict-mode: false
-      sensitive-words: ["secret"]
-      cache-user-id: true
+    auth-profiles:
+      - id: "billing"
+        mode: "api-key"
+        secret: "env://ANTHROPIC_API_KEY"
+        weight: 2
+      - id: "subscription-main"
+        mode: "bearer-token"
+        secret: "env://OPENCLAW_SETUP_TOKEN"
+        prefix: "anthropic/sub/"
 ```
+
+---
+
+## AuthProfileEntry
+
+Nested authentication profile for a provider family.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct AuthProfileEntry {
+    pub id: String,
+    pub mode: AuthMode,
+    pub header: AuthHeaderKind,
+    pub secret: Option<String>,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub id_token: Option<String>,
+    pub expires_at: Option<String>,
+    pub account_id: Option<String>,
+    pub email: Option<String>,
+    pub last_refresh: Option<String>,
+    pub headers: HashMap<String, String>,
+    pub disabled: bool,
+    pub weight: u32,
+    pub region: Option<String>,
+    pub prefix: Option<String>,
+    pub upstream_presentation: UpstreamPresentationConfig,
+}
+```
+
+| Field | Type | Default | YAML key | Description |
+|-------|------|---------|----------|-------------|
+| `id` | `String` | required | `id` | Stable profile ID, unique within a provider. |
+| `mode` | `AuthMode` | `api-key` | `mode` | Auth material type. |
+| `header` | `AuthHeaderKind` | `auto` | `header` | Explicit upstream auth header strategy, or `auto` to derive from mode and provider format. |
+| `secret` | `Option<String>` | `None` | `secret` | Static API key or bearer token. Required for `api-key` and `bearer-token` modes unless the profile is disabled. |
+| `access_token` | `Option<String>` | `None` | `access-token` | Runtime OAuth access token. Persisted in the auth runtime sidecar store for Codex OAuth profiles. |
+| `refresh_token` | `Option<String>` | `None` | `refresh-token` | Runtime OAuth refresh token. Persisted in the auth runtime sidecar store for Codex OAuth profiles. |
+| `id_token` | `Option<String>` | `None` | `id-token` | Optional OpenID token returned by the provider. |
+| `expires_at` | `Option<String>` | `None` | `expires-at` | RFC3339 token expiry timestamp. |
+| `account_id` | `Option<String>` | `None` | `account-id` | Upstream account identifier captured during OAuth completion. |
+| `email` | `Option<String>` | `None` | `email` | Upstream account email captured during OAuth completion. |
+| `last_refresh` | `Option<String>` | `None` | `last-refresh` | RFC3339 timestamp of the last successful OAuth refresh. |
+| `headers` | `HashMap<String, String>` | `{}` | `headers` | Per-profile headers merged into upstream requests. Keys are normalized to lowercase. |
+| `disabled` | `bool` | `false` | `disabled` | Disables this auth profile without removing it. |
+| `weight` | `u32` | `1` | `weight` | Per-profile routing weight. `0` normalizes to `1`. |
+| `region` | `Option<String>` | `None` | `region` | Per-profile region hint for geo-aware routing. |
+| `prefix` | `Option<String>` | `None` | `prefix` | Per-profile routing prefix for model names. |
+| `upstream_presentation` | `UpstreamPresentationConfig` | defaults | `upstream-presentation` | Per-profile upstream identity/presentation override. |
+
+### Validation notes
+
+- `id` must be non-empty.
+- `api-key` and `bearer-token` modes require `secret` unless the profile is disabled.
+- `openai-codex-oauth` profiles must not carry a static `secret`.
+
+---
+
+## AuthMode
+
+```rust
+pub enum AuthMode {
+    ApiKey,
+    BearerToken,
+    OpenaiCodexOauth,
+}
+```
+
+| Variant | YAML value | Meaning |
+|---------|------------|---------|
+| `ApiKey` | `api-key` | Static key sent with a provider-specific auth header. |
+| `BearerToken` | `bearer-token` | Static bearer token, used for subscription/setup-token style flows. |
+| `OpenaiCodexOauth` | `openai-codex-oauth` | Refreshable Codex OAuth profile managed through the auth runtime store. |
+
+---
+
+## AuthHeaderKind
+
+```rust
+pub enum AuthHeaderKind {
+    Auto,
+    Bearer,
+    XApiKey,
+    XGoogApiKey,
+}
+```
+
+`auto` derives the effective header from the auth mode and provider family:
+
+- OpenAI API keys default to `Authorization: Bearer`.
+- Anthropic API keys default to `x-api-key` when using Anthropic-hosted URLs, otherwise `Bearer`.
+- Gemini API keys default to `x-goog-api-key`, except Vertex mode which uses `Bearer`.
+- Bearer-token and Codex OAuth profiles always default to `Bearer`.
 
 ---
 

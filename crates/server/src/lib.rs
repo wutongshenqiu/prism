@@ -1,5 +1,6 @@
 pub mod app;
 pub mod auth;
+pub mod auth_runtime;
 pub mod dispatch;
 pub mod handler;
 pub mod middleware;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub login_limiter: Arc<handler::dashboard::auth::LoginRateLimiter>,
     pub catalog: Arc<ProviderCatalog>,
     pub health_manager: Arc<HealthManager>,
+    pub auth_runtime: Arc<auth_runtime::AuthRuntimeManager>,
+    pub oauth_sessions: Arc<dashmap::DashMap<String, auth_runtime::PendingCodexOauthSession>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -142,6 +145,28 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/dashboard/auth/refresh",
             axum::routing::post(handler::dashboard::auth::refresh),
+        )
+        .route(
+            "/api/dashboard/auth-profiles",
+            axum::routing::get(handler::dashboard::auth_profiles::list_auth_profiles)
+                .post(handler::dashboard::auth_profiles::create_auth_profile),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/{provider}/{profile}",
+            axum::routing::put(handler::dashboard::auth_profiles::replace_auth_profile)
+                .delete(handler::dashboard::auth_profiles::delete_auth_profile),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/codex/oauth/start",
+            axum::routing::post(handler::dashboard::auth_profiles::start_codex_oauth),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/codex/oauth/complete",
+            axum::routing::post(handler::dashboard::auth_profiles::complete_codex_oauth),
+        )
+        .route(
+            "/api/dashboard/auth-profiles/{provider}/{profile}/refresh",
+            axum::routing::post(handler::dashboard::auth_profiles::refresh_auth_profile),
         )
         // Providers
         .route(

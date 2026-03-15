@@ -15,6 +15,7 @@ Runtime credential representation built from `ProviderKeyEntry` during config lo
 pub struct AuthRecord {
     pub id: String,
     pub provider: Format,
+    pub provider_name: String,
     pub api_key: String,
     pub base_url: Option<String>,
     pub proxy_url: Option<String>,
@@ -27,16 +28,25 @@ pub struct AuthRecord {
     pub cloak: Option<CloakConfig>,
     pub wire_api: WireApi,
     pub credential_name: Option<String>,
+    pub auth_profile_id: String,
+    pub auth_mode: AuthMode,
+    pub auth_header: AuthHeaderKind,
+    pub oauth_state: Option<SharedOAuthTokenState>,
     pub weight: u32,
     pub region: Option<String>,
+    pub upstream_presentation: UpstreamPresentationConfig,
+    pub vertex: bool,
+    pub vertex_project: Option<String>,
+    pub vertex_location: Option<String>,
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `String` | UUID v4 generated at build time. Used to track tried credentials in retry loop. |
-| `provider` | `Format` | The provider format (OpenAI, Claude, Gemini, OpenAICompat). |
-| `api_key` | `String` | Upstream API key. |
+| `provider` | `Format` | The provider format (`OpenAI`, `Claude`, or `Gemini`). |
+| `provider_name` | `String` | Logical provider-family name from config, used as routing identity. |
+| `api_key` | `String` | Static upstream secret. For OAuth profiles this acts as fallback storage when runtime state is empty. |
 | `base_url` | `Option<String>` | Custom base URL override. |
 | `proxy_url` | `Option<String>` | Per-credential HTTP/SOCKS proxy. |
 | `headers` | `HashMap<String, String>` | Extra headers for upstream requests. |
@@ -47,15 +57,26 @@ pub struct AuthRecord {
 | `circuit_breaker` | `Arc<dyn CircuitBreakerPolicy>` | Circuit breaker instance managing availability state. |
 | `cloak` | `Option<CloakConfig>` | Cloak config. Only `Some` for Claude credentials. |
 | `wire_api` | `WireApi` | Wire API format (Chat or Responses). |
-| `credential_name` | `Option<String>` | Human-readable name from `ProviderKeyEntry.name`. |
+| `credential_name` | `Option<String>` | Human-readable routing name, currently `provider/profile`. |
+| `auth_profile_id` | `String` | Stable auth profile ID within the provider family. |
+| `auth_mode` | `AuthMode` | Auth material type (`api-key`, `bearer-token`, or `openai-codex-oauth`). |
+| `auth_header` | `AuthHeaderKind` | Explicit or derived upstream auth header strategy. |
+| `oauth_state` | `Option<SharedOAuthTokenState>` | Shared runtime OAuth state for refreshable profiles. |
 | `weight` | `u32` | Weight for weighted round-robin routing (default 1). |
 | `region` | `Option<String>` | Region identifier for geo-aware routing. |
+| `upstream_presentation` | `UpstreamPresentationConfig` | Per-credential upstream identity/presentation overrides. |
+| `vertex` | `bool` | Whether this record targets Vertex AI semantics. |
+| `vertex_project` | `Option<String>` | Vertex AI project ID. |
+| `vertex_location` | `Option<String>` | Vertex AI location. |
 
 ### Key methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `base_url_or_default` | `fn base_url_or_default(&self, default: &str) -> String` | Returns `base_url` or the given default, with trailing slash stripped. |
+| `resolved_base_url` | `fn resolved_base_url(&self) -> String` | Returns `base_url` or the canonical default for the record's provider format. |
+| `current_secret` | `fn current_secret(&self) -> String` | Returns the runtime OAuth access token when available, otherwise falls back to `api_key`. |
+| `resolved_auth_header_kind` | `fn resolved_auth_header_kind(&self) -> AuthHeaderKind` | Resolves `auto` into the concrete header kind sent upstream. |
 | `effective_proxy` | `fn effective_proxy<'a>(&'a self, global_proxy: Option<&'a str>) -> Option<&'a str>` | Resolves proxy: entry-level first, then global fallback. |
 | `supports_model` | `fn supports_model(&self, model: &str) -> bool` | Checks if this credential handles the given model. Strips prefix, matches against `models` (with glob), checks `excluded_models`. If no explicit model list, accepts everything not excluded. |
 | `resolve_model_id` | `fn resolve_model_id(&self, model: &str) -> String` | Strips prefix, resolves alias to actual model ID. |
@@ -102,6 +123,7 @@ pub struct ProviderRequest {
     pub stream: bool,
     pub headers: HashMap<String, String>,
     pub original_request: Option<Bytes>,
+    pub responses_passthrough: bool,
 }
 ```
 
@@ -113,6 +135,7 @@ pub struct ProviderRequest {
 | `stream` | `bool` | Whether the client requested streaming. |
 | `headers` | `HashMap<String, String>` | Extra request headers (e.g., claude-header-defaults for cloaking). |
 | `original_request` | `Option<Bytes>` | Original request body, preserved for response translation. |
+| `responses_passthrough` | `bool` | When `true`, the payload is already in OpenAI Responses format and should be forwarded without further conversion. |
 
 ---
 
@@ -194,8 +217,8 @@ pub struct ModelInfo {
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `String` | Model identifier (alias preferred over raw ID). |
-| `provider` | `String` | Provider format string (e.g., `"openai"`, `"claude"`). |
-| `owned_by` | `String` | Same as `provider` (used in OpenAI-compatible response format). |
+| `provider` | `String` | Logical provider name exposed by the router (for example `openai`, `anthropic`, `openai-codex`). |
+| `owned_by` | `String` | Same as `provider`, for OpenAI-compatible list responses. |
 
 ---
 
@@ -210,7 +233,6 @@ Trait implemented by each provider (OpenAI, Claude, Gemini, OpenAI-compat) to ha
 pub trait ProviderExecutor: Send + Sync {
     fn identifier(&self) -> &str;
     fn native_format(&self) -> Format;
-    fn default_base_url(&self) -> &str;
 
     async fn execute(
         &self,
@@ -230,9 +252,8 @@ pub trait ProviderExecutor: Send + Sync {
 
 | Method | Return | Description |
 |--------|--------|-------------|
-| `identifier()` | `&str` | Provider name string (e.g., `"openai"`, `"claude"`, `"gemini"`, `"openai-compat"`). |
+| `identifier()` | `&str` | Executor registry key (for example `"openai"`, `"claude"`, or `"gemini"`). |
 | `native_format()` | `Format` | The provider's native API format. |
-| `default_base_url()` | `&str` | Default upstream URL (e.g., `"https://api.openai.com"`, `"https://api.anthropic.com"`). |
 | `execute()` | `Result<ProviderResponse, ProxyError>` | Non-streaming request execution. |
 | `execute_stream()` | `Result<StreamResult, ProxyError>` | Streaming request execution. |
 | `supported_models()` | `Vec<ModelInfo>` | List of models available through this auth record. |
@@ -241,10 +262,9 @@ pub trait ProviderExecutor: Send + Sync {
 
 | Key | Type | Native Format | Notes |
 |-----|------|--------------|-------|
-| `"openai"` | `openai_compat::OpenAICompatExecutor` | `Format::OpenAI` | Created via `openai::new_openai_executor()` with OpenAI defaults |
+| `"openai"` | `openai_compat::OpenAICompatExecutor` | `Format::OpenAI` | Handles OpenAI-format upstreams, including custom base URLs and `responses` mode |
 | `"claude"` | `claude::ClaudeExecutor` | `Format::Claude` | |
 | `"gemini"` | `gemini::GeminiExecutor` | `Format::Gemini` | |
-| `"openai-compat"` | `openai_compat::OpenAICompatExecutor` | `Format::OpenAICompat` | |
 
 ---
 
@@ -256,13 +276,15 @@ Thread-safe credential store that selects the appropriate credential for each re
 
 ```rust
 pub struct CredentialRouter {
-    credentials: RwLock<HashMap<Format, Vec<AuthRecord>>>,
-    credential_index: RwLock<HashMap<String, (Format, usize)>>,
+    credentials: RwLock<HashMap<String, Vec<AuthRecord>>>,
+    credential_index: RwLock<HashMap<String, (String, usize)>>,
+    runtime_oauth_states: RwLock<HashMap<String, OAuthTokenState>>,
     counters: RwLock<HashMap<String, AtomicUsize>>,
-    strategy: RwLock<RoutingStrategy>,
+    strategy: RwLock<CredentialStrategy>,
     latency_ewma: RwLock<HashMap<String, f64>>,
     ewma_alpha: RwLock<f64>,
     cb_config: RwLock<CircuitBreakerConfig>,
+    cooldowns: DashMap<String, QuotaCooldown>,
 }
 ```
 
@@ -270,16 +292,19 @@ pub struct CredentialRouter {
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `new` | `fn new(strategy: RoutingStrategy) -> Self` | Create a new router with the given strategy. |
-| `pick` | `fn pick(&self, provider: Format, model: &str, tried: &[String], client_region: Option<&str>) -> Option<AuthRecord>` | Pick the next available credential. Filters by availability (circuit breaker), model support, and exclusion of already-tried IDs. Strategy-specific selection: round-robin, fill-first, latency-aware (lowest EWMA), or geo-aware (region match). |
+| `new` | `fn new(strategy: CredentialStrategy) -> Self` | Create a new router with the given strategy. |
+| `set_oauth_states` | `fn set_oauth_states(&self, states: HashMap<String, OAuthTokenState>)` | Injects runtime OAuth state keyed by `provider/profile` before rebuilding auth records. |
+| `pick` | `fn pick(&self, provider_name: &str, model: &str, tried: &[String], client_region: Option<&str>, allowed_credentials: &[String]) -> Option<AuthRecord>` | Picks the next available credential under a logical provider name. Filters by model support, tried IDs, cooldown, and optional credential allowlist. |
 | `record_latency` | `fn record_latency(&self, credential_id: &str, latency_ms: f64)` | Record request latency for EWMA calculation (used by latency-aware routing). |
 | `record_success` | `fn record_success(&self, auth_id: &str)` | Report a successful request to the credential's circuit breaker. |
 | `record_failure` | `fn record_failure(&self, auth_id: &str)` | Report a failed request to the credential's circuit breaker. May trip the circuit open. |
-| `circuit_breaker_states` | `fn circuit_breaker_states(&self) -> Vec<(String, bool)>` | Get circuit breaker availability state for all credentials. Returns `(credential_id, can_execute)`. |
-| `update_from_config` | `fn update_from_config(&self, config: &Config)` | Rebuild all credentials from config. Also updates routing strategy and circuit breaker config. |
-| `all_models` | `fn all_models(&self) -> Vec<ModelInfo>` | List all unique models across all available (non-disabled, circuit-closed) credentials. Prefers alias over raw ID. Deduplicates by model ID. |
+| `set_quota_cooldown` | `fn set_quota_cooldown(&self, credential_id: &str, duration: Duration)` | Temporarily removes a credential from selection after quota-related failures. |
+| `circuit_breaker_states` | `fn circuit_breaker_states(&self) -> Vec<(String, bool)>` | Get circuit breaker availability for all credentials. Returns `(credential_name, can_execute)`. |
+| `update_from_config` | `fn update_from_config(&self, config: &Config)` | Rebuilds auth records from unified `providers[]`, preserving circuit breaker and shared OAuth state where possible. |
+| `all_models` | `fn all_models(&self) -> Vec<ModelInfo>` | Lists all unique models across available credentials, deduplicated by the exposed model ID. |
 | `model_has_prefix` | `fn model_has_prefix(&self, model: &str) -> bool` | Check if any available credential with a prefix supports this model. Used for `force_model_prefix` enforcement. |
-| `resolve_providers` | `fn resolve_providers(&self, model: &str) -> Vec<Format>` | Return all provider formats that have at least one available credential supporting the model. |
+| `resolve_providers` | `fn resolve_providers(&self, model: &str) -> Vec<(String, Format)>` | Return all logical providers that have at least one available credential supporting the model. |
+| `credential_map` | `fn credential_map(&self) -> HashMap<String, Vec<AuthRecord>>` | Returns a snapshot of auth records grouped by logical provider name. |
 
 ---
 
@@ -331,9 +356,12 @@ pub type NonStreamTransformFn =
 |------|----|--------------------|---------------------|
 | `OpenAI` | `Claude` | `openai_to_claude::translate_request` | `claude_to_openai::translate_stream` / `translate_non_stream` |
 | `OpenAI` | `Gemini` | `openai_to_gemini::translate_request` | `gemini_to_openai::translate_stream` / `translate_non_stream` |
-| `OpenAI` | `OpenAICompat` | Passthrough (model name replacement only) | Passthrough (no transformation) |
+| `Gemini` | `OpenAI` | `gemini_to_openai_request::translate_request` | `openai_to_gemini_response::translate_stream` / `translate_non_stream` |
+| `Gemini` | `Claude` | Request-only chain: Gemini -> OpenAI -> Claude | No dedicated response translator |
+| `Claude` | `OpenAI` | `claude_to_openai_request::translate_request` | `openai_to_claude_response::translate_stream` / `translate_non_stream` |
+| `Claude` | `Gemini` | Request-only chain: Claude -> OpenAI -> Gemini | No dedicated response translator |
 
-Same-format pairs (e.g., OpenAI -> OpenAI) are handled implicitly: only the `model` field is replaced. The OpenAI→OpenAICompat entry is an explicit passthrough registered in `build_registry()` to ensure dispatch routing works for OpenAI-compatible providers.
+Same-format pairs (for example `OpenAI -> OpenAI`) are handled implicitly: only the `model` field is replaced. When no direct translator exists for a cross-format pair, the registry falls back to passthrough behavior unless a request-only chained translation is explicitly registered.
 
 ---
 
