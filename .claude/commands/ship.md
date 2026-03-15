@@ -17,6 +17,12 @@ Steps:
    - 如果没有 open PR: 继续正常流程
 3. **格式化 + 检查**: Run `make fmt` + `make lint` — 发现 clippy 问题则修复代码并重新检查，直到通过
 4. **测试**: Run `make test` — 发现失败则修复并重新测试，直到通过
+   - 如果改动涉及 `crates/server/src/handler/dashboard/`、`crates/server/tests/dashboard_tests.rs`、`web/src/` 或 `web/e2e/`，额外运行：
+     - `cd web && npm run lint`
+     - `cd web && npm run test`
+     - `cd web && npm run build`
+     - `cd web && npm run test:e2e`
+   - 如果用户明确要求真实机器/远程验证，在 ship 完成前补跑 remote/live 验证
 5. **文档同步检查**: 检查改动是否涉及以下文件，如有则提醒同步文档:
    - `crates/core/src/provider.rs` 或 `config.rs` 变更 → 检查 `docs/reference/types/` 是否需要更新
    - `crates/server/src/handler/` 或 `lib.rs` 路由变更 → 检查 `docs/reference/api-surface.md`
@@ -34,9 +40,8 @@ Steps:
    - 如果当前在 `main` 分支且改动**已经提交**（即 main 领先 origin/main）:
      - 从最新 commit message 推导分支名
      - `git branch <branch-name>` — 在当前 commit 创建分支
-     - `git reset --hard origin/main` — 将 main 回退到 origin/main
      - `git checkout <branch-name>` — 切换到新分支
-     - 这样 main 保持与 origin/main 同步，新提交在 feature 分支上
+     - 不要重写本地 `main`；后续合并后再回到 `main` 做正常同步
 8. **暂存**: `git add` 改动文件（排除 `config.yaml` / `.env` 等敏感文件）
 9. **提交**: 如果参数中指定了 commit message，使用该 message；否则从分支名 + 改动推导（conventional commit 格式: `feat:`/`fix:`/`docs:`/`refactor:`/`test:`/`chore:`）。执行 `git commit`
 10. **推送**: `git push -u origin HEAD`
@@ -58,6 +63,8 @@ Steps:
       - [ ] `make test` passes
       - [ ] <specific test scenarios>
       ```
+      - 如果本次 PR 完整解决某些 issues/epic，加入 `Closes #...`
+      - 如果只是部分完成，不要提前写 closing keywords
    c. `gh pr create --title "..." --body "..."`
    d. `gh pr checks --watch` — 等待 CI 完成
    e. 如果 `--merge` 且 CI 全部通过:
@@ -70,4 +77,7 @@ Steps:
 12. **本地清理** (仅 `--merge` 且合并成功后):
     - `git checkout main && git pull origin main`
     - `git branch -d <branch-name>` — 删除本地已合并的分支
-13. **结果报告**: 报告 commit SHA、push 结果、PR URL（如适用）、merge 状态（如适用）
+13. **合并后核查** (仅 `--merge` 且 PR 使用了 closing keywords):
+    - 检查 PR 是否确实是 `MERGED`
+    - 检查目标 issues 是否已关闭
+14. **结果报告**: 报告 commit SHA、push 结果、PR URL（如适用）、merge 状态（如适用）
