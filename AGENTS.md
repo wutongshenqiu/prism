@@ -257,11 +257,12 @@ Agent commands defined in `.claude/commands/`. Portable to OpenCode (`.opencode/
 | `/ship` | End-to-end commit pipeline (lint, test, commit, push, PR, CI) | `/ship --merge "feat: xxx"` |
 | `/audit` | Full codebase review + batch fix | `/audit --fix security` |
 | `/lint` | Run formatting + clippy checks | `/lint fix` |
-| `/test` | Run tests (unit, e2e, docker) | `/test unit` |
+| `/test` | Run cargo, web, Playwright, or docker tests | `/test dashboard` |
 | `/spec` | Manage spec lifecycle (create/list/advance/td) | `/spec create "Title"` |
 | `/implement` | Implement a spec end-to-end | `/implement SPEC-008` |
 | `/issues` | Generate GitHub issues from spec | `/issues SPEC-009` |
 | `/review` | Review a pull request | `/review 114` |
+| `/dashboard-control-plane` | Rework dashboard/control-plane correctness, runtime truth, and live browser coverage | `/dashboard-control-plane "runtime truth pages"` |
 | `/diagnose` | Diagnose and fix a project problem | `/diagnose "SSE timeout"` |
 | `/deps` | Dependency management (merge/fix/update) | `/deps merge` |
 | `/merge` | Batch merge multiple PRs | `/merge 81 85` |

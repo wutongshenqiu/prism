@@ -14,6 +14,11 @@ Review the diff above against project conventions (see AGENTS.md):
 - **Provider compatibility**: changes should not break existing provider support
 - **Spec & Reference doc sync**: do docs/reference/ updates needed? Is there a related Spec?
 - **Config compatibility**: config.yaml changes should be backward compatible
+- **Dashboard/control-plane truth** when relevant:
+  - are config writes centralized or duplicated?
+  - does UI derive badges/state from backend/runtime truth, or from frontend assumptions?
+  - do websocket/live-log flows respect filters, page semantics, and visible connection state?
+  - is browser coverage live and contract-relevant, or only mocked smoke coverage?
 
 Output a structured review:
 
@@ -40,3 +45,9 @@ Output a structured review:
 ### Verdict
 <APPROVE / REQUEST_CHANGES / COMMENT>
 ```
+
+For dashboard/control-plane PRs, findings should bias toward:
+- misleading green states
+- duplicated write/reload paths
+- hidden realtime failure modes
+- tests that miss real page contracts

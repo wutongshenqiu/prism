@@ -24,6 +24,12 @@ Steps:
    - If no open PR: continue normal flow
 3. **Format + Check**: Run `make fmt` + `make lint` — fix clippy issues and re-check until passing
 4. **Test**: Run `make test` — fix failures and re-test until passing
+   - If changes touch `crates/server/src/handler/dashboard/`, `crates/server/tests/dashboard_tests.rs`, `web/src/`, or `web/e2e/`, also run:
+     - `cd web && npm run lint`
+     - `cd web && npm run test`
+     - `cd web && npm run build`
+     - `cd web && npm run test:e2e`
+   - If the user explicitly asked for real-machine validation, run the remote/live validation bundle before ship completes
 5. **Doc sync check**: Check if changes affect files that require doc updates:
    - `crates/core/src/provider.rs` or `config.rs` → check `docs/reference/types/`
    - `crates/server/src/handler/` or `lib.rs` routes → check `docs/reference/api-surface.md`
@@ -35,15 +41,20 @@ Steps:
    - Include Spec changes in this commit
 7. **Branch management**:
    - If on `main` with uncommitted changes: derive branch name from commit message, create and switch
-   - If on `main` with committed changes ahead of origin: create branch, reset main to origin, switch
+   - If on `main` with committed changes ahead of origin: create a feature branch at the current `HEAD` and switch to it; do not rewrite `main`
 8. **Stage**: `git add` changed files (exclude `config.yaml` / `.env` / secrets)
 9. **Commit**: Use provided or derived commit message (conventional commit format)
 10. **Push**: `git push -u origin HEAD`
 11. **Create PR** (unless `--no-pr`):
     a. Derive PR title from branch name and commits
     b. Generate PR body with Summary, Changes, Spec & Doc Impact, Test Plan
+       - If the branch fully resolves linked issues/epics, include `Closes #...` keywords
+       - Do not include closing keywords for partially-complete issues
     c. `gh pr create --title "..." --body "..."`
     d. `gh pr checks --watch` — wait for CI
     e. If `--merge` and CI passes: merge PR, handle stacked PRs if any
 12. **Local cleanup** (merge mode only): checkout main, pull, delete local branch
-13. **Report**: commit SHA, push result, PR URL, CI/merge status
+13. **Post-merge verification** (merge mode only):
+   - Verify the PR is actually `MERGED`
+   - If closing keywords were used, confirm the target issues closed
+14. **Report**: commit SHA, push result, PR URL, CI/merge status
