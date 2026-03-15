@@ -299,9 +299,13 @@ Starts a Codex OAuth PKCE flow and returns `{ state, auth_url, provider, profile
 
 Completes the OAuth code exchange, hydrates the auth profile, and persists runtime OAuth tokens into the auth runtime sidecar store (`*.auth-runtime.json`) rather than the YAML config.
 
+#### POST /api/dashboard/auth-profiles/{provider}/{profile}/connect
+
+Connects a managed auth profile that expects operator-supplied runtime credentials. Prism currently supports `anthropic-claude-subscription` here by accepting a Claude setup-token, validating the provider/base URL constraints, and storing the token only in the auth runtime sidecar store.
+
 #### POST /api/dashboard/auth-profiles/{provider}/{profile}/refresh
 
-Refreshes an existing `openai-codex-oauth` auth profile and persists the updated runtime tokens into the auth runtime sidecar store.
+Refreshes an existing refreshable managed auth profile. Prism currently supports `openai-codex-oauth` here and persists the updated runtime tokens into the auth runtime sidecar store.
 
 **Source:** `crates/server/src/handler/dashboard/auth_profiles.rs`
 

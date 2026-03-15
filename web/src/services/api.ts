@@ -31,6 +31,7 @@ import type {
   CodexOauthStartRequest,
   CodexOauthStartResponse,
   CodexOauthCompleteResponse,
+  ConnectAuthProfileRequest,
   ProviderAuthProfile,
 } from '../types';
 
@@ -252,6 +253,10 @@ export const authProfilesApi = {
 
   completeCodexOauth: (state: string, code: string) =>
     api.post<CodexOauthCompleteResponse>('/auth-profiles/codex/oauth/complete', { state, code })
+      .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
+
+  connect: (provider: string, profileId: string, data: ConnectAuthProfileRequest) =>
+    api.post(`/auth-profiles/${encodeURIComponent(provider)}/${encodeURIComponent(profileId)}/connect`, data)
       .then((res) => normalizeAuthProfile(asRecord(res.data).profile)),
 
   refresh: (provider: string, profileId: string) =>

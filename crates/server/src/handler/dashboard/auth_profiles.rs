@@ -5,7 +5,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::{Duration, Utc};
-use prism_core::auth_profile::{AuthHeaderKind, AuthMode, AuthProfileEntry, OAuthTokenState};
+use prism_core::auth_profile::{
+    AuthHeaderKind, AuthMode, AuthProfileEntry, OAuthTokenState,
+    validate_anthropic_subscription_token,
+};
 use prism_core::presentation::UpstreamPresentationConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -96,6 +99,11 @@ pub struct CompleteCodexOauthRequest {
     pub code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ConnectAuthProfileRequest {
+    pub secret: String,
+}
+
 struct AuthProfileDraft {
     mode: AuthMode,
     header: AuthHeaderKind,
@@ -129,7 +137,7 @@ fn profile_connected(profile: &AuthProfileEntry) -> bool {
             .secret
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
-        AuthMode::OpenaiCodexOauth => {
+        AuthMode::OpenaiCodexOauth | AuthMode::AnthropicClaudeSubscription => {
             profile
                 .refresh_token
                 .as_deref()
@@ -283,15 +291,23 @@ fn auth_profile_entry(
             "secret is required for api-key and bearer-token auth profiles",
         ));
     }
-    if matches!(profile.mode, AuthMode::OpenaiCodexOauth) && profile.secret.is_some() {
+    if profile.mode.is_managed() && profile.secret.is_some() {
         return Err(validation_error(
-            "secret must not be set for openai-codex-oauth auth profiles",
+            "secret must not be set for managed auth profiles",
         ));
     }
     profile
         .validate()
         .map_err(|message| validation_error(&message))?;
     Ok(profile)
+}
+
+fn default_managed_header(mode: AuthMode) -> AuthHeaderKind {
+    match mode {
+        AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+        AuthMode::AnthropicClaudeSubscription => AuthHeaderKind::XApiKey,
+        AuthMode::ApiKey | AuthMode::BearerToken => AuthHeaderKind::Auto,
+    }
 }
 
 fn rebuild_router_from_state(state: &AppState) {
@@ -327,20 +343,24 @@ fn internal_error(message: impl Into<String>) -> (StatusCode, Json<serde_json::V
     )
 }
 
-async fn ensure_oauth_profile_shape(
+async fn ensure_managed_profile_shape(
     state: &AppState,
     provider: &str,
     profile_id: &str,
+    mode: AuthMode,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let config = state.config.load();
     let Some(entry) = config.providers.iter().find(|entry| entry.name == provider) else {
         return Err(not_found("Provider not found"));
     };
-    if entry.format != prism_core::provider::Format::OpenAI {
-        return Err(validation_error(
-            "Codex OAuth is only supported for OpenAI-format providers",
-        ));
+    AuthProfileEntry {
+        id: profile_id.to_string(),
+        mode,
+        header: default_managed_header(mode),
+        ..Default::default()
     }
+    .validate_for_provider(entry.format, entry.base_url.as_deref())
+    .map_err(|message| validation_error(&message))?;
     drop(config);
 
     match update_config_versioned(state, None, move |config| {
@@ -355,17 +375,24 @@ async fn ensure_oauth_profile_shape(
                 .iter_mut()
                 .find(|profile| profile.id == profile_id)
             {
-                profile.mode = AuthMode::OpenaiCodexOauth;
-                profile.header = AuthHeaderKind::Bearer;
+                profile.mode = mode;
+                profile.header = default_managed_header(mode);
                 profile.secret = None;
+                profile.access_token = None;
+                profile.refresh_token = None;
+                profile.id_token = None;
+                profile.expires_at = None;
+                profile.account_id = None;
+                profile.email = None;
+                profile.last_refresh = None;
                 profile.disabled = false;
                 return;
             }
 
             entry.auth_profiles.push(AuthProfileEntry {
                 id: profile_id.to_string(),
-                mode: AuthMode::OpenaiCodexOauth,
-                header: AuthHeaderKind::Bearer,
+                mode,
+                header: default_managed_header(mode),
                 disabled: false,
                 ..Default::default()
             });
@@ -424,6 +451,9 @@ pub async fn create_auth_profile(
     else {
         return not_found("Provider not found");
     };
+    if let Err(message) = profile.validate_for_provider(entry.format, entry.base_url.as_deref()) {
+        return validation_error(&message);
+    }
     let duplicate_after_migration = entry.api_key.trim().is_empty()
         && entry.auth_profiles.iter().any(|item| item.id == profile.id);
     let duplicate_legacy_profile = entry.auth_profiles.is_empty()
@@ -455,7 +485,7 @@ pub async fn create_auth_profile(
     .await
     {
         Ok(_) => {
-            if matches!(body.mode, AuthMode::OpenaiCodexOauth)
+            if body.mode.is_managed()
                 && let Err(err) = state
                     .auth_runtime
                     .ensure_profile_placeholder(&body.provider, &profile_id)
@@ -483,20 +513,16 @@ pub async fn replace_auth_profile(
     Path((provider, profile_id)): Path<(String, String)>,
     Json(body): Json<ReplaceAuthProfileRequest>,
 ) -> impl IntoResponse {
-    let existing_profile = state
-        .config
-        .load()
-        .providers
+    let config = state.config.load();
+    let Some(entry) = config.providers.iter().find(|entry| entry.name == provider) else {
+        return not_found("Auth profile not found");
+    };
+    let Some(existing_profile) = entry
+        .auth_profiles
         .iter()
-        .find(|entry| entry.name == provider)
-        .and_then(|entry| {
-            entry
-                .auth_profiles
-                .iter()
-                .find(|profile| profile.id == profile_id)
-        })
-        .cloned();
-    let Some(existing_profile) = existing_profile else {
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+    else {
         return not_found("Auth profile not found");
     };
 
@@ -524,7 +550,13 @@ pub async fn replace_auth_profile(
         Err(response) => return response,
     };
 
-    let profile_was_oauth = existing_profile.mode == AuthMode::OpenaiCodexOauth;
+    if let Err(message) = replacement.validate_for_provider(entry.format, entry.base_url.as_deref())
+    {
+        return validation_error(&message);
+    }
+    drop(config);
+
+    let profile_was_managed = existing_profile.mode.is_managed();
 
     let provider_for_update = provider.clone();
     let profile_id_for_update = profile_id.clone();
@@ -544,14 +576,14 @@ pub async fn replace_auth_profile(
     .await
     {
         Ok(_) => {
-            if matches!(body.mode, AuthMode::OpenaiCodexOauth) {
+            if body.mode.is_managed() {
                 if let Err(err) = state
                     .auth_runtime
                     .ensure_profile_placeholder(&provider, &profile_id)
                 {
                     return internal_error(err);
                 }
-            } else if profile_was_oauth
+            } else if profile_was_managed
                 && let Err(err) = state
                     .auth_runtime
                     .clear_profile_state(&provider, &profile_id)
@@ -629,8 +661,13 @@ pub async fn start_codex_oauth(
         return validation_error("provider, profile_id, and redirect_uri are required");
     }
 
-    if let Err(response) =
-        ensure_oauth_profile_shape(&state, &body.provider, &body.profile_id).await
+    if let Err(response) = ensure_managed_profile_shape(
+        &state,
+        &body.provider,
+        &body.profile_id,
+        AuthMode::OpenaiCodexOauth,
+    )
+    .await
     {
         return response;
     }
@@ -715,8 +752,13 @@ pub async fn complete_codex_oauth(
         }
     };
 
-    if let Err(response) =
-        ensure_oauth_profile_shape(&state, &session.provider, &session.profile_id).await
+    if let Err(response) = ensure_managed_profile_shape(
+        &state,
+        &session.provider,
+        &session.profile_id,
+        AuthMode::OpenaiCodexOauth,
+    )
+    .await
     {
         return response;
     }
@@ -736,6 +778,59 @@ pub async fn complete_codex_oauth(
     }
 }
 
+/// POST /api/dashboard/auth-profiles/{provider}/{profile}/connect
+pub async fn connect_auth_profile(
+    State(state): State<AppState>,
+    Path((provider, profile_id)): Path<(String, String)>,
+    Json(body): Json<ConnectAuthProfileRequest>,
+) -> impl IntoResponse {
+    if body.secret.trim().is_empty() {
+        return validation_error("secret is required");
+    }
+
+    let config = state.config.load();
+    let Some((entry, profile)) = explicit_profile(&config, &provider, &profile_id) else {
+        return not_found("Auth profile not found");
+    };
+    if profile.mode != AuthMode::AnthropicClaudeSubscription {
+        return validation_error(
+            "connect is only supported for anthropic-claude-subscription profiles",
+        );
+    }
+    if let Err(message) = profile.validate_for_provider(entry.format, entry.base_url.as_deref()) {
+        return validation_error(&message);
+    }
+    if let Err(message) = validate_anthropic_subscription_token(body.secret.trim()) {
+        return validation_error(&message);
+    }
+    drop(config);
+
+    if let Err(response) = ensure_managed_profile_shape(
+        &state,
+        &provider,
+        &profile_id,
+        AuthMode::AnthropicClaudeSubscription,
+    )
+    .await
+    {
+        return response;
+    }
+
+    if let Err(err) = state.auth_runtime.store_anthropic_subscription_token(
+        &provider,
+        &profile_id,
+        body.secret.trim(),
+    ) {
+        return internal_error(err);
+    }
+    rebuild_router_from_state(&state);
+
+    match current_profile_response(&state, &provider, &profile_id) {
+        Ok(profile) => (StatusCode::OK, Json(json!({ "profile": profile }))),
+        Err(response) => response,
+    }
+}
+
 /// POST /api/dashboard/auth-profiles/{provider}/{profile}/refresh
 pub async fn refresh_auth_profile(
     State(state): State<AppState>,
@@ -745,8 +840,8 @@ pub async fn refresh_auth_profile(
     let Some((_, profile)) = explicit_profile(&config, &provider, &profile_id) else {
         return not_found("Auth profile not found");
     };
-    if profile.mode != AuthMode::OpenaiCodexOauth {
-        return validation_error("refresh is only supported for openai-codex-oauth profiles");
+    if !profile.mode.supports_refresh() {
+        return validation_error("refresh is only supported for refreshable managed auth profiles");
     }
 
     let oauth_state = match state.auth_runtime.state_for_profile(&provider, &profile_id) {

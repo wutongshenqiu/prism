@@ -3,9 +3,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Duration, Utc};
 use dashmap::DashMap;
-use prism_core::auth_profile::{
-    AuthMode, AuthProfileEntry, OAuthTokenState, SharedOAuthTokenState,
-};
+use prism_core::auth_profile::{AuthProfileEntry, OAuthTokenState, SharedOAuthTokenState};
 use prism_core::config::Config;
 use prism_core::error::ProxyError;
 use prism_core::provider::AuthRecord;
@@ -124,7 +122,7 @@ impl AuthRuntimeManager {
 
         for entry in &config.providers {
             for profile in &entry.auth_profiles {
-                if profile.mode != AuthMode::OpenaiCodexOauth {
+                if !profile.mode.is_managed() {
                     continue;
                 }
                 let key = Self::profile_key(&entry.name, &profile.id);
@@ -193,7 +191,7 @@ impl AuthRuntimeManager {
         provider: &str,
         profile: &AuthProfileEntry,
     ) -> Result<AuthProfileEntry, String> {
-        if profile.mode != AuthMode::OpenaiCodexOauth {
+        if !profile.mode.is_managed() {
             return Ok(profile.clone());
         }
         let Some(state) = self.state_for_profile(provider, &profile.id)? else {
@@ -251,6 +249,27 @@ impl AuthRuntimeManager {
         )
     }
 
+    pub fn store_anthropic_subscription_token(
+        &self,
+        provider: &str,
+        profile_id: &str,
+        token: &str,
+    ) -> Result<(), String> {
+        self.store_state(
+            provider,
+            profile_id,
+            OAuthTokenState {
+                access_token: token.to_string(),
+                refresh_token: String::new(),
+                id_token: None,
+                account_id: None,
+                email: None,
+                expires_at: None,
+                last_refresh: Some(Utc::now()),
+            },
+        )
+    }
+
     pub fn store_state(
         &self,
         provider: &str,
@@ -281,7 +300,7 @@ impl AuthRuntimeManager {
         state: &crate::AppState,
         auth: &AuthRecord,
     ) -> Result<(), ProxyError> {
-        if auth.auth_mode != prism_core::auth_profile::AuthMode::OpenaiCodexOauth {
+        if !auth.auth_mode.supports_refresh() {
             return Ok(());
         }
         let Some(shared) = auth.oauth_state.clone() else {

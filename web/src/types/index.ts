@@ -31,7 +31,11 @@ export interface Provider {
   auth_profiles?: ProviderAuthProfile[];
 }
 
-export type AuthMode = 'api-key' | 'bearer-token' | 'openai-codex-oauth';
+export type AuthMode =
+  | 'api-key'
+  | 'bearer-token'
+  | 'openai-codex-oauth'
+  | 'anthropic-claude-subscription';
 
 export interface ProviderAuthProfile {
   id: string;
@@ -171,6 +175,10 @@ export interface CodexOauthStartResponse {
 
 export interface CodexOauthCompleteResponse {
   profile: AuthProfile;
+}
+
+export interface ConnectAuthProfileRequest {
+  secret: string;
 }
 
 // ── Provider Capabilities ──

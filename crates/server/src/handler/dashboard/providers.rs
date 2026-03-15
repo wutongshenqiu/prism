@@ -3,7 +3,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use prism_core::auth_profile::{AuthMode, AuthProfileEntry, OAuthTokenState};
+use prism_core::auth_profile::{AuthProfileEntry, OAuthTokenState};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -238,6 +238,13 @@ fn normalize_auth_profiles(
     Ok(normalized)
 }
 
+fn validation_error(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"error": "validation_failed", "message": message.into()})),
+    )
+}
+
 fn strip_runtime_oauth_data(
     profiles: Vec<AuthProfileEntry>,
 ) -> (Vec<AuthProfileEntry>, Vec<(String, OAuthTokenState)>) {
@@ -245,7 +252,7 @@ fn strip_runtime_oauth_data(
     let mut runtime_states = Vec::new();
 
     for mut profile in profiles {
-        if profile.mode == AuthMode::OpenaiCodexOauth
+        if profile.mode.is_managed()
             && let Some(state) = OAuthTokenState::from_profile(&profile)
         {
             let has_runtime_material = !state.access_token.is_empty()
@@ -305,15 +312,44 @@ fn validate_auth_shape(
     let has_api_key = api_key.is_some_and(|value| !value.trim().is_empty());
     let has_profiles = !auth_profiles.is_empty();
     if has_api_key && has_profiles {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({
-                "error": "validation_failed",
-                "message": "api_key and auth_profiles are mutually exclusive"
-            })),
+        return Err(validation_error(
+            "api_key and auth_profiles are mutually exclusive",
         ));
     }
     Ok(())
+}
+
+fn validate_provider_auth_profiles(
+    format: prism_core::provider::Format,
+    base_url: Option<&str>,
+    auth_profiles: &[AuthProfileEntry],
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    for profile in auth_profiles {
+        if let Err(message) = profile.validate_for_provider(format, base_url) {
+            return Err(validation_error(message));
+        }
+    }
+    Ok(())
+}
+
+fn config_tx_error_response(
+    error: super::config_tx::ConfigTxError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        super::config_tx::ConfigTxError::Conflict { current_version } => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "conflict",
+                "message": "config version conflict",
+                "current_version": current_version
+            })),
+        ),
+        super::config_tx::ConfigTxError::Validation(message) => validation_error(message),
+        super::config_tx::ConfigTxError::Internal(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "write_failed", "message": message})),
+        ),
+    }
 }
 
 fn is_valid_format(format_str: &str) -> bool {
@@ -399,11 +435,21 @@ pub async fn create_provider(
             ),
         );
     }
+    let format: prism_core::provider::Format = body
+        .format
+        .parse()
+        .unwrap_or(prism_core::provider::Format::OpenAI);
+
     let auth_profiles = match normalize_auth_profiles(&body.auth_profiles) {
         Ok(profiles) => profiles,
         Err(response) => return response,
     };
     if let Err(response) = validate_auth_shape(body.api_key.as_deref(), &auth_profiles) {
+        return response;
+    }
+    if let Err(response) =
+        validate_provider_auth_profiles(format, body.base_url.as_deref(), &auth_profiles)
+    {
         return response;
     }
 
@@ -419,11 +465,6 @@ pub async fn create_provider(
             );
         }
     }
-
-    let format: prism_core::provider::Format = body
-        .format
-        .parse()
-        .unwrap_or(prism_core::provider::Format::OpenAI);
 
     let models = body
         .models
@@ -495,13 +536,10 @@ pub async fn create_provider(
         Err(e) => {
             tracing::error!(
                 name = %provider_name,
-                error = %e,
+                error = ?e,
                 "Failed to create provider"
             );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "write_failed", "message": e})),
-            )
+            config_tx_error_response(e)
         }
     }
 }
@@ -513,15 +551,18 @@ pub async fn update_provider(
     Json(body): Json<UpdateProviderRequest>,
 ) -> impl IntoResponse {
     // Verify provider exists
-    {
+    let existing_entry = {
         let config = state.config.load();
-        if !config.providers.iter().any(|e| e.name == name) {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "not_found", "message": "Provider not found"})),
-            );
+        match config.providers.iter().find(|e| e.name == name) {
+            Some(entry) => entry.clone(),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "not_found", "message": "Provider not found"})),
+                );
+            }
         }
-    }
+    };
 
     let name_for_log = name.clone();
     let auth_profiles = match body
@@ -536,6 +577,31 @@ pub async fn update_provider(
     if let Some(ref profiles) = auth_profiles
         && let Err(response) = validate_auth_shape(body.api_key.as_deref(), profiles)
     {
+        return response;
+    }
+    let effective_auth_profiles = auth_profiles
+        .clone()
+        .unwrap_or_else(|| existing_entry.auth_profiles.clone());
+    let effective_api_key = if let Some(api_key) = body.api_key.as_deref() {
+        api_key
+    } else if !effective_auth_profiles.is_empty() {
+        ""
+    } else {
+        existing_entry.api_key.as_str()
+    };
+    if let Err(response) = validate_auth_shape(Some(effective_api_key), &effective_auth_profiles) {
+        return response;
+    }
+    let effective_base_url = body
+        .base_url
+        .as_ref()
+        .map(|base_url| base_url.as_deref())
+        .unwrap_or(existing_entry.base_url.as_deref());
+    if let Err(response) = validate_provider_auth_profiles(
+        existing_entry.format,
+        effective_base_url,
+        &effective_auth_profiles,
+    ) {
         return response;
     }
     let runtime_oauth_states = auth_profiles.clone().map(strip_runtime_oauth_data);
@@ -633,11 +699,8 @@ pub async fn update_provider(
             )
         }
         Err(e) => {
-            tracing::error!(provider = %name_for_log, error = %e, "Failed to update provider");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "write_failed", "message": e})),
-            )
+            tracing::error!(provider = %name_for_log, error = ?e, "Failed to update provider");
+            config_tx_error_response(e)
         }
     }
 }
@@ -672,11 +735,8 @@ pub async fn delete_provider(
             )
         }
         Err(e) => {
-            tracing::error!(provider = %name_for_log, error = %e, "Failed to delete provider");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "write_failed", "message": e})),
-            )
+            tracing::error!(provider = %name_for_log, error = ?e, "Failed to delete provider");
+            config_tx_error_response(e)
         }
     }
 }
@@ -684,15 +744,10 @@ pub async fn delete_provider(
 async fn update_config_file(
     state: &AppState,
     mutate: impl FnOnce(&mut prism_core::config::Config),
-) -> Result<(), String> {
+) -> Result<(), super::config_tx::ConfigTxError> {
     super::config_tx::update_config_versioned(state, None, mutate)
         .await
         .map(|_| ())
-        .map_err(|e| match e {
-            super::config_tx::ConfigTxError::Conflict { .. } => "conflict".to_string(),
-            super::config_tx::ConfigTxError::Validation(msg)
-            | super::config_tx::ConfigTxError::Internal(msg) => msg,
-        })
 }
 
 #[derive(Debug, Deserialize)]

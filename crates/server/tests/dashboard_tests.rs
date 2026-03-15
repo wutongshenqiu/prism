@@ -809,6 +809,106 @@ async fn test_list_auth_profiles() {
 }
 
 #[tokio::test]
+async fn test_connect_anthropic_subscription_profile_persists_runtime_only() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+    let setup_token = format!("sk-ant-oat01-{}", "a".repeat(96));
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "claude",
+            "name": "anthropic-subscription",
+            "base_url": "https://api.anthropic.com",
+            "auth_profiles": [
+                {
+                    "id": "subscription",
+                    "mode": "anthropic-claude-subscription"
+                }
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/auth-profiles/anthropic-subscription/subscription/connect",
+        &token,
+        json!({
+            "secret": setup_token
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "connect failed: {body:?}");
+    assert_eq!(body["profile"]["mode"], "anthropic-claude-subscription");
+    assert_eq!(body["profile"]["connected"], true);
+    assert_eq!(body["profile"]["refresh_token_present"], false);
+    assert!(body["profile"]["access_token_masked"].is_string());
+
+    reload_runtime_config(&harness);
+
+    let config_path = harness.state.config_path.lock().unwrap().clone();
+    let raw_contents = std::fs::read_to_string(config_path).unwrap();
+    let raw_config = Config::from_yaml_raw(&raw_contents).unwrap();
+    let provider = raw_config
+        .providers
+        .iter()
+        .find(|provider| provider.name == "anthropic-subscription")
+        .unwrap();
+    assert_eq!(provider.auth_profiles[0].access_token, None);
+    assert_eq!(provider.auth_profiles[0].secret, None);
+
+    let runtime_store = read_auth_runtime_store(&harness);
+    let oauth_profiles = runtime_store["oauth_profiles"].as_array().unwrap();
+    assert_eq!(oauth_profiles.len(), 1);
+    assert_eq!(oauth_profiles[0]["provider"], "anthropic-subscription");
+    assert_eq!(oauth_profiles[0]["profile_id"], "subscription");
+    assert!(
+        oauth_profiles[0]["access_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("sk-ant-oat01-")
+    );
+    assert_eq!(oauth_profiles[0]["refresh_token"], "");
+}
+
+#[tokio::test]
+async fn test_reject_anthropic_subscription_profile_on_non_official_base_url() {
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let req = authed_post(
+        "/api/dashboard/providers",
+        &token,
+        json!({
+            "format": "claude",
+            "name": "anthropic-proxy",
+            "base_url": "https://proxy.example.com/anthropic",
+            "auth_profiles": [
+                {
+                    "id": "subscription",
+                    "mode": "anthropic-claude-subscription"
+                }
+            ]
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "expected validation error: {body:?}"
+    );
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("official https://api.anthropic.com")
+    );
+}
+
+#[tokio::test]
 async fn test_start_codex_oauth() {
     let mock = spawn_mock_codex_oauth_server(json!({
         "access_token": "unused",

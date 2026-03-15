@@ -32,6 +32,10 @@ const emptyForm: FormState = {
   prefix: '',
 };
 
+function isManagedMode(mode: AuthMode) {
+  return mode === 'openai-codex-oauth' || mode === 'anthropic-claude-subscription';
+}
+
 function modeLabel(mode: AuthMode) {
   switch (mode) {
     case 'api-key':
@@ -40,6 +44,8 @@ function modeLabel(mode: AuthMode) {
       return 'Bearer token';
     case 'openai-codex-oauth':
       return 'Codex OAuth';
+    case 'anthropic-claude-subscription':
+      return 'Claude Subscription';
     default:
       return mode;
   }
@@ -57,6 +63,9 @@ export default function AuthProfiles() {
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [connectProfile, setConnectProfile] = useState<AuthProfile | null>(null);
+  const [connectSecret, setConnectSecret] = useState('');
+  const [connectError, setConnectError] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -138,12 +147,19 @@ export default function AuthProfiles() {
     setError('');
   };
 
+  const closeConnectModal = () => {
+    setConnectProfile(null);
+    setConnectSecret('');
+    setConnectError('');
+    setConnecting(null);
+  };
+
   const handleSave = async () => {
     if (!form.provider.trim() || !form.id.trim()) {
       setError('Provider and profile id are required');
       return;
     }
-    if (form.mode !== 'openai-codex-oauth' && !editing && !form.secret.trim()) {
+    if (!isManagedMode(form.mode) && !editing && !form.secret.trim()) {
       setError('Secret is required for API key and bearer token auth profiles');
       return;
     }
@@ -151,7 +167,7 @@ export default function AuthProfiles() {
     const payload: AuthProfileUpsertRequest = {
       mode: form.mode,
       secret:
-        form.mode === 'openai-codex-oauth'
+        isManagedMode(form.mode)
           ? undefined
           : (form.secret.trim() || (editing ? undefined : null)),
       disabled: form.disabled,
@@ -201,6 +217,13 @@ export default function AuthProfiles() {
   };
 
   const handleConnect = async (profile: AuthProfile) => {
+    if (profile.mode === 'anthropic-claude-subscription') {
+      setConnectProfile(profile);
+      setConnectSecret('');
+      setConnectError('');
+      return;
+    }
+
     setConnecting(profile.qualified_name);
     try {
       const redirectUri = `${window.location.origin}/auth-profiles/callback`;
@@ -215,6 +238,32 @@ export default function AuthProfiles() {
         type: 'error',
         message: err instanceof Error ? err.message : 'Failed to start OAuth login',
       });
+      setConnecting(null);
+    }
+  };
+
+  const handleConnectToken = async () => {
+    if (!connectProfile) return;
+    if (!connectSecret.trim()) {
+      setConnectError('Token is required');
+      return;
+    }
+
+    setConnecting(connectProfile.qualified_name);
+    setConnectError('');
+    try {
+      await authProfilesApi.connect(connectProfile.provider, connectProfile.id, {
+        secret: connectSecret.trim(),
+      });
+      setNotice({
+        type: 'success',
+        message: `Auth profile "${connectProfile.qualified_name}" connected.`,
+      });
+      closeConnectModal();
+      await fetchData();
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : 'Failed to connect auth profile');
+    } finally {
       setConnecting(null);
     }
   };
@@ -347,6 +396,16 @@ export default function AuthProfiles() {
                               </button>
                             </>
                           )}
+                          {profile.mode === 'anthropic-claude-subscription' && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              title={profile.connected ? 'Reconnect token' : 'Connect token'}
+                              onClick={() => void handleConnect(profile)}
+                              disabled={connecting === profile.qualified_name}
+                            >
+                              <LinkIcon size={14} />
+                            </button>
+                          )}
                           <button className="btn btn-ghost btn-sm" title="Delete" onClick={() => void handleDelete(profile)}>
                             <Trash2 size={14} />
                           </button>
@@ -407,10 +466,11 @@ export default function AuthProfiles() {
                   <option value="api-key">API key</option>
                   <option value="bearer-token">Bearer token</option>
                   <option value="openai-codex-oauth">Codex OAuth</option>
+                  <option value="anthropic-claude-subscription">Claude Subscription</option>
                 </select>
               </div>
 
-              {form.mode !== 'openai-codex-oauth' ? (
+              {!isManagedMode(form.mode) ? (
                 <div className="form-group">
                   <label>Secret {editing && '(leave empty to keep current)'}</label>
                   <input
@@ -422,7 +482,9 @@ export default function AuthProfiles() {
                 </div>
               ) : (
                 <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
-                  OAuth tokens are managed separately from config. Save this profile, then use the link action to connect it.
+                  {form.mode === 'openai-codex-oauth'
+                    ? 'OAuth tokens are managed separately from config. Save this profile, then use the link action to connect it.'
+                    : 'Claude subscription tokens are managed separately from config. Save this profile, then use the link action to paste a `claude setup-token`. This mode is intended for the official Anthropic endpoint only.'}
                 </div>
               )}
 
@@ -471,6 +533,45 @@ export default function AuthProfiles() {
               <button className="btn btn-secondary" onClick={closeModal}>Cancel</button>
               <button className="btn btn-primary" onClick={() => void handleSave()} disabled={saving}>
                 {saving ? 'Saving...' : editing ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {connectProfile && (
+        <div className="modal-overlay" onClick={closeConnectModal}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Connect Auth Profile</h3>
+              <button className="btn btn-ghost btn-sm" onClick={closeConnectModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="page-subtitle" style={{ marginBottom: '1rem' }}>
+                Paste a Claude setup-token for <strong>{connectProfile.qualified_name}</strong>.
+                The token is stored in the runtime auth sidecar, not in config.
+              </p>
+              {connectError && <div className="form-error">{connectError}</div>}
+              <div className="form-group">
+                <label>Setup Token</label>
+                <input
+                  type="password"
+                  value={connectSecret}
+                  onChange={(event) => setConnectSecret(event.target.value)}
+                  placeholder="sk-ant-oat01-..."
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeConnectModal}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleConnectToken()}
+                disabled={connecting === connectProfile.qualified_name}
+              >
+                {connecting === connectProfile.qualified_name ? 'Connecting...' : 'Connect'}
               </button>
             </div>
           </div>

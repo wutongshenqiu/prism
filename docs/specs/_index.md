@@ -50,6 +50,7 @@ All specifications for the AI Proxy Gateway project.
 | SPEC-042 | Crate Structure Refactoring                    | Deprecated | [completed/SPEC-042/](completed/SPEC-042/) — *4/7 goals achieved (prism-types, prism-lifecycle, zombie deps, translator decoupling); remaining goals (core→provider decoupling, axum removal, TLS migration) too invasive for limited benefit* |
 | SPEC-066 | Dashboard Correctness & Control Plane Quality Overhaul | Completed | [completed/SPEC-066/](completed/SPEC-066/) |
 | SPEC-067 | Provider Families & Auth Profiles              | Completed | [completed/SPEC-067/](completed/SPEC-067/) |
+| SPEC-068 | Managed Auth Profiles & Claude Subscription Tokens | Completed | [completed/SPEC-068/](completed/SPEC-068/) |
 
 ## Active
 

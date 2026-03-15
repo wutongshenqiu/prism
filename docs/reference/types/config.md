@@ -845,6 +845,7 @@ pub struct AuthProfileEntry {
 - `id` must be non-empty.
 - `api-key` and `bearer-token` modes require `secret` unless the profile is disabled.
 - `openai-codex-oauth` profiles must not carry a static `secret`.
+- `anthropic-claude-subscription` profiles must not carry a static `secret`, are restricted to Claude-format providers, and must target the official `https://api.anthropic.com` base URL.
 
 ---
 
@@ -855,6 +856,7 @@ pub enum AuthMode {
     ApiKey,
     BearerToken,
     OpenaiCodexOauth,
+    AnthropicClaudeSubscription,
 }
 ```
 
@@ -863,6 +865,7 @@ pub enum AuthMode {
 | `ApiKey` | `api-key` | Static key sent with a provider-specific auth header. |
 | `BearerToken` | `bearer-token` | Static bearer token, used for subscription/setup-token style flows. |
 | `OpenaiCodexOauth` | `openai-codex-oauth` | Refreshable Codex OAuth profile managed through the auth runtime store. |
+| `AnthropicClaudeSubscription` | `anthropic-claude-subscription` | Managed Claude setup-token profile stored only in the auth runtime sidecar and always sent as `x-api-key`. |
 
 ---
 

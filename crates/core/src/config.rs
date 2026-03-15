@@ -208,6 +208,9 @@ impl Config {
                 profile
                     .validate()
                     .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
+                profile
+                    .validate_for_provider(entry.format, entry.base_url.as_deref())
+                    .map_err(|e| anyhow::anyhow!("provider '{}': {e}", entry.name))?;
                 anyhow::ensure!(
                     seen_profile_ids.insert(&profile.id),
                     "duplicate auth profile id '{}' in provider '{}'",

@@ -173,6 +173,37 @@ test.describe('Dashboard Pages', () => {
     await expect(page.getByTestId(`auth-profile-row-codex-gateway/${profileId}`)).toHaveCount(0);
   });
 
+  test('auth profiles page can connect and delete a claude subscription profile', async ({ page }) => {
+    const profileId = `pw-claude-sub-${Date.now()}`;
+    const setupToken = `sk-ant-oat01-${'a'.repeat(96)}`;
+    page.once('dialog', (dialog) => dialog.accept());
+
+    await page.getByRole('link', { name: /auth profiles/i }).click();
+    await page.getByRole('button', { name: /add auth profile/i }).click();
+    await page.locator('.modal select').first().selectOption('claude-gateway');
+    await page.getByPlaceholder('e.g. billing, oauth-user').fill(profileId);
+    await page.locator('.modal select').nth(1).selectOption('anthropic-claude-subscription');
+    await page.getByRole('button', { name: /^create$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" created.`);
+    let row = page.getByTestId(`auth-profile-row-claude-gateway/${profileId}`);
+    await expect(row).toContainText('Disconnected');
+
+    await row.getByTitle('Connect token').click();
+    await expect(page.getByRole('heading', { name: 'Connect Auth Profile' })).toBeVisible();
+    await page.getByPlaceholder('sk-ant-oat01-...').fill(setupToken);
+    await page.getByRole('button', { name: /^connect$/i }).click();
+
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" connected.`);
+    row = page.getByTestId(`auth-profile-row-claude-gateway/${profileId}`);
+    await expect(row).toContainText('Connected');
+    await expect(row).toContainText('sk-a****aaaa');
+
+    await row.getByTitle('Delete').click();
+    await expect(page.locator('body')).toContainText(`Auth profile "claude-gateway/${profileId}" deleted.`);
+    await expect(page.getByTestId(`auth-profile-row-claude-gateway/${profileId}`)).toHaveCount(0);
+  });
+
   test('routing page loads', async ({ page }) => {
     await page.getByRole('link', { name: /routing/i }).click();
     await expect(page.getByRole('heading', { name: 'Routing', exact: true })).toBeVisible();

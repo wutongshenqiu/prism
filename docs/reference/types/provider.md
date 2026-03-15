@@ -59,7 +59,7 @@ pub struct AuthRecord {
 | `wire_api` | `WireApi` | Wire API format (Chat or Responses). |
 | `credential_name` | `Option<String>` | Human-readable routing name, currently `provider/profile`. |
 | `auth_profile_id` | `String` | Stable auth profile ID within the provider family. |
-| `auth_mode` | `AuthMode` | Auth material type (`api-key`, `bearer-token`, or `openai-codex-oauth`). |
+| `auth_mode` | `AuthMode` | Auth material type (`api-key`, `bearer-token`, `openai-codex-oauth`, or `anthropic-claude-subscription`). |
 | `auth_header` | `AuthHeaderKind` | Explicit or derived upstream auth header strategy. |
 | `oauth_state` | `Option<SharedOAuthTokenState>` | Shared runtime OAuth state for refreshable profiles. |
 | `weight` | `u32` | Weight for weighted round-robin routing (default 1). |

@@ -4,6 +4,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use url::Url;
+
+pub const ANTHROPIC_SETUP_TOKEN_PREFIX: &str = "sk-ant-oat01-";
+pub const ANTHROPIC_SETUP_TOKEN_MIN_LENGTH: usize = 80;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -12,6 +16,20 @@ pub enum AuthMode {
     ApiKey,
     BearerToken,
     OpenaiCodexOauth,
+    AnthropicClaudeSubscription,
+}
+
+impl AuthMode {
+    pub fn is_managed(self) -> bool {
+        matches!(
+            self,
+            Self::OpenaiCodexOauth | Self::AnthropicClaudeSubscription
+        )
+    }
+
+    pub fn supports_refresh(self) -> bool {
+        matches!(self, Self::OpenaiCodexOauth)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,7 +115,66 @@ impl AuthProfileEntry {
                     ));
                 }
             }
-            AuthMode::OpenaiCodexOauth => {}
+            AuthMode::OpenaiCodexOauth | AuthMode::AnthropicClaudeSubscription => {
+                let has_secret = self.secret.as_deref().is_some_and(|s| !s.trim().is_empty());
+                if has_secret {
+                    return Err(format!(
+                        "auth profile '{}' managed auth must not set secret",
+                        self.id
+                    ));
+                }
+                if self.mode == AuthMode::AnthropicClaudeSubscription
+                    && let Some(token) = self.access_token.as_deref()
+                    && !token.trim().is_empty()
+                {
+                    validate_anthropic_subscription_token(token)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_provider(
+        &self,
+        format: Format,
+        base_url: Option<&str>,
+    ) -> Result<(), String> {
+        match self.mode {
+            AuthMode::OpenaiCodexOauth => {
+                if format != Format::OpenAI {
+                    return Err(
+                        "openai-codex-oauth is only supported for OpenAI-format providers"
+                            .to_string(),
+                    );
+                }
+                if !matches!(self.header, AuthHeaderKind::Auto | AuthHeaderKind::Bearer) {
+                    return Err(
+                        "openai-codex-oauth profiles must use auto or bearer auth header"
+                            .to_string(),
+                    );
+                }
+            }
+            AuthMode::AnthropicClaudeSubscription => {
+                if format != Format::Claude {
+                    return Err(
+                        "anthropic-claude-subscription is only supported for Claude-format providers"
+                            .to_string(),
+                    );
+                }
+                if !is_official_anthropic_base_url(base_url) {
+                    return Err(
+                        "anthropic-claude-subscription requires the official https://api.anthropic.com base URL"
+                            .to_string(),
+                    );
+                }
+                if !matches!(self.header, AuthHeaderKind::Auto | AuthHeaderKind::XApiKey) {
+                    return Err(
+                        "anthropic-claude-subscription profiles must use auto or x-api-key auth header"
+                            .to_string(),
+                    );
+                }
+            }
+            AuthMode::ApiKey | AuthMode::BearerToken => {}
         }
         Ok(())
     }
@@ -126,6 +203,7 @@ impl AuthProfileEntry {
         match self.header {
             AuthHeaderKind::Auto => match self.mode {
                 AuthMode::BearerToken | AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+                AuthMode::AnthropicClaudeSubscription => AuthHeaderKind::XApiKey,
                 AuthMode::ApiKey => match format {
                     Format::OpenAI => AuthHeaderKind::Bearer,
                     Format::Gemini => {
@@ -165,7 +243,7 @@ pub struct OAuthTokenState {
 
 impl OAuthTokenState {
     pub fn from_profile(profile: &AuthProfileEntry) -> Option<Self> {
-        if profile.mode != AuthMode::OpenaiCodexOauth {
+        if !profile.mode.is_managed() {
             return None;
         }
         Some(Self {
@@ -196,6 +274,35 @@ impl OAuthTokenState {
 }
 
 pub type SharedOAuthTokenState = Arc<RwLock<OAuthTokenState>>;
+
+pub fn validate_anthropic_subscription_token(raw: &str) -> Result<(), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("managed secret must not be empty".to_string());
+    }
+    if !trimmed.starts_with(ANTHROPIC_SETUP_TOKEN_PREFIX) {
+        return Err(format!(
+            "expected token starting with {ANTHROPIC_SETUP_TOKEN_PREFIX}"
+        ));
+    }
+    if trimmed.len() < ANTHROPIC_SETUP_TOKEN_MIN_LENGTH {
+        return Err("token looks too short; paste the full setup-token".to_string());
+    }
+    Ok(())
+}
+
+pub fn is_official_anthropic_base_url(base_url: Option<&str>) -> bool {
+    let raw = base_url.unwrap_or(Format::Claude.default_base_url());
+    Url::parse(raw)
+        .ok()
+        .and_then(|url| {
+            (url.scheme() == "https"
+                && url.host_str() == Some("api.anthropic.com")
+                && (url.port().is_none() || url.port() == Some(443)))
+            .then_some(())
+        })
+        .is_some()
+}
 
 #[cfg(test)]
 mod tests {
@@ -232,5 +339,51 @@ mod tests {
             ..Default::default()
         };
         assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn test_anthropic_subscription_defaults_to_x_api_key() {
+        let profile = AuthProfileEntry {
+            id: "claude-sub".into(),
+            mode: AuthMode::AnthropicClaudeSubscription,
+            ..Default::default()
+        };
+        assert_eq!(
+            profile.resolved_header_kind(Format::Claude, false, Some("https://api.anthropic.com")),
+            AuthHeaderKind::XApiKey
+        );
+    }
+
+    #[test]
+    fn test_validate_anthropic_subscription_token_shape() {
+        let valid = format!(
+            "{ANTHROPIC_SETUP_TOKEN_PREFIX}{}",
+            "a".repeat(ANTHROPIC_SETUP_TOKEN_MIN_LENGTH)
+        );
+        assert!(validate_anthropic_subscription_token(&valid).is_ok());
+        assert!(validate_anthropic_subscription_token("sk-ant-test").is_err());
+    }
+
+    #[test]
+    fn test_validate_for_provider_rejects_non_official_anthropic_base_url() {
+        let profile = AuthProfileEntry {
+            id: "claude-sub".into(),
+            mode: AuthMode::AnthropicClaudeSubscription,
+            ..Default::default()
+        };
+        let err = profile
+            .validate_for_provider(Format::Claude, Some("https://proxy.example.com"))
+            .unwrap_err();
+        assert!(err.contains("official"));
+    }
+
+    #[test]
+    fn test_is_official_anthropic_base_url() {
+        assert!(is_official_anthropic_base_url(Some(
+            "https://api.anthropic.com"
+        )));
+        assert!(!is_official_anthropic_base_url(Some(
+            "https://api.anthropic.com.example.com"
+        )));
     }
 }

@@ -165,6 +165,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(handler::dashboard::auth_profiles::complete_codex_oauth),
         )
         .route(
+            "/api/dashboard/auth-profiles/{provider}/{profile}/connect",
+            axum::routing::post(handler::dashboard::auth_profiles::connect_auth_profile),
+        )
+        .route(
             "/api/dashboard/auth-profiles/{provider}/{profile}/refresh",
             axum::routing::post(handler::dashboard::auth_profiles::refresh_auth_profile),
         )

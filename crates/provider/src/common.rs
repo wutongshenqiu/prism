@@ -1,6 +1,7 @@
 use crate::sse::parse_sse_stream;
 use prism_core::auth_profile::AuthHeaderKind;
 use prism_core::error::ProxyError;
+use prism_core::presentation::protected::is_protected;
 use prism_core::provider::*;
 use prism_core::proxy::HttpClientPool;
 use std::collections::HashMap;
@@ -22,9 +23,15 @@ pub fn apply_headers(
     auth: &AuthRecord,
 ) -> reqwest::RequestBuilder {
     for (k, v) in request_headers {
+        if is_protected(k) {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
     for (k, v) in &auth.headers {
+        if is_protected(k) {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
     }
     req
@@ -114,4 +121,63 @@ pub fn supported_models_from_auth(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prism_core::auth_profile::AuthMode;
+    use prism_core::circuit_breaker::NoopCircuitBreaker;
+    use std::sync::Arc;
+
+    fn make_auth() -> AuthRecord {
+        AuthRecord {
+            id: "auth-1".into(),
+            provider: Format::OpenAI,
+            provider_name: "openai".into(),
+            api_key: "secret".into(),
+            base_url: None,
+            proxy_url: None,
+            headers: HashMap::from([
+                ("authorization".into(), "Bearer evil".into()),
+                ("x-custom".into(), "ok".into()),
+            ]),
+            models: Vec::new(),
+            excluded_models: Vec::new(),
+            prefix: None,
+            disabled: false,
+            circuit_breaker: Arc::new(NoopCircuitBreaker),
+            cloak: None,
+            wire_api: Default::default(),
+            credential_name: None,
+            auth_profile_id: "default".into(),
+            auth_mode: AuthMode::ApiKey,
+            auth_header: AuthHeaderKind::Bearer,
+            oauth_state: None,
+            weight: 1,
+            region: None,
+            upstream_presentation: Default::default(),
+            vertex: false,
+            vertex_project: None,
+            vertex_location: None,
+        }
+    }
+
+    #[test]
+    fn test_apply_headers_skips_protected_headers() {
+        let client = reqwest::Client::new();
+        let request = client.get("https://example.com");
+        let mut request_headers = HashMap::new();
+        request_headers.insert("x-api-key".into(), "evil".into());
+        request_headers.insert("x-test".into(), "safe".into());
+
+        let built = apply_headers(request, &request_headers, &make_auth())
+            .build()
+            .expect("build request");
+        let headers = built.headers();
+        assert_eq!(headers.get("x-test").unwrap(), "safe");
+        assert_eq!(headers.get("x-custom").unwrap(), "ok");
+        assert!(headers.get("authorization").is_none());
+        assert!(headers.get("x-api-key").is_none());
+    }
 }

@@ -117,6 +117,7 @@ impl AuthRecord {
         match self.auth_header {
             AuthHeaderKind::Auto => match self.auth_mode {
                 AuthMode::BearerToken | AuthMode::OpenaiCodexOauth => AuthHeaderKind::Bearer,
+                AuthMode::AnthropicClaudeSubscription => AuthHeaderKind::XApiKey,
                 AuthMode::ApiKey => match self.provider {
                     Format::OpenAI => AuthHeaderKind::Bearer,
                     Format::Gemini => {

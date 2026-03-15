@@ -106,6 +106,8 @@ export default function Providers() {
         return 'Bearer token';
       case 'openai-codex-oauth':
         return 'Codex OAuth';
+      case 'anthropic-claude-subscription':
+        return 'Claude Subscription';
       default:
         return mode;
     }
