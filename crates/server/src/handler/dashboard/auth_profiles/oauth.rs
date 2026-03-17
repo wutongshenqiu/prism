@@ -1,6 +1,6 @@
 use super::{
-    current_profile_response, ensure_managed_profile_shape, internal_error,
-    managed_auth_proxy_url, not_found, rebuild_router_from_state, validation_error,
+    current_profile_response, ensure_managed_profile_shape, internal_error, managed_auth_proxy_url,
+    not_found, rebuild_router_from_state, validation_error,
 };
 use crate::AppState;
 use axum::Json;

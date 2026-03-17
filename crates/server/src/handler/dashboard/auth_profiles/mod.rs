@@ -2,10 +2,8 @@ mod device_flow;
 mod managed;
 mod oauth;
 
-pub use managed::{
-    connect_auth_profile, import_local_auth_profile, refresh_auth_profile,
-};
 pub use device_flow::{poll_codex_device, start_codex_device};
+pub use managed::{connect_auth_profile, import_local_auth_profile, refresh_auth_profile};
 pub use oauth::{complete_codex_oauth, start_codex_oauth};
 
 use super::config_tx::{ConfigTxError, update_config_versioned};

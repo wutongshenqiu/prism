@@ -142,11 +142,11 @@ pub async fn poll_codex_device(
             {
                 return response;
             }
-            if let Err(err) =
-                state
-                    .auth_runtime
-                    .store_codex_tokens(&session.provider, &session.profile_id, &tokens)
-            {
+            if let Err(err) = state.auth_runtime.store_codex_tokens(
+                &session.provider,
+                &session.profile_id,
+                &tokens,
+            ) {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({"error": "store_failed", "message": err})),
