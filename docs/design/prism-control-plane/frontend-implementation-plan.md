@@ -29,7 +29,7 @@ Current implementation path:
 - treat `web/` as the canonical control-plane frontend
 - continue filling remaining workspaces and workflows in place
 
-## Greenfield Stance
+## Clean-Slate Stance
 
 The frontend should be treated as a clean control-plane implementation.
 
@@ -281,7 +281,7 @@ Recommended approach:
 3. use the old version as the production fallback during design validation and implementation
 4. switch the production entry point only after all required pages and workflows are ready
 
-This is a greenfield rebuild with a single production cutover, not a compatibility-driven migration and not a public progressive rollout.
+This is a clean-slate rebuild with a single production cutover, not a compatibility-driven migration and not a public progressive rollout.
 
 ## Testing and Review Gates
 

@@ -324,23 +324,23 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/dashboard/control-plane/command-center",
-            axum::routing::get(handler::dashboard::control_plane_v2::command_center),
+            axum::routing::get(handler::dashboard::control_plane_workspace::command_center),
         )
         .route(
             "/api/dashboard/control-plane/traffic-lab",
-            axum::routing::get(handler::dashboard::control_plane_v2::traffic_lab),
+            axum::routing::get(handler::dashboard::control_plane_workspace::traffic_lab),
         )
         .route(
             "/api/dashboard/control-plane/provider-atlas",
-            axum::routing::get(handler::dashboard::control_plane_v2::provider_atlas),
+            axum::routing::get(handler::dashboard::control_plane_workspace::provider_atlas),
         )
         .route(
             "/api/dashboard/control-plane/route-studio",
-            axum::routing::get(handler::dashboard::control_plane_v2::route_studio),
+            axum::routing::get(handler::dashboard::control_plane_workspace::route_studio),
         )
         .route(
             "/api/dashboard/control-plane/change-studio",
-            axum::routing::get(handler::dashboard::control_plane_v2::change_studio),
+            axum::routing::get(handler::dashboard::control_plane_workspace::change_studio),
         )
         .route(
             "/api/dashboard/routing/explain",

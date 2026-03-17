@@ -4,7 +4,7 @@ pub mod auth_profiles;
 pub mod config_ops;
 pub mod config_tx;
 pub mod control_plane;
-pub mod control_plane_v2;
+pub mod control_plane_workspace;
 pub mod logs;
 pub mod providers;
 pub mod routing;

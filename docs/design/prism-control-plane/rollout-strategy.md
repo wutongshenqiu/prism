@@ -144,7 +144,7 @@ Use rollout metrics that reflect control-plane quality, not just page views.
 
 Prism should make one clean decision:
 
-- architecture: greenfield
+- architecture: clean-slate
 - production launch: single cutover
 - interim production entry: current dashboard until readiness
 

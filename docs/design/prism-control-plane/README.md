@@ -47,7 +47,7 @@ Under the surface, the redesign is also moving away from page-thinking toward ob
 
 Implementation stance:
 
-- UI and interaction model can be rebuilt greenfield
+- UI and interaction model can be rebuilt from a clean slate
 - production release should be a full cutover after the new control plane is complete
 - current backend capabilities are inputs, not upper bounds
 
