@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Panel } from '../components/Panel';
-import { StatusPill } from '../components/StatusPill';
-import { WorkbenchSheet } from '../components/WorkbenchSheet';
+import { ProviderAtlasOverview } from '../components/provider-atlas/ProviderAtlasOverview';
+import {
+  AuthProfileWorkbenchSheet,
+  ProviderEditorSheet,
+  ProviderRegistrySheet,
+} from '../components/provider-atlas/ProviderAtlasSheets';
+import {
+  type ProviderEditorFormState,
+  type ProviderRegistryFormState,
+} from '../components/provider-atlas/types';
 import { useProviderAtlasData } from '../hooks/useWorkspaceData';
 import {
   emptyProfileForm,
@@ -25,16 +32,6 @@ import type {
   ProviderHealthResult,
 } from '../types/backend';
 
-interface ProviderRegistryFormState {
-  name: string;
-  format: 'openai' | 'claude' | 'gemini';
-  upstream: string;
-  apiKey: string;
-  baseUrl: string;
-  models: string;
-  disabled: boolean;
-}
-
 const emptyRegistryForm: ProviderRegistryFormState = {
   name: '',
   format: 'openai',
@@ -44,12 +41,6 @@ const emptyRegistryForm: ProviderRegistryFormState = {
   models: '',
   disabled: true,
 };
-
-function protocolCoverageLabel(mode?: string | null) {
-  if (!mode) return 'unsupported';
-  if (mode === 'native') return 'native';
-  return 'adapted';
-}
 
 export function ProviderAtlasPage() {
   const { data, error, loading, reload } = useProviderAtlasData();
@@ -72,7 +63,7 @@ export function ProviderAtlasPage() {
   const [refreshingProfileId, setRefreshingProfileId] = useState<string | null>(null);
   const [selectedAuthProfileId, setSelectedAuthProfileId] = useState<string | null>(null);
   const [importingProfileId, setImportingProfileId] = useState<string | null>(null);
-  const [formState, setFormState] = useState({
+  const [formState, setFormState] = useState<ProviderEditorFormState>({
     baseUrl: '',
     region: '',
     weight: '1',
@@ -722,630 +713,99 @@ export function ProviderAtlasPage() {
         </div>
       </section>
 
-      {selectedRow ? (
-        <div className="status-message status-message--warning">
-          Active provider: <strong>{selectedRow.provider}</strong> · {selectedRow.status} · {selectedRow.auth}
-        </div>
-      ) : null}
+      <ProviderAtlasOverview
+        loading={loading}
+        error={error}
+        data={data}
+        selectedProvider={selectedProvider}
+        selectedRow={selectedRow}
+        selectedCapabilities={selectedCapabilities}
+        protocolFacts={protocolFacts}
+        filteredProtocolCoverage={filteredProtocolCoverage}
+        filteredModelInventory={filteredModelInventory}
+        protocolSearch={protocolSearch}
+        modelSearch={modelSearch}
+        onSelectProvider={setSelectedProvider}
+        onProtocolSearchChange={setProtocolSearch}
+        onModelSearchChange={setModelSearch}
+        onOpenRegistryWorkbench={openRegistryWorkbench}
+      />
 
-      <div className="two-column">
-        <Panel title="Provider roster" subtitle="Entity graph for providers, auth profiles, and live probe posture." className="panel--wide">
-          <div className="inline-actions">
-            <button type="button" className="button button--ghost" onClick={openRegistryWorkbench}>
-              Provider registry
-            </button>
-          </div>
-          <div className="table-grid table-grid--providers">
-            <div className="table-grid__head">Provider</div>
-            <div className="table-grid__head">Format</div>
-            <div className="table-grid__head">Auth</div>
-            <div className="table-grid__head">Status</div>
-            <div className="table-grid__head">Rotation</div>
-            {loading && !data ? <div className="table-grid__cell">Loading providers…</div> : null}
-            {error && !data ? <div className="table-grid__cell">{error}</div> : null}
-            {(data?.providers ?? []).flatMap((provider) => {
-              const selected = provider.provider === selectedProvider;
-              const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;
-              return [
-                <div
-                  key={`${provider.provider}-name`}
-                  className={`${cellClass} table-grid__cell--strong`}
-                  onClick={() => setSelectedProvider(provider.provider)}
-                >
-                  {provider.provider}
-                </div>,
-                <div key={`${provider.provider}-format`} className={cellClass} onClick={() => setSelectedProvider(provider.provider)}>
-                  {provider.format}
-                </div>,
-                <div key={`${provider.provider}-auth`} className={cellClass} onClick={() => setSelectedProvider(provider.provider)}>
-                  {provider.auth}
-                </div>,
-                <div key={`${provider.provider}-status`} className={cellClass} onClick={() => setSelectedProvider(provider.provider)}>
-                  <StatusPill label={provider.status} tone={provider.status_tone} />
-                </div>,
-                <div key={`${provider.provider}-rotation`} className={cellClass} onClick={() => setSelectedProvider(provider.provider)}>
-                  {provider.rotation}
-                </div>,
-              ];
-            })}
-          </div>
-        </Panel>
-
-        <Panel title="Capability coverage" subtitle="Protocol truth, model surface, and auth/runtime readiness.">
-          <ul className="fact-list">
-            {(data?.coverage ?? []).map((fact) => (
-              <li key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></li>
-            ))}
-            {selectedCapabilities ? (
-              <>
-                <li><span>Probe status</span><strong>{selectedCapabilities.probe_status}</strong></li>
-                <li><span>Presentation</span><strong>{selectedCapabilities.presentation_profile}</strong></li>
-                <li><span>Model surface</span><strong>{selectedCapabilities.models.length}</strong></li>
-                <li><span>Tool support</span><strong>{selectedCapabilities.probe.tools.status}</strong></li>
-              </>
-            ) : null}
-          </ul>
-        </Panel>
-      </div>
-
-      <div className="two-column">
-        <Panel title="Protocol surfaces" subtitle="Ingress routes, execution modes, and provider truth should be visible without opening legacy pages.">
-          <div className="inline-actions">
-            <input
-              name="provider-protocol-search"
-              placeholder="Filter protocol surfaces"
-              autoComplete="off"
-              value={protocolSearch}
-              onChange={(event) => setProtocolSearch(event.target.value)}
-            />
-          </div>
-          <ul className="fact-list">
-            <li><span>Public routes</span><strong>{protocolFacts.publicRoutes}</strong></li>
-            <li><span>Provider routes</span><strong>{protocolFacts.providerRoutes}</strong></li>
-            <li><span>Native surfaces</span><strong>{protocolFacts.nativeSurfaces}</strong></li>
-            <li><span>Adapted surfaces</span><strong>{protocolFacts.adaptedSurfaces}</strong></li>
-          </ul>
-          <div className="probe-list">
-            {filteredProtocolCoverage.map((entry) => (
-              <div key={`${entry.provider}-${entry.surface_id}`} className="probe-check">
-                <span>{entry.surface_label}</span>
-                <strong>{protocolCoverageLabel(entry.execution_mode)}</strong>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="Model inventory" subtitle="Unique model mappings and runtime capability truth are part of provider operations, not a separate admin silo.">
-          <div className="inline-actions">
-            <input
-              name="provider-model-search"
-              placeholder="Filter model inventory"
-              autoComplete="off"
-              value={modelSearch}
-              onChange={(event) => setModelSearch(event.target.value)}
-            />
-          </div>
-          {filteredModelInventory.length === 0 ? (
-            <div className="status-message">No provider model inventory is configured yet.</div>
-          ) : (
-            <div className="probe-list">
-              {filteredModelInventory.map((item) => (
-                <div key={`${item.provider}-${item.id}`} className="probe-check">
-                  <span>{item.id}</span>
-                  <strong>{item.provider} · {item.probe}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
-      </div>
-
-      <WorkbenchSheet
+      <ProviderEditorSheet
         open={editorOpen}
+        loadingDetail={loadingDetail}
+        actionStatus={actionStatus}
+        actionError={actionError}
+        detail={detail}
+        runtimeInfo={runtimeInfo}
+        health={health}
+        preview={preview}
+        previewing={previewing}
+        saving={saving}
+        selectedCapabilities={selectedCapabilities}
+        formState={formState}
+        refreshingProfileId={refreshingProfileId}
         onClose={() => setEditorOpen(false)}
-        title="Provider editor"
-        subtitle="Edit runtime-facing provider fields, run a real upstream health probe, and preview presentation mutations."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={() => void runHealthCheck()}>
-              Run health probe
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void runPresentationPreview()} disabled={previewing}>
-              {previewing ? 'Previewing…' : 'Presentation preview'}
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void saveProvider()} disabled={saving}>
-              {saving ? 'Saving…' : 'Save provider'}
-            </button>
-          </>
-        )}
-      >
-        {loadingDetail ? <div className="status-message">Loading provider detail…</div> : null}
-        {actionStatus ? <div className="status-message status-message--success">{actionStatus}</div> : null}
-        {actionError ? <div className="status-message status-message--danger">{actionError}</div> : null}
+        onRunHealthCheck={() => void runHealthCheck()}
+        onRunPresentationPreview={() => void runPresentationPreview()}
+        onSaveProvider={() => void saveProvider()}
+        onFormStateChange={(patch) => setFormState((current) => ({ ...current, ...patch }))}
+        onRefreshAuthProfile={(provider, profileId) => void refreshAuthProfile(provider, profileId)}
+      />
 
-        {detail ? (
-          <>
-            <section className="sheet-section">
-              <h3>Provider posture</h3>
-              <div className="detail-grid">
-                <div className="detail-grid__row"><span>Name</span><strong>{detail.name}</strong></div>
-                <div className="detail-grid__row"><span>Format</span><strong>{detail.format}</strong></div>
-                <div className="detail-grid__row"><span>Upstream</span><strong>{detail.upstream}</strong></div>
-                <div className="detail-grid__row"><span>Auth profiles</span><strong>{detail.auth_profiles.length}</strong></div>
-              </div>
-            </section>
-
-            <section className="sheet-section">
-              <h3>Editable runtime fields</h3>
-              <div className="sheet-form">
-                <label className="sheet-field">
-                  <span>Base URL</span>
-                  <input
-                    name="provider-base-url"
-                    type="url"
-                    autoComplete="url"
-                    value={formState.baseUrl}
-                    onChange={(event) => setFormState((current) => ({ ...current, baseUrl: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>Region</span>
-                  <input
-                    name="provider-region"
-                    autoComplete="off"
-                    value={formState.region}
-                    onChange={(event) => setFormState((current) => ({ ...current, region: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>Weight</span>
-                  <input
-                    name="provider-weight"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    value={formState.weight}
-                    onChange={(event) => setFormState((current) => ({ ...current, weight: event.target.value }))}
-                  />
-                </label>
-                <label className="detail-grid__row">
-                  <span>Disabled</span>
-                  <input
-                    type="checkbox"
-                    checked={formState.disabled}
-                    onChange={(event) => setFormState((current) => ({ ...current, disabled: event.target.checked }))}
-                  />
-                </label>
-              </div>
-            </section>
-
-            <section className="sheet-section">
-              <h3>Auth profiles</h3>
-              <div className="probe-list">
-                {detail.auth_profiles.length === 0 ? (
-                  <div className="probe-check">
-                    <span>Profiles</span>
-                    <strong>None configured</strong>
-                  </div>
-                ) : (
-                  detail.auth_profiles.map((profile) => (
-                    <div key={profile.qualified_name} className="probe-check">
-                      <span>{profile.qualified_name}</span>
-                      <strong>{profile.mode}</strong>
-                      {profile.refresh_token_present ? (
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          onClick={() => void refreshAuthProfile(detail.name, profile.id)}
-                          disabled={refreshingProfileId === profileKey(detail.name, profile.id)}
-                        >
-                          {refreshingProfileId === profileKey(detail.name, profile.id) ? 'Refreshing…' : 'Refresh'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            {runtimeInfo ? (
-              <section className="sheet-section">
-                <h3>Managed auth runtime</h3>
-                <div className="detail-grid">
-                  <div className="detail-grid__row"><span>Storage dir</span><strong>{runtimeInfo.storage_dir ?? 'not configured'}</strong></div>
-                  <div className="detail-grid__row"><span>Codex auth file</span><strong>{runtimeInfo.codex_auth_file ?? 'not configured'}</strong></div>
-                  <div className="detail-grid__row"><span>Proxy URL</span><strong>{runtimeInfo.proxy_url ?? 'none'}</strong></div>
-                </div>
-              </section>
-            ) : null}
-
-            {health ? (
-              <section className="sheet-section">
-                <h3>Health probe</h3>
-                <div className="detail-grid">
-                  <div className="detail-grid__row"><span>Status</span><strong>{health.status}</strong></div>
-                  <div className="detail-grid__row"><span>Checked at</span><strong>{health.checked_at}</strong></div>
-                  <div className="detail-grid__row"><span>Latency</span><strong>{health.latency_ms} ms</strong></div>
-                </div>
-                <div className="probe-list">
-                  {health.checks.map((check) => (
-                    <div key={check.capability} className="probe-check">
-                      <span>{check.capability}</span>
-                      <strong>{check.status}</strong>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {preview ? (
-              <section className="sheet-section">
-                <h3>Presentation preview</h3>
-                <div className="detail-grid">
-                  <div className="detail-grid__row"><span>Profile</span><strong>{preview.profile}</strong></div>
-                  <div className="detail-grid__row"><span>Activated</span><strong>{preview.activated ? 'yes' : 'no'}</strong></div>
-                  <div className="detail-grid__row"><span>Protected headers blocked</span><strong>{preview.protected_headers_blocked.length}</strong></div>
-                  <div className="detail-grid__row"><span>Mutations</span><strong>{preview.body_mutations.length}</strong></div>
-                </div>
-                <div className="probe-list">
-                  {preview.body_mutations.map((mutation) => (
-                    <div key={`${mutation.kind}-${mutation.reason ?? 'none'}`} className="probe-check">
-                      <span>{mutation.kind}</span>
-                      <strong>{mutation.applied ? 'applied' : mutation.reason ?? 'skipped'}</strong>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-          </>
-        ) : null}
-      </WorkbenchSheet>
-
-      <WorkbenchSheet
+      <ProviderRegistrySheet
         open={registryOpen}
+        registryStatus={registryStatus}
+        registryError={registryError}
+        registryLoading={registryLoading}
+        registryForm={registryForm}
+        selectedProvider={selectedProvider}
+        selectedRow={selectedRow}
+        selectedProbeStatus={selectedCapabilities?.probe_status ?? null}
         onClose={() => setRegistryOpen(false)}
-        title="Provider registry workbench"
-        subtitle="Create disabled providers, fetch model inventories, and remove obsolete runtime entities without leaving the atlas."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={() => void fetchModelsIntoDraft()} disabled={registryLoading}>
-              {registryLoading ? 'Working…' : 'Fetch models'}
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void deleteSelectedProvider()} disabled={registryLoading || !selectedProvider}>
-              Delete selected
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void createProvider()} disabled={registryLoading}>
-              {registryLoading ? 'Saving…' : 'Create provider'}
-            </button>
-          </>
-        )}
-      >
-        {registryStatus ? <div className="status-message status-message--success">{registryStatus}</div> : null}
-        {registryError ? <div className="status-message status-message--danger">{registryError}</div> : null}
+        onRegistryFormChange={(patch) => setRegistryForm((current) => ({ ...current, ...patch }))}
+        onFetchModels={() => void fetchModelsIntoDraft()}
+        onDeleteSelectedProvider={() => void deleteSelectedProvider()}
+        onCreateProvider={() => void createProvider()}
+      />
 
-            <section className="sheet-section">
-              <h3>New provider draft</h3>
-              <form
-                className="sheet-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void createProvider();
-                }}
-              >
-                <label className="sheet-field">
-                  <span>Name</span>
-                  <input
-                    name="provider-name"
-                    autoComplete="organization"
-                    value={registryForm.name}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, name: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>Format</span>
-                  <select value={registryForm.format} onChange={(event) => setRegistryForm((current) => ({ ...current, format: event.target.value as ProviderRegistryFormState['format'] }))}>
-                    <option value="openai">openai</option>
-                    <option value="claude">claude</option>
-                    <option value="gemini">gemini</option>
-                  </select>
-                </label>
-                <label className="sheet-field">
-                  <span>Upstream</span>
-                  <input
-                    name="provider-upstream"
-                    autoComplete="off"
-                    value={registryForm.upstream}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, upstream: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>API key</span>
-                  <input
-                    name="provider-api-key"
-                    type="password"
-                    autoComplete="new-password"
-                    value={registryForm.apiKey}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, apiKey: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>Base URL</span>
-                  <input
-                    name="registry-base-url"
-                    type="url"
-                    autoComplete="url"
-                    value={registryForm.baseUrl}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, baseUrl: event.target.value }))}
-                  />
-                </label>
-                <label className="sheet-field">
-                  <span>Models</span>
-                  <input
-                    name="provider-models"
-                    autoComplete="off"
-                    value={registryForm.models}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, models: event.target.value }))}
-                  />
-                </label>
-                <label className="detail-grid__row">
-                  <span>Disabled</span>
-                  <input
-                    type="checkbox"
-                    checked={registryForm.disabled}
-                    onChange={(event) => setRegistryForm((current) => ({ ...current, disabled: event.target.checked }))}
-                  />
-                </label>
-              </form>
-            </section>
-
-        <section className="sheet-section">
-          <h3>Selected provider</h3>
-          <div className="detail-grid">
-            <div className="detail-grid__row"><span>Name</span><strong>{selectedProvider ?? 'none selected'}</strong></div>
-            <div className="detail-grid__row"><span>Status</span><strong>{selectedRow?.status ?? 'n/a'}</strong></div>
-            <div className="detail-grid__row"><span>Auth posture</span><strong>{selectedRow?.auth ?? 'n/a'}</strong></div>
-            <div className="detail-grid__row"><span>Coverage</span><strong>{selectedCapabilities?.probe_status ?? 'n/a'}</strong></div>
-          </div>
-        </section>
-      </WorkbenchSheet>
-
-      <WorkbenchSheet
+      <AuthProfileWorkbenchSheet
         open={authWorkbenchOpen}
+        authLoading={authLoading}
+        authStatus={authStatus}
+        authError={authError}
+        authSaving={authSaving}
+        authEditorMode={authEditorMode}
+        runtimeInfo={runtimeInfo}
+        providers={data?.providers ?? []}
+        authForm={authForm}
+        selectedAuthProfile={selectedAuthProfile}
+        selectedProfiles={selectedProfiles}
+        selectedAuthProfileId={selectedAuthProfileId}
+        selectedAuthProfileMode={selectedAuthProfileMode}
+        connectSecret={connectSecret}
+        importPath={importPath}
+        deviceFlow={deviceFlow}
+        importingProfileId={importingProfileId}
+        refreshingProfileId={refreshingProfileId}
+        connectingProfileId={connectingProfileId}
         onClose={() => setAuthWorkbenchOpen(false)}
-        title="Auth profile workbench"
-        subtitle="Managed auth should be operated as first-class provider identity, not hidden behind provider config blobs."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={startNewAuthProfileDraft}>
-              New draft
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => void importSelectedProfile()}
-              disabled={!selectedAuthProfile || importingProfileId !== null}
-            >
-              {importingProfileId ? 'Importing…' : 'Import local'}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => void startBrowserOauth()}
-              disabled={!selectedAuthProfile || selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
-            >
-              {connectingProfileId ? 'Connecting…' : 'Browser OAuth'}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => void startDeviceFlow()}
-              disabled={!selectedAuthProfile || selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
-            >
-              {deviceFlow ? 'Device active' : 'Device flow'}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => void refreshAuthProfile(selectedAuthProfile?.provider ?? '', selectedAuthProfile?.id ?? '')}
-              disabled={!selectedAuthProfile || refreshingProfileId !== null}
-            >
-              {refreshingProfileId ? 'Refreshing…' : 'Refresh selected'}
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void deleteSelectedProfile()} disabled={!selectedAuthProfile}>
-              Delete selected
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void saveAuthProfile()} disabled={authSaving}>
-              {authSaving ? 'Saving…' : authEditorMode === 'edit' ? 'Save profile' : 'Create profile'}
-            </button>
-          </>
-        )}
-      >
-        {authLoading ? <div className="status-message">Loading auth profiles…</div> : null}
-        {authStatus ? <div className="status-message status-message--success">{authStatus}</div> : null}
-        {authError ? <div className="status-message status-message--danger">{authError}</div> : null}
-
-        {runtimeInfo ? (
-          <section className="sheet-section">
-            <h3>Managed auth runtime</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Storage dir</span><strong>{runtimeInfo.storage_dir ?? 'not configured'}</strong></div>
-              <div className="detail-grid__row"><span>Codex auth file</span><strong>{runtimeInfo.codex_auth_file ?? 'not configured'}</strong></div>
-              <div className="detail-grid__row"><span>Proxy URL</span><strong>{runtimeInfo.proxy_url ?? 'none'}</strong></div>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="sheet-section">
-          <h3>{authEditorMode === 'edit' ? 'Edit profile' : 'Create profile'}</h3>
-          <form
-            className="sheet-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void saveAuthProfile();
-            }}
-          >
-            <label className="sheet-field">
-              <span>Provider</span>
-              <select value={authForm.provider} onChange={(event) => setAuthForm((current) => ({ ...current, provider: event.target.value }))}>
-                {(data?.providers ?? []).map((provider) => (
-                  <option key={provider.provider} value={provider.provider}>{provider.provider}</option>
-                ))}
-              </select>
-            </label>
-            <label className="sheet-field">
-              <span>Profile id</span>
-              <input
-                name="auth-profile-id"
-                autoComplete="username"
-                value={authForm.id}
-                onChange={(event) => setAuthForm((current) => ({ ...current, id: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Mode</span>
-              <select value={authForm.mode} onChange={(event) => setAuthForm((current) => ({ ...current, mode: event.target.value }))}>
-                <option value="api-key">api-key</option>
-                <option value="bearer-token">bearer-token</option>
-                <option value="codex-oauth">codex-oauth</option>
-                <option value="anthropic-claude-subscription">anthropic-claude-subscription</option>
-              </select>
-            </label>
-            <label className="sheet-field">
-              <span>{isManagedMode(authForm.mode) ? 'Secret (optional on create)' : 'Secret'}</span>
-              <input
-                name="auth-profile-secret"
-                type="password"
-                autoComplete="new-password"
-                value={authForm.secret}
-                onChange={(event) => setAuthForm((current) => ({ ...current, secret: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Weight</span>
-              <input
-                name="auth-profile-weight"
-                inputMode="numeric"
-                autoComplete="off"
-                value={authForm.weight}
-                onChange={(event) => setAuthForm((current) => ({ ...current, weight: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Region</span>
-              <input
-                name="auth-profile-region"
-                autoComplete="off"
-                value={authForm.region}
-                onChange={(event) => setAuthForm((current) => ({ ...current, region: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Prefix</span>
-              <input
-                name="auth-profile-prefix"
-                autoComplete="off"
-                value={authForm.prefix}
-                onChange={(event) => setAuthForm((current) => ({ ...current, prefix: event.target.value }))}
-              />
-            </label>
-            <label className="detail-grid__row">
-              <span>Disabled</span>
-              <input
-                type="checkbox"
-                checked={authForm.disabled}
-                onChange={(event) => setAuthForm((current) => ({ ...current, disabled: event.target.checked }))}
-              />
-            </label>
-          </form>
-        </section>
-
-        {selectedAuthProfile ? (
-          <section className="sheet-section">
-            <h3>Selected profile posture</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Profile</span><strong>{selectedAuthProfile.qualified_name}</strong></div>
-              <div className="detail-grid__row"><span>Mode</span><strong>{selectedAuthProfile.mode}</strong></div>
-              <div className="detail-grid__row"><span>Connected</span><strong>{selectedAuthProfile.connected ? 'yes' : 'no'}</strong></div>
-              <div className="detail-grid__row"><span>Account</span><strong>{selectedAuthProfile.email ?? selectedAuthProfile.account_id ?? 'unknown'}</strong></div>
-            </div>
-
-            {selectedAuthProfile.mode === 'anthropic-claude-subscription' ? (
-              <div className="sheet-form">
-                <label className="sheet-field">
-                  <span>Subscription token</span>
-                  <input
-                    name="auth-profile-connect-secret"
-                    type="password"
-                    autoComplete="new-password"
-                    value={connectSecret}
-                    onChange={(event) => setConnectSecret(event.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => void connectSelectedProfile()}
-                  disabled={connectingProfileId === profileKey(selectedAuthProfile.provider, selectedAuthProfile.id)}
-                >
-                  {connectingProfileId === profileKey(selectedAuthProfile.provider, selectedAuthProfile.id) ? 'Connecting…' : 'Connect secret'}
-                </button>
-              </div>
-            ) : null}
-
-            {selectedAuthProfile.mode === 'codex-oauth' ? (
-              <>
-                <div className="sheet-form">
-                  <label className="sheet-field">
-                    <span>Import path</span>
-                    <input
-                      name="auth-profile-import-path"
-                      autoComplete="off"
-                      value={importPath}
-                      onChange={(event) => setImportPath(event.target.value)}
-                    />
-                  </label>
-                </div>
-                {deviceFlow ? (
-                  <div className="status-message status-message--warning">
-                    Device flow active. Visit <strong>{deviceFlow.verification_url}</strong> and enter code <strong>{deviceFlow.user_code}</strong>.
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-          </section>
-        ) : null}
-
-        <section className="sheet-section">
-          <h3>Existing profiles</h3>
-          <div className="probe-list">
-            {selectedProfiles.length === 0 ? (
-              <div className="probe-check">
-                <span>Profiles</span>
-                <strong>None configured for this provider</strong>
-              </div>
-            ) : (
-              selectedProfiles.map((profile) => {
-                const currentKey = profileKey(profile.provider, profile.id);
-                return (
-                  <div key={currentKey} className={`probe-check ${selectedAuthProfileId === currentKey ? 'probe-check--selected' : ''}`}>
-                    <span>{profile.qualified_name}</span>
-                    <strong>{profile.mode} · {profile.connected ? 'connected' : 'disconnected'}</strong>
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      onClick={() => {
-                        setSelectedAuthProfileId(currentKey);
-                        setAuthEditorMode('edit');
-                      }}
-                    >
-                      Select
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
-      </WorkbenchSheet>
+        onStartNewDraft={startNewAuthProfileDraft}
+        onImportSelectedProfile={() => void importSelectedProfile()}
+        onStartBrowserOauth={() => void startBrowserOauth()}
+        onStartDeviceFlow={() => void startDeviceFlow()}
+        onRefreshSelectedProfile={() => void refreshAuthProfile(selectedAuthProfile?.provider ?? '', selectedAuthProfile?.id ?? '')}
+        onDeleteSelectedProfile={() => void deleteSelectedProfile()}
+        onSaveAuthProfile={() => void saveAuthProfile()}
+        onConnectSelectedProfile={() => void connectSelectedProfile()}
+        onAuthFormChange={(patch) => setAuthForm((current) => ({ ...current, ...patch }))}
+        onConnectSecretChange={setConnectSecret}
+        onImportPathChange={setImportPath}
+        onSelectExistingProfile={(currentKey) => {
+          setSelectedAuthProfileId(currentKey);
+          setAuthEditorMode('edit');
+        }}
+      />
     </div>
   );
 }

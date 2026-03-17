@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Panel } from '../components/Panel';
-import { StatusPill } from '../components/StatusPill';
-import { WorkbenchSheet } from '../components/WorkbenchSheet';
+import { RouteSimulationSheet } from '../components/route-studio/RouteSimulationSheet';
+import { RouteStudioOverview } from '../components/route-studio/RouteStudioOverview';
 import { useRouteStudioData } from '../hooks/useWorkspaceData';
 import {
   buildNewRule,
   cloneRoutingConfig,
   extractValidationMessage,
-  headersToDraft,
   parseCsv,
   parseHeaders,
   parseModelResolutionJson,
@@ -302,363 +300,75 @@ export function RouteStudioPage() {
         </div>
       </section>
 
-      {selectedScenario ? (
-        <div className="status-message status-message--warning">
-          Active scenario: <strong>{selectedScenario.scenario}</strong> · winner {selectedScenario.winner} · {selectedScenario.delta}
-        </div>
-      ) : null}
-      {routingStatus ? <div className="status-message status-message--success">{routingStatus}</div> : null}
-      {routingError ? <div className="status-message status-message--danger">{routingError}</div> : null}
+      <RouteStudioOverview
+        loading={loading}
+        error={error}
+        data={data}
+        selectedScenario={selectedScenario}
+        selectedScenarioId={selectedScenarioId}
+        routingLoading={routingLoading}
+        routingDraft={routingDraft}
+        routingConfig={routingConfig}
+        routingStatus={routingStatus}
+        routingError={routingError}
+        savingDraft={savingDraft}
+        profileNames={profileNames}
+        selectedProfileName={selectedProfileName}
+        selectedRuleIndex={selectedRuleIndex}
+        selectedRule={selectedRule}
+        profileJsonDraft={profileJsonDraft}
+        modelResolutionDraft={modelResolutionDraft}
+        onSelectScenario={setSelectedScenarioId}
+        onDefaultProfileChange={(value) => {
+          applyDraftMutation((draft) => {
+            draft['default-profile'] = value;
+          });
+          setSelectedProfileName(value);
+        }}
+        onSelectedProfileChange={setSelectedProfileName}
+        onResetDraft={resetRoutingDraft}
+        onSaveDraft={() => void saveRoutingDraft()}
+        onRuleFieldUpdate={handleRuleFieldUpdate}
+        onRuleMatchUpdate={handleRuleMatchUpdate}
+        onCreateRule={() => {
+          if (!routingDraft) {
+            return;
+          }
+          const fallbackProfile = selectedProfileName ?? routingDraft['default-profile'];
+          applyDraftMutation((draft) => {
+            draft.rules.push(buildNewRule(fallbackProfile, draft.rules.length));
+          });
+          setSelectedRuleIndex(routingDraft.rules.length);
+        }}
+        onDeleteSelectedRule={() => {
+          if (!routingDraft || selectedRuleIndex === null) {
+            return;
+          }
+          applyDraftMutation((draft) => {
+            draft.rules.splice(selectedRuleIndex, 1);
+          });
+          setSelectedRuleIndex((current) => {
+            if (current === null) return null;
+            if (routingDraft.rules.length <= 1) return null;
+            return Math.max(0, current - 1);
+          });
+        }}
+        onSelectRuleIndex={setSelectedRuleIndex}
+        onProfileJsonChange={setProfileJsonDraft}
+        onModelResolutionDraftChange={setModelResolutionDraft}
+      />
 
-      <div className="two-column">
-        <Panel title="Routing summary" subtitle="Current routing truth and selected draft posture.">
-          <ul className="fact-list">
-            {(data?.summary_facts ?? []).map((fact) => (
-              <li key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></li>
-            ))}
-            {routingDraft ? (
-              <>
-                <li><span>Default profile</span><strong>{routingDraft['default-profile']}</strong></li>
-                <li><span>Profiles</span><strong>{profileNames.length}</strong></li>
-                <li><span>Rules</span><strong>{routingDraft.rules.length}</strong></li>
-              </>
-            ) : null}
-          </ul>
-        </Panel>
-        <Panel title="Explain posture" subtitle="Planner behavior distilled into operator-readable facts.">
-          <ul className="fact-list">
-            {(data?.explain_facts ?? []).map((fact) => (
-              <li key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></li>
-            ))}
-          </ul>
-        </Panel>
-      </div>
-
-      <div className="two-column">
-        <Panel title="Routing authoring" subtitle="Default profile switching and profile policy selection stay in the main workbench.">
-          {routingLoading && !routingDraft ? <div className="status-message">Loading routing draft…</div> : null}
-          <div className="sheet-form">
-            <label className="sheet-field">
-              <span>Default profile</span>
-              <select
-                value={routingDraft?.['default-profile'] ?? ''}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  applyDraftMutation((draft) => {
-                    draft['default-profile'] = value;
-                  });
-                  setSelectedProfileName(value);
-                }}
-                disabled={!routingDraft}
-              >
-                {profileNames.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="sheet-field">
-              <span>Selected profile</span>
-              <select
-                value={selectedProfileName ?? ''}
-                onChange={(event) => setSelectedProfileName(event.target.value)}
-                disabled={!routingDraft}
-              >
-                {profileNames.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="inline-actions">
-            <button type="button" className="button button--ghost" onClick={resetRoutingDraft} disabled={!routingConfig}>
-              Reset draft
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void saveRoutingDraft()} disabled={savingDraft || !routingDraft}>
-              {savingDraft ? 'Saving…' : 'Save routing'}
-            </button>
-          </div>
-        </Panel>
-
-        <Panel title="Selected rule editor" subtitle="Rule CRUD belongs here, not in raw YAML.">
-          {selectedRule ? (
-            <div className="sheet-form">
-              <label className="sheet-field">
-                <span>Rule name</span>
-                <input
-                  name="route-rule-name"
-                  autoComplete="off"
-                  value={selectedRule.name}
-                  onChange={(event) => handleRuleFieldUpdate('name', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Priority</span>
-                <input
-                  name="route-rule-priority"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={selectedRule.priority?.toString() ?? ''}
-                  onChange={(event) => handleRuleFieldUpdate('priority', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Use profile</span>
-                <select
-                  value={selectedRule['use-profile']}
-                  onChange={(event) => handleRuleFieldUpdate('use-profile', event.target.value)}
-                >
-                  {profileNames.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="sheet-field">
-                <span>Models</span>
-                <input
-                  name="route-rule-models"
-                  autoComplete="off"
-                  value={selectedRule.match.models?.join(', ') ?? ''}
-                  onChange={(event) => handleRuleMatchUpdate('models', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Tenants</span>
-                <input
-                  name="route-rule-tenants"
-                  autoComplete="off"
-                  value={selectedRule.match.tenants?.join(', ') ?? ''}
-                  onChange={(event) => handleRuleMatchUpdate('tenants', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Endpoints</span>
-                <input
-                  name="route-rule-endpoints"
-                  autoComplete="off"
-                  value={selectedRule.match.endpoints?.join(', ') ?? ''}
-                  onChange={(event) => handleRuleMatchUpdate('endpoints', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Regions</span>
-                <input
-                  name="route-rule-regions"
-                  autoComplete="off"
-                  value={selectedRule.match.regions?.join(', ') ?? ''}
-                  onChange={(event) => handleRuleMatchUpdate('regions', event.target.value)}
-                />
-              </label>
-              <label className="sheet-field">
-                <span>Headers</span>
-                <textarea
-                  className="yaml-editor"
-                  value={headersToDraft(selectedRule.match.headers)}
-                  onChange={(event) => handleRuleMatchUpdate('headers', event.target.value)}
-                />
-              </label>
-              <label className="detail-grid__row">
-                <span>Streaming only</span>
-                <input
-                  type="checkbox"
-                  checked={selectedRule.match.stream ?? false}
-                  onChange={(event) => handleRuleMatchUpdate('stream', event.target.checked)}
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="status-message">Select or create a rule to begin editing.</div>
-          )}
-        </Panel>
-      </div>
-
-      <div className="two-column">
-        <Panel title="Rule registry" subtitle="Rules can be added, selected, and removed without losing blast-radius context.">
-          <div className="inline-actions">
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => {
-                if (!routingDraft) {
-                  return;
-                }
-                const fallbackProfile = selectedProfileName ?? routingDraft['default-profile'];
-                applyDraftMutation((draft) => {
-                  draft.rules.push(buildNewRule(fallbackProfile, draft.rules.length));
-                });
-                setSelectedRuleIndex(routingDraft.rules.length);
-              }}
-              disabled={!routingDraft}
-            >
-              New rule
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => {
-                if (!routingDraft || selectedRuleIndex === null) {
-                  return;
-                }
-                applyDraftMutation((draft) => {
-                  draft.rules.splice(selectedRuleIndex, 1);
-                });
-                setSelectedRuleIndex((current) => {
-                  if (current === null) return null;
-                  if (routingDraft.rules.length <= 1) return null;
-                  return Math.max(0, current - 1);
-                });
-              }}
-              disabled={!routingDraft || selectedRuleIndex === null}
-            >
-              Delete selected
-            </button>
-          </div>
-          <div className="table-grid table-grid--routes">
-            <div className="table-grid__head">Rule</div>
-            <div className="table-grid__head">Profile</div>
-            <div className="table-grid__head">Priority</div>
-            <div className="table-grid__head">Matchers</div>
-            {(routingDraft?.rules ?? []).flatMap((rule, index) => {
-              const selected = index === selectedRuleIndex;
-              const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;
-              const matchers = [
-                rule.match.models?.length ? `${rule.match.models.length} models` : null,
-                rule.match.tenants?.length ? `${rule.match.tenants.length} tenants` : null,
-                rule.match.endpoints?.length ? `${rule.match.endpoints.length} endpoints` : null,
-              ].filter(Boolean).join(' · ') || 'default';
-              return [
-                <div key={`${rule.name}-name`} className={`${cellClass} table-grid__cell--strong`} onClick={() => setSelectedRuleIndex(index)}>
-                  {rule.name}
-                </div>,
-                <div key={`${rule.name}-profile`} className={cellClass} onClick={() => setSelectedRuleIndex(index)}>
-                  {rule['use-profile']}
-                </div>,
-                <div key={`${rule.name}-priority`} className={cellClass} onClick={() => setSelectedRuleIndex(index)}>
-                  {rule.priority ?? 'n/a'}
-                </div>,
-                <div key={`${rule.name}-match`} className={cellClass} onClick={() => setSelectedRuleIndex(index)}>
-                  {matchers}
-                </div>,
-              ];
-            })}
-          </div>
-        </Panel>
-
-        <Panel title="Scenario matrix" subtitle="Sampled route explanations from live traffic and configured models.">
-          <div className="table-grid table-grid--routes">
-            <div className="table-grid__head">Scenario</div>
-            <div className="table-grid__head">Winner</div>
-            <div className="table-grid__head">Delta</div>
-            <div className="table-grid__head">Route state</div>
-            {loading && !data ? <div className="table-grid__cell">Loading scenarios…</div> : null}
-            {error && !data ? <div className="table-grid__cell">{error}</div> : null}
-            {(data?.scenarios ?? []).flatMap((scenario) => {
-              const selected = scenario.scenario === selectedScenarioId;
-              const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;
-              return [
-                <div
-                  key={`${scenario.scenario}-scenario`}
-                  className={`${cellClass} table-grid__cell--strong`}
-                  onClick={() => setSelectedScenarioId(scenario.scenario)}
-                >
-                  {scenario.scenario}
-                </div>,
-                <div key={`${scenario.scenario}-winner`} className={cellClass} onClick={() => setSelectedScenarioId(scenario.scenario)}>
-                  {scenario.winner}
-                </div>,
-                <div key={`${scenario.scenario}-delta`} className={cellClass} onClick={() => setSelectedScenarioId(scenario.scenario)}>
-                  {scenario.delta}
-                </div>,
-                <div key={`${scenario.scenario}-decision`} className={cellClass} onClick={() => setSelectedScenarioId(scenario.scenario)}>
-                  <StatusPill label={scenario.decision} tone={scenario.decision_tone} />
-                </div>,
-              ];
-            })}
-          </div>
-        </Panel>
-      </div>
-
-      <div className="two-column">
-        <Panel title="Advanced profile policy" subtitle="Edit the selected route profile directly when the structured fields are not enough.">
-          <textarea
-            className="yaml-editor"
-            value={profileJsonDraft}
-            onChange={(event) => setProfileJsonDraft(event.target.value)}
-            spellCheck={false}
-          />
-        </Panel>
-        <Panel title="Model resolution" subtitle="Alias, rewrite, fallback, and provider pins stay explicit in the same draft.">
-          <textarea
-            className="yaml-editor"
-            value={modelResolutionDraft}
-            onChange={(event) => setModelResolutionDraft(event.target.value)}
-            spellCheck={false}
-          />
-        </Panel>
-      </div>
-
-      <WorkbenchSheet
+      <RouteSimulationSheet
         open={sheetOpen}
+        simulationLoading={simulationLoading}
+        simulationStatus={simulationStatus}
+        simulationError={simulationError}
+        selectedScenario={selectedScenario}
+        explanation={explanation}
         onClose={() => setSheetOpen(false)}
-        title="Route simulation workbench"
-        subtitle="Run a real explain against the selected scenario using the current local draft, then promote it into change review."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={promoteToChange} disabled={!selectedScenario}>
-              Promote to change
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void simulateDraft()} disabled={simulationLoading}>
-              {simulationLoading ? 'Simulating…' : 'Re-run simulation'}
-            </button>
-          </>
-        )}
-      >
-        {simulationStatus ? <div className="status-message status-message--success">{simulationStatus}</div> : null}
-        {simulationError ? <div className="status-message status-message--danger">{simulationError}</div> : null}
-
-        {selectedScenario ? (
-          <section className="sheet-section">
-            <h3>Scenario posture</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Scenario</span><strong>{selectedScenario.scenario}</strong></div>
-              <div className="detail-grid__row"><span>Model</span><strong>{selectedScenario.model}</strong></div>
-              <div className="detail-grid__row"><span>Endpoint</span><strong>{selectedScenario.endpoint}</strong></div>
-              <div className="detail-grid__row"><span>Source format</span><strong>{selectedScenario.source_format}</strong></div>
-            </div>
-          </section>
-        ) : null}
-
-        {explanation ? (
-          <>
-            <section className="sheet-section">
-              <h3>Winning route</h3>
-              <div className="detail-grid">
-                <div className="detail-grid__row"><span>Profile</span><strong>{explanation.profile}</strong></div>
-                <div className="detail-grid__row"><span>Matched rule</span><strong>{explanation.matched_rule ?? 'default'}</strong></div>
-                <div className="detail-grid__row"><span>Provider</span><strong>{explanation.selected?.provider ?? 'none'}</strong></div>
-                <div className="detail-grid__row"><span>Credential</span><strong>{explanation.selected?.credential_name ?? 'none'}</strong></div>
-              </div>
-            </section>
-
-            <section className="sheet-section">
-              <h3>Alternates and rejections</h3>
-              <div className="probe-list">
-                {explanation.alternates.slice(0, 3).map((alternate) => (
-                  <div key={`${alternate.provider}-${alternate.credential_name}`} className="probe-check">
-                    <span>{alternate.provider}</span>
-                    <strong>{alternate.model}</strong>
-                  </div>
-                ))}
-                {explanation.rejections.slice(0, 3).map((rejection) => (
-                  <div key={`${rejection.candidate}-${JSON.stringify(rejection.reason)}`} className="probe-check">
-                    <span>{rejection.candidate}</span>
-                    <strong>{typeof rejection.reason === 'string' ? rejection.reason : 'missing capability'}</strong>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </>
-        ) : null}
-      </WorkbenchSheet>
+        onPromoteToChange={promoteToChange}
+        onSimulateDraft={() => void simulateDraft()}
+      />
     </div>
   );
 }

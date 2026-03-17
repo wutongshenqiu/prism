@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Panel } from '../components/Panel';
-import { StatusPill } from '../components/StatusPill';
-import { WorkbenchSheet } from '../components/WorkbenchSheet';
+import { ChangeStudioOverview } from '../components/change-studio/ChangeStudioOverview';
+import {
+  AccessControlSheet,
+  ChangeEditorSheet,
+} from '../components/change-studio/ChangeStudioSheets';
 import { useChangeStudioData } from '../hooks/useWorkspaceData';
 import {
   buildAuthKeyCreateRequest,
@@ -322,402 +324,78 @@ export function ChangeStudioPage() {
         </div>
       </section>
 
-      {selectedRegistry ? (
-        <div className="status-message status-message--warning">
-          Active family: <strong>{selectedRegistry.family}</strong> · {selectedRegistry.record} · {selectedRegistry.dependents} dependents
-        </div>
-      ) : null}
+      <ChangeStudioOverview
+        loading={loading}
+        error={error}
+        data={data}
+        selectedFamily={selectedFamily}
+        selectedRegistry={selectedRegistry}
+        authKeys={authKeys}
+        selectedAuthKeyId={selectedAuthKeyId}
+        tenants={tenants}
+        selectedTenantId={selectedTenantId}
+        tenantMetrics={tenantMetrics}
+        tenantLoading={tenantLoading}
+        tenantError={tenantError}
+        refreshingAccess={refreshingAccess}
+        onSelectFamily={setSelectedFamily}
+        onOpenAccessWorkbench={() => void openAccessWorkbench()}
+        onSelectAuthKey={setSelectedAuthKeyId}
+        onRefreshAccessPosture={() => void refreshAccessPosture()}
+        onSelectTenant={(tenantId) => void loadTenantMetrics(tenantId)}
+      />
 
-      <div className="two-column">
-        <Panel title="Config registry" subtitle="Object families should be browsable and impact-aware." className="panel--wide">
-          <div className="table-grid table-grid--changes">
-            <div className="table-grid__head">Family</div>
-            <div className="table-grid__head">Record</div>
-            <div className="table-grid__head">State</div>
-            <div className="table-grid__head">Dependents</div>
-            {loading && !data ? <div className="table-grid__cell">Loading registry…</div> : null}
-            {error && !data ? <div className="table-grid__cell">{error}</div> : null}
-            {(data?.registry ?? []).flatMap((item) => {
-              const selected = item.family === selectedFamily;
-              const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;
-              return [
-                <div
-                  key={`${item.family}-family`}
-                  className={`${cellClass} table-grid__cell--strong`}
-                  onClick={() => setSelectedFamily(item.family)}
-                >
-                  {item.family}
-                </div>,
-                <div key={`${item.family}-record`} className={cellClass} onClick={() => setSelectedFamily(item.family)}>
-                  {item.record}
-                </div>,
-                <div key={`${item.family}-state`} className={cellClass} onClick={() => setSelectedFamily(item.family)}>
-                  <StatusPill label={item.state} tone={item.state_tone} />
-                </div>,
-                <div key={`${item.family}-deps`} className={cellClass} onClick={() => setSelectedFamily(item.family)}>
-                  {item.dependents}
-                </div>,
-              ];
-            })}
-          </div>
-        </Panel>
-
-        <Panel title="Transaction posture" subtitle="Current config transaction truth and delivery controls.">
-          <ul className="fact-list">
-            {(data?.publish_facts ?? []).map((fact) => (
-              <li key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></li>
-            ))}
-          </ul>
-        </Panel>
-      </div>
-
-      <div className="two-column">
-        <Panel title="Runtime access keys" subtitle="Gateway keys stay tied to tenants and can be created, revealed, and revoked without leaving the control plane.">
-          <div className="inline-actions">
-            <button type="button" className="button button--primary" onClick={() => void openAccessWorkbench()}>
-              Manage access keys
-            </button>
-          </div>
-          <div className="table-grid table-grid--keys">
-            <div className="table-grid__head">Key</div>
-            <div className="table-grid__head">Name</div>
-            <div className="table-grid__head">Tenant</div>
-            <div className="table-grid__head">Models</div>
-            {authKeys.length === 0 ? <div className="table-grid__cell">No gateway auth keys configured.</div> : null}
-            {authKeys.flatMap((item) => {
-              const selected = item.id === selectedAuthKeyId;
-              const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;
-              return [
-                <div key={`${item.id}-key`} className={`${cellClass} table-grid__cell--strong`} onClick={() => setSelectedAuthKeyId(item.id)}>
-                  {item.key_masked}
-                </div>,
-                <div key={`${item.id}-name`} className={cellClass} onClick={() => setSelectedAuthKeyId(item.id)}>
-                  {item.name ?? 'unnamed'}
-                </div>,
-                <div key={`${item.id}-tenant`} className={cellClass} onClick={() => setSelectedAuthKeyId(item.id)}>
-                  {item.tenant_id ?? 'global'}
-                </div>,
-                <div key={`${item.id}-models`} className={cellClass} onClick={() => setSelectedAuthKeyId(item.id)}>
-                  {item.allowed_models.length || 'all'}
-                </div>,
-              ];
-            })}
-          </div>
-        </Panel>
-
-        <Panel title="Tenant posture" subtitle="Tenant-scoped demand and cost should stay visible next to access control work.">
-          <div className="inline-actions">
-            <button type="button" className="button button--ghost" onClick={() => void refreshAccessPosture()} disabled={refreshingAccess}>
-              {refreshingAccess ? 'Refreshing…' : 'Refresh access posture'}
-            </button>
-          </div>
-          {tenants.length === 0 ? (
-            <div className="status-message">No tenant-scoped traffic has been recorded yet.</div>
-          ) : (
-            <ul className="fact-list fact-list--interactive">
-              {tenants.map((tenant) => (
-                <li
-                  key={tenant.id}
-                  className={tenant.id === selectedTenantId ? 'is-selected' : ''}
-                  onClick={() => void loadTenantMetrics(tenant.id)}
-                >
-                  <span>{tenant.id}</span>
-                  <strong>{tenant.requests} req · ${tenant.cost_usd}</strong>
-                </li>
-              ))}
-            </ul>
-          )}
-          {tenantLoading ? <div className="status-message">Loading tenant metrics…</div> : null}
-          {tenantError ? <div className="status-message status-message--danger">{tenantError}</div> : null}
-          {tenantMetrics?.metrics ? (
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Tenant</span><strong>{tenantMetrics.tenant_id}</strong></div>
-              <div className="detail-grid__row"><span>Requests</span><strong>{tenantMetrics.metrics.requests}</strong></div>
-              <div className="detail-grid__row"><span>Tokens</span><strong>{tenantMetrics.metrics.tokens}</strong></div>
-              <div className="detail-grid__row"><span>Cost</span><strong>${tenantMetrics.metrics.cost_usd}</strong></div>
-            </div>
-          ) : null}
-        </Panel>
-      </div>
-
-      <WorkbenchSheet
+      <ChangeEditorSheet
         open={editorOpen}
+        editorMode={editorMode}
+        loadingEditor={loadingEditor}
+        actionStatus={actionStatus}
+        actionError={actionError}
+        validating={validating}
+        reloading={reloading}
+        applying={applying}
+        yaml={yaml}
+        configPath={configPath}
+        configVersion={configVersion}
+        selectedRegistry={selectedRegistry}
+        routeDraft={routeDraft}
+        validationResult={validationResult}
+        applyResult={applyResult}
         onClose={() => setEditorOpen(false)}
-        title={editorMode === 'structured' ? 'Structured change workbench' : 'YAML transaction workbench'}
-        subtitle="Every change follows the same loop: load current truth, validate it, apply it, then observe runtime reload."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={() => void validateDraft()} disabled={validating || loadingEditor}>
-              {validating ? 'Validating…' : 'Validate'}
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void reloadRuntime()} disabled={reloading || loadingEditor}>
-              {reloading ? 'Reloading…' : 'Reload runtime'}
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void applyDraft()} disabled={applying || loadingEditor}>
-              {applying ? 'Applying…' : 'Apply draft'}
-            </button>
-          </>
-        )}
-      >
-        {loadingEditor ? <div className="status-message">Loading current config and linked drafts…</div> : null}
-        {actionStatus ? <div className="status-message status-message--success">{actionStatus}</div> : null}
-        {actionError ? <div className="status-message status-message--danger">{actionError}</div> : null}
+        onValidate={() => void validateDraft()}
+        onReloadRuntime={() => void reloadRuntime()}
+        onApply={() => void applyDraft()}
+        onYamlChange={setYaml}
+        onDiscardRouteDraft={() => {
+          clearRouteDraft();
+          setRouteDraft(null);
+        }}
+      />
 
-        <section className="sheet-section">
-          <h3>Change brief</h3>
-          <div className="detail-grid">
-            <div className="detail-grid__row"><span>Mode</span><strong>{editorMode === 'structured' ? 'structured' : 'yaml'}</strong></div>
-            <div className="detail-grid__row"><span>Family</span><strong>{selectedRegistry?.family ?? 'none selected'}</strong></div>
-            <div className="detail-grid__row"><span>Record</span><strong>{selectedRegistry?.record ?? 'n/a'}</strong></div>
-            <div className="detail-grid__row"><span>Config path</span><strong>{configPath || 'loading…'}</strong></div>
-            <div className="detail-grid__row"><span>Version</span><strong>{configVersion ?? 'pending'}</strong></div>
-          </div>
-          {editorMode === 'structured' ? (
-            <div className="status-message">
-              Structured mode keeps operator intent, affected family, and linked route context visible while the transaction is still applied as first-class YAML.
-            </div>
-          ) : null}
-        </section>
-
-        {routeDraft ? (
-          <section className="sheet-section">
-            <h3>Linked route draft</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Scenario</span><strong>{routeDraft.scenario.scenario}</strong></div>
-              <div className="detail-grid__row"><span>Winner</span><strong>{routeDraft.explanation?.selected?.provider ?? routeDraft.scenario.winner}</strong></div>
-              <div className="detail-grid__row"><span>Created at</span><strong>{routeDraft.createdAt}</strong></div>
-            </div>
-            <div className="inline-actions">
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => {
-                  clearRouteDraft();
-                  setRouteDraft(null);
-                }}
-              >
-                Discard linked draft
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="sheet-section">
-          <h3>Config transaction</h3>
-          <textarea
-            className="yaml-editor"
-            value={yaml}
-            onChange={(event) => setYaml(event.target.value)}
-            spellCheck={false}
-          />
-        </section>
-
-        {validationResult ? (
-          <section className="sheet-section">
-            <h3>Validation result</h3>
-            <div className={`status-message ${validationResult.valid ? 'status-message--success' : 'status-message--warning'}`}>
-              {validationResult.valid ? 'Configuration is valid.' : 'Validation returned issues.'}
-            </div>
-            {validationResult.errors.length > 0 ? (
-              <div className="yaml-errors">
-                {validationResult.errors.map((item) => (
-                  <div key={item} className="probe-check">
-                    <span>Issue</span>
-                    <strong>{item}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {applyResult ? (
-          <section className="sheet-section">
-            <h3>Last apply</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Message</span><strong>{applyResult.message}</strong></div>
-              <div className="detail-grid__row"><span>Config version</span><strong>{applyResult.config_version}</strong></div>
-            </div>
-          </section>
-        ) : null}
-      </WorkbenchSheet>
-
-      <WorkbenchSheet
+      <AccessControlSheet
         open={accessOpen}
+        accessEditorMode={accessEditorMode}
+        accessStatus={accessStatus}
+        accessError={accessError}
+        revealedKey={revealedKey}
+        revealingKey={revealingKey}
+        deletingKey={deletingKey}
+        savingKey={savingKey}
+        accessForm={accessForm}
+        selectedAuthKey={selectedAuthKey}
+        authKeys={authKeys}
+        selectedAuthKeyId={selectedAuthKeyId}
         onClose={() => setAccessOpen(false)}
-        title="Access control workbench"
-        subtitle="Create, edit, reveal, and revoke gateway auth keys while keeping tenant scope and budgets visible."
-        actions={(
-          <>
-            <button type="button" className="button button--ghost" onClick={startNewAccessDraft}>
-              New draft
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void revealAuthKey()} disabled={revealingKey}>
-              {revealingKey ? 'Revealing…' : 'Reveal selected'}
-            </button>
-            <button type="button" className="button button--ghost" onClick={() => void deleteAuthKey()} disabled={deletingKey}>
-              {deletingKey ? 'Deleting…' : 'Delete selected'}
-            </button>
-            <button type="button" className="button button--primary" onClick={() => void saveAuthKey()} disabled={savingKey}>
-              {savingKey ? 'Saving…' : accessEditorMode === 'edit' ? 'Save key' : 'Create key'}
-            </button>
-          </>
-        )}
-      >
-        {accessStatus ? <div className="status-message status-message--success">{accessStatus}</div> : null}
-        {accessError ? <div className="status-message status-message--danger">{accessError}</div> : null}
-        {revealedKey ? <div className="status-message status-message--warning">Save this key now: <strong>{revealedKey}</strong></div> : null}
-
-        <section className="sheet-section">
-          <h3>{accessEditorMode === 'edit' ? 'Edit key policy' : 'Create key'}</h3>
-          <div className="sheet-form">
-            <label className="sheet-field">
-              <span>Name</span>
-              <input
-                name="auth-key-name"
-                autoComplete="off"
-                value={accessForm.name}
-                onChange={(event) => setAccessForm((current) => ({ ...current, name: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Tenant ID</span>
-              <input
-                name="auth-key-tenant-id"
-                autoComplete="off"
-                value={accessForm.tenantId}
-                onChange={(event) => setAccessForm((current) => ({ ...current, tenantId: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Allowed models</span>
-              <input
-                name="auth-key-models"
-                autoComplete="off"
-                value={accessForm.allowedModels}
-                onChange={(event) => setAccessForm((current) => ({ ...current, allowedModels: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Allowed credentials</span>
-              <input
-                name="auth-key-credentials"
-                autoComplete="off"
-                value={accessForm.allowedCredentials}
-                onChange={(event) => setAccessForm((current) => ({ ...current, allowedCredentials: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>RPM</span>
-              <input
-                name="auth-key-rpm"
-                inputMode="numeric"
-                autoComplete="off"
-                value={accessForm.rpm}
-                onChange={(event) => setAccessForm((current) => ({ ...current, rpm: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>TPM</span>
-              <input
-                name="auth-key-tpm"
-                inputMode="numeric"
-                autoComplete="off"
-                value={accessForm.tpm}
-                onChange={(event) => setAccessForm((current) => ({ ...current, tpm: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Cost / day USD</span>
-              <input
-                name="auth-key-cost-per-day"
-                inputMode="decimal"
-                autoComplete="off"
-                value={accessForm.costPerDayUsd}
-                onChange={(event) => setAccessForm((current) => ({ ...current, costPerDayUsd: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Expires at</span>
-              <input
-                name="auth-key-expires-at"
-                type="datetime-local"
-                value={accessForm.expiresAt}
-                onChange={(event) => setAccessForm((current) => ({ ...current, expiresAt: event.target.value }))}
-              />
-            </label>
-            <label className="detail-grid__row">
-              <span>Budget enabled</span>
-              <input
-                type="checkbox"
-                checked={accessForm.budgetEnabled}
-                onChange={(event) => setAccessForm((current) => ({ ...current, budgetEnabled: event.target.checked }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Budget total USD</span>
-              <input
-                name="auth-key-budget-total"
-                inputMode="decimal"
-                autoComplete="off"
-                value={accessForm.budgetTotalUsd}
-                onChange={(event) => setAccessForm((current) => ({ ...current, budgetTotalUsd: event.target.value }))}
-              />
-            </label>
-            <label className="sheet-field">
-              <span>Budget period</span>
-              <select
-                value={accessForm.budgetPeriod}
-                onChange={(event) => setAccessForm((current) => ({ ...current, budgetPeriod: event.target.value as AccessPolicyFormState['budgetPeriod'] }))}
-              >
-                <option value="daily">daily</option>
-                <option value="monthly">monthly</option>
-              </select>
-            </label>
-          </div>
-        </section>
-
-        {selectedAuthKey ? (
-          <section className="sheet-section">
-            <h3>Selected key posture</h3>
-            <div className="detail-grid">
-              <div className="detail-grid__row"><span>Key</span><strong>{selectedAuthKey.key_masked}</strong></div>
-              <div className="detail-grid__row"><span>Tenant</span><strong>{selectedAuthKey.tenant_id ?? 'global'}</strong></div>
-              <div className="detail-grid__row"><span>Model allowlist</span><strong>{selectedAuthKey.allowed_models.length || 'all'}</strong></div>
-              <div className="detail-grid__row"><span>Credential allowlist</span><strong>{selectedAuthKey.allowed_credentials.length || 'all'}</strong></div>
-            </div>
-          </section>
-        ) : null}
-
-        <section className="sheet-section">
-          <h3>Existing keys</h3>
-          <div className="probe-list">
-            {authKeys.length === 0 ? (
-              <div className="probe-check">
-                <span>Keys</span>
-                <strong>None configured</strong>
-              </div>
-            ) : (
-              authKeys.map((item) => (
-                <div key={item.id} className={`probe-check ${item.id === selectedAuthKeyId ? 'probe-check--selected' : ''}`}>
-                  <span>{item.key_masked}</span>
-                  <strong>{item.name ?? 'unnamed'} · {item.tenant_id ?? 'global'}</strong>
-                  <button
-                    type="button"
-                    className="button button--ghost"
-                    onClick={() => {
-                      setSelectedAuthKeyId(item.id);
-                      setAccessEditorMode('edit');
-                    }}
-                  >
-                    Select
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </WorkbenchSheet>
+        onStartNewDraft={startNewAccessDraft}
+        onRevealSelected={() => void revealAuthKey()}
+        onDeleteSelected={() => void deleteAuthKey()}
+        onSaveKey={() => void saveAuthKey()}
+        onAccessFormChange={(patch) => setAccessForm((current) => ({ ...current, ...patch }))}
+        onSelectAuthKey={(authKeyId) => {
+          setSelectedAuthKeyId(authKeyId);
+          setAccessEditorMode('edit');
+        }}
+      />
     </div>
   );
 }
