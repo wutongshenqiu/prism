@@ -739,19 +739,20 @@ pub async fn health_check(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let config = state.config.load();
-
-    let entry = match config.providers.iter().find(|e| e.name == name) {
-        Some(e) => e,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"status": "error", "message": "Provider not found"})),
-            );
+    let provider_name = {
+        let config = state.config.load();
+        match config.providers.iter().find(|entry| entry.name == name) {
+            Some(entry) => entry.name.clone(),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"status": "error", "message": "Provider not found"})),
+                );
+            }
         }
     };
 
-    let Some(auth) = select_health_auth(&state, &entry.name) else {
+    let Some(auth) = select_health_auth(&state, &provider_name) else {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(
@@ -772,7 +773,8 @@ pub async fn health_check(
         );
     }
 
-    let proxy_url = auth.effective_proxy(config.proxy_url.as_deref());
+    let default_proxy = state.config.load().proxy_url.clone();
+    let proxy_url = auth.effective_proxy(default_proxy.as_deref());
 
     let client = match build_reqwest_client(&state.http_client_pool, proxy_url, 10) {
         Ok(c) => c,
@@ -787,11 +789,11 @@ pub async fn health_check(
     let result = if auth.upstream == prism_core::provider::UpstreamKind::Codex {
         run_codex_probe(&client, &auth).await
     } else {
-        run_generic_health_probe(&entry.name, &auth, &client).await
+        run_generic_health_probe(&provider_name, &auth, &client).await
     };
     state
         .provider_probe_cache
-        .insert(entry.name.clone(), result.clone());
+        .insert(provider_name, result.clone());
 
     (StatusCode::OK, Json(json!(result)))
 }

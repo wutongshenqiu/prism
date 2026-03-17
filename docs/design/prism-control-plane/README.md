@@ -17,6 +17,7 @@ This directory contains a prototype-first redesign for Prism's dashboard. It is 
 - `cutover-scope-review.md` - which capabilities must exist for cutover and which legacy surfaces should explicitly not return
 - `remaining-additions-roadmap.md` - complete list of remaining additions across design, product flows, backend, integrations, and verification
 - `frontend-implementation-plan.md` - how the current frontend should migrate into the new shell and workspace modules
+- `rust-crate-boundary-review.md` - whether the Rust backend should split more crates or continue improving module seams first
 - `backend-control-plane-model.md` - the backend object model and aggregate APIs that best fit the approved design
 - `rollout-strategy.md` - how to ship the new control plane progressively without carrying legacy UI compatibility
 - `extensibility-model.md` - how the shell should handle SLS, external analytics, and future integrations
@@ -87,6 +88,7 @@ Use the supporting notes below while reviewing the prototype:
 - [cutover-scope-review.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/cutover-scope-review.md)
 - [remaining-additions-roadmap.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/remaining-additions-roadmap.md)
 - [frontend-implementation-plan.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/frontend-implementation-plan.md)
+- [rust-crate-boundary-review.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/rust-crate-boundary-review.md)
 - [backend-control-plane-model.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/backend-control-plane-model.md)
 - [extensibility-model.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/extensibility-model.md)
 - [north-star-model.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/north-star-model.md)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   buildAuthKeyCreateRequest,
   emptyAccessForm,
@@ -6,6 +6,7 @@ import {
   type AccessPolicyFormState,
 } from '../lib/authKeyPolicy';
 import { clearRouteDraft, readRouteDraft, type RouteDraft } from '../lib/routeDraft';
+import { reconcileSelection } from '../lib/selection';
 import { authKeysApi } from '../services/authKeys';
 import { configApi } from '../services/config';
 import { getApiErrorMessage } from '../services/errors';
@@ -63,7 +64,9 @@ export function useChangeStudioController({
   const [deletingKey, setDeletingKey] = useState(false);
 
   useEffect(() => {
-    setSelectedFamily((current) => current ?? data?.registry[0]?.family ?? null);
+    setSelectedFamily((current) =>
+      reconcileSelection(current, data?.registry ?? [], (item) => item.family),
+    );
   }, [data]);
 
   const selectedRegistry = useMemo(
@@ -97,7 +100,7 @@ export function useChangeStudioController({
     }
   };
 
-  const loadAccessData = async () => {
+  const loadAccessData = useCallback(async () => {
     const [keysResponse, tenantsResponse] = await Promise.all([
       authKeysApi.list(),
       tenantsApi.list(),
@@ -106,7 +109,7 @@ export function useChangeStudioController({
     setTenants(tenantsResponse.tenants);
     setSelectedAuthKeyId((current) => current ?? keysResponse.auth_keys[0]?.id ?? null);
     setSelectedTenantId((current) => current ?? tenantsResponse.tenants[0]?.id ?? null);
-  };
+  }, []);
 
   const loadEditor = async (mode: 'structured' | 'yaml') => {
     setEditorMode(mode);
@@ -135,7 +138,19 @@ export function useChangeStudioController({
       setAuthKeys([]);
       setTenants([]);
     });
-  }, []);
+  }, [loadAccessData]);
+
+  useEffect(() => {
+    setSelectedAuthKeyId((current) =>
+      reconcileSelection(current, authKeys, (item) => item.id),
+    );
+  }, [authKeys]);
+
+  useEffect(() => {
+    setSelectedTenantId((current) =>
+      reconcileSelection(current, tenants, (tenant) => tenant.id),
+    );
+  }, [tenants]);
 
   const refreshAccessPosture = async () => {
     setRefreshingAccess(true);

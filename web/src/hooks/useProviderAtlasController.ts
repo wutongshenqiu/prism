@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ProviderEditorFormState,
   ProviderRegistryFormState,
 } from '../components/provider-atlas/types';
+import { confirmAction, navigateTo } from '../lib/browser';
 import {
   emptyProfileForm,
   isManagedMode,
   profileKey,
+  resolveDeviceFlowProfileLabel,
   type AuthProfileFormState,
   type DeviceFlowState,
 } from '../lib/authProfileDraft';
+import { reconcileSelection } from '../lib/selection';
 import { authProfilesApi } from '../services/authProfiles';
 import { getApiErrorMessage } from '../services/errors';
 import { protocolsApi } from '../services/protocols';
@@ -88,10 +91,12 @@ export function useProviderAtlasController({
   const [modelSearch, setModelSearch] = useState('');
 
   useEffect(() => {
-    setSelectedProvider((current) => current ?? data?.providers[0]?.provider ?? null);
+    setSelectedProvider((current) =>
+      reconcileSelection(current, data?.providers ?? [], (provider) => provider.provider),
+    );
   }, [data]);
 
-  const loadRuntimeSurfaces = async () => {
+  const loadRuntimeSurfaces = useCallback(async () => {
     const [capabilities, protocols, profileList] = await Promise.all([
       providersApi.capabilities(),
       protocolsApi.matrix(),
@@ -100,7 +105,7 @@ export function useProviderAtlasController({
     setCapabilityEntries(capabilities.providers);
     setProtocolMatrix(protocols);
     setProfiles(profileList.profiles);
-  };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -131,7 +136,7 @@ export function useProviderAtlasController({
     return () => {
       active = false;
     };
-  }, []);
+  }, [loadRuntimeSurfaces]);
 
   useEffect(() => {
     setAuthForm((current) => ({
@@ -213,6 +218,14 @@ export function useProviderAtlasController({
         .includes(needle);
     });
   }, [modelInventory, modelSearch]);
+
+  useEffect(() => {
+    setSelectedAuthProfileId((current) =>
+      reconcileSelection(current, selectedProfiles, (profile) =>
+        profileKey(profile.provider, profile.id),
+      ),
+    );
+  }, [selectedProfiles]);
 
   useEffect(() => {
     if (!selectedAuthProfile) {
@@ -355,7 +368,7 @@ export function useProviderAtlasController({
       setAuthError('Select an auth profile first.');
       return;
     }
-    if (!window.confirm(`Delete auth profile "${selectedAuthProfile.qualified_name}"?`)) {
+    if (!confirmAction(`Delete auth profile "${selectedAuthProfile.qualified_name}"?`)) {
       return;
     }
 
@@ -491,7 +504,7 @@ export function useProviderAtlasController({
         profile_id: selectedAuthProfile.id,
         redirect_uri: redirectUri,
       });
-      window.location.assign(response.auth_url);
+      navigateTo(response.auth_url);
     } catch (startError) {
       setAuthError(getApiErrorMessage(startError, 'Failed to start browser OAuth'));
       setConnectingProfileId(null);
@@ -517,7 +530,12 @@ export function useProviderAtlasController({
         provider: selectedAuthProfile.provider,
         profile_id: selectedAuthProfile.id,
       });
-      setDeviceFlow({ ...response, status: 'pending' });
+      setDeviceFlow({
+        ...response,
+        status: 'pending',
+        target_profile_key: currentKey,
+        target_qualified_name: selectedAuthProfile.qualified_name,
+      });
       setAuthStatus(`Started device flow for ${selectedAuthProfile.qualified_name}.`);
     } catch (startError) {
       setAuthError(getApiErrorMessage(startError, 'Failed to start device flow'));
@@ -527,7 +545,7 @@ export function useProviderAtlasController({
   };
 
   useEffect(() => {
-    if (!selectedAuthProfile || !deviceFlow) {
+    if (!deviceFlow) {
       return;
     }
 
@@ -542,7 +560,8 @@ export function useProviderAtlasController({
           if (cancelled || result.status !== 'completed') {
             return;
           }
-          setAuthStatus(`Connected ${selectedAuthProfile.qualified_name} via device flow.`);
+          const profileLabel = resolveDeviceFlowProfileLabel(deviceFlow, result.profile);
+          setAuthStatus(`Connected ${profileLabel} via device flow.`);
           setDeviceFlow(null);
           await loadRuntimeSurfaces();
           await reload();
@@ -559,7 +578,7 @@ export function useProviderAtlasController({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [deviceFlow, reload, selectedAuthProfile]);
+  }, [deviceFlow, loadRuntimeSurfaces, reload]);
 
   const runHealthCheck = async () => {
     if (!selectedProvider) {
@@ -693,7 +712,7 @@ export function useProviderAtlasController({
       setRegistryError('Select a provider first.');
       return;
     }
-    if (!window.confirm(`Delete provider "${selectedProvider}"?`)) {
+    if (!confirmAction(`Delete provider "${selectedProvider}"?`)) {
       return;
     }
 
