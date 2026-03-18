@@ -10,7 +10,7 @@ import { useCommandCenterData } from '../hooks/useWorkspaceData';
 import { configApi } from '../services/config';
 import { getApiErrorMessage } from '../services/errors';
 import { systemApi } from '../services/system';
-import { presentFactValue } from '../lib/operatorPresentation';
+import { presentFactValue, presentRuntimeStatus } from '../lib/operatorPresentation';
 import type { SystemHealthResponse, SystemLogEntry } from '../types/backend';
 import type { WorkspaceId } from '../types/shell';
 
@@ -41,12 +41,6 @@ export function CommandCenterPage() {
     );
 
   const firstSignal = data?.signals[0] ?? null;
-  const investigationSignal = useMemo(
-    () =>
-      data?.signals.find((signal) => signal.target_workspace !== 'command-center') ??
-      firstSignal,
-    [data?.signals, firstSignal],
-  );
   const quickActions = useMemo(
     () => [
       { id: 'traffic-lab', label: t('commandCenter.palette.openLiveInvestigation'), path: '/traffic-lab' },
@@ -125,7 +119,7 @@ export function CommandCenterPage() {
         <div className="hero-actions">
           <button
             className="button button--primary"
-            onClick={() => navigate(`/${investigationSignal?.target_workspace ?? 'command-center'}`)}
+            onClick={() => navigate('/traffic-lab')}
           >
             {t('commandCenter.hero.openInvestigation')}
           </button>
@@ -219,7 +213,7 @@ export function CommandCenterPage() {
           {systemError ? <div className="status-message status-message--danger">{systemError}</div> : null}
           {systemHealth ? (
             <ul className="fact-list">
-              <li><span>{t('common.status')}</span><strong>{systemHealth.status}</strong></li>
+              <li><span>{t('common.status')}</span><strong>{presentRuntimeStatus(systemHealth.status, t)}</strong></li>
               <li><span>{t('common.version')}</span><strong>{systemHealth.version}</strong></li>
               <li><span>{t('commandCenter.systemWatch.uptime')}</span><strong>{formatNumber(systemHealth.uptime_seconds)}s</strong></li>
               <li><span>{t('common.providers')}</span><strong>{formatNumber(systemHealth.providers.length)}</strong></li>

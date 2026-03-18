@@ -61,6 +61,23 @@ export function presentProbeStatus(status: string, t: Translate) {
   }
 }
 
+export function presentRuntimeStatus(status: string, t: Translate) {
+  const normalized = status.trim().toLowerCase();
+  switch (normalized) {
+    case 'healthy':
+      return t('common.healthy');
+    case 'degraded':
+      return t('common.degraded');
+    case 'unhealthy':
+      return t('common.unhealthy');
+    case 'not_configured':
+    case 'unconfigured':
+      return t('common.notConfigured');
+    default:
+      return humanize(status);
+  }
+}
+
 export function presentCapabilityName(capability: string, t: Translate) {
   const normalized = capability.trim().toLowerCase();
   switch (normalized) {
