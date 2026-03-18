@@ -94,3 +94,4 @@ See [specs/_index.md](specs/_index.md) for the full registry with links and deta
 - [Add Provider](playbooks/add-provider.md)
 - [Add Translator](playbooks/add-translator.md)
 - [Coding Agent Workflow](playbooks/coding-agent-workflow.md)
+- [Deploy To The SSH Host](playbooks/deploy-ssh-host.md)

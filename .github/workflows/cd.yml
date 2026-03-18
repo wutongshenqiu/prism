@@ -60,7 +60,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to ECS
+    name: Deploy to SSH Host
     needs: [build-and-push]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -69,6 +69,8 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
+          # These secret names are legacy. This job deploys to a single Docker host
+          # over SSH; it does not target AWS ECS.
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
@@ -86,7 +88,8 @@ jobs:
             docker cp "$CONTAINER_ID":/usr/share/prism/web/. /opt/prism/web-dist/
             docker rm "$CONTAINER_ID"
 
-            # Restart prism service
+            # Restart Prism on the SSH host. The live runtime config is mounted from
+            # /opt/prism/data/config.yaml via docker compose.
             docker compose down
             docker compose up -d
 

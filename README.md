@@ -27,6 +27,7 @@ Multi-provider AI API gateway written in Rust. Routes requests across Claude, Op
 For repository layout, generated artifact policy, Pencil source placement, and which local files must stay out of Git, see:
 
 - [docs/playbooks/repo-layout-and-artifacts.md](docs/playbooks/repo-layout-and-artifacts.md)
+- [docs/playbooks/deploy-ssh-host.md](docs/playbooks/deploy-ssh-host.md)
 
 ## Quick Start
 
