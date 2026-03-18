@@ -168,7 +168,7 @@ export function useProviderAtlasController({
   });
 
   const authWorkbench = useProviderAtlasAuthWorkbench({
-    providers: data?.providers ?? [],
+    providers: useMemo(() => data?.providers ?? [], [data]),
     selectedProvider: activeProvider,
     reload,
     setDetail,
@@ -202,7 +202,7 @@ export function useProviderAtlasController({
         disabled: provider.disabled,
       });
       setTestForm({
-        model: provider.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? 'gpt-5',
+        model: provider.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? '',
         input: 'Reply with the single word ok.',
       });
     } catch (editorError) {
@@ -237,7 +237,7 @@ export function useProviderAtlasController({
     setActionStatus(null);
     try {
       const result = await providersApi.presentationPreview(activeProvider, {
-        model: detail?.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? 'gpt-5',
+        model: detail?.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? '',
         user_agent: 'prism-control-plane',
         sample_body: {
           input: 'hello',

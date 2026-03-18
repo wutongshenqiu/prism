@@ -19,6 +19,7 @@ web/dist/
 web/test-results/
 web/tsconfig.tsbuildinfo
 .playwright-cli/
+.playwright-mcp/
 
 # Claude Code — track settings/commands, ignore transient data
 .claude/*
