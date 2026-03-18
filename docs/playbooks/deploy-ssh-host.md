@@ -19,15 +19,15 @@ It is **not** an AWS ECS deployment.
 
 The file `/opt/prism/config.yaml` is not part of the live runtime path and should not be used as the deployed config source of truth.
 
-## Why The Workflow Still Says `ECS_*`
+## GitHub Secrets
 
-The GitHub secrets currently use legacy names:
+The deployment workflow uses SSH-specific repository secrets:
 
-- `ECS_HOST`
-- `ECS_USER`
-- `ECS_SSH_KEY`
+- `DEPLOY_SSH_HOST`
+- `DEPLOY_SSH_USER`
+- `DEPLOY_SSH_KEY`
 
-Those names are compatibility leftovers. They point to the SSH host deployment, not to AWS ECS.
+If older `ECS_*` secrets still exist in the repository, treat them as obsolete compatibility leftovers rather than the source of truth.
 
 ## What The CD Workflow Does
 
