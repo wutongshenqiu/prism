@@ -5,6 +5,11 @@ export interface ProviderEditorFormState {
   disabled: boolean;
 }
 
+export interface ProviderTestFormState {
+  model: string;
+  input: string;
+}
+
 export interface ProviderRegistryFormState {
   name: string;
   format: 'openai' | 'claude' | 'gemini';

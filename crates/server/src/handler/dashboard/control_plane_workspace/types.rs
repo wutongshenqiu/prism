@@ -65,6 +65,8 @@ pub fn raw_text(value: impl ToString) -> UiText {
 pub struct FactRow {
     pub label: UiText,
     pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_text: Option<UiText>,
 }
 
 #[derive(Debug, Clone, Serialize)]

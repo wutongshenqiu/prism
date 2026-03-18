@@ -7,7 +7,9 @@ mod read;
 use serde::{Deserialize, Serialize};
 
 pub use mutation::{create_provider, delete_provider, update_provider};
-pub use probe::{cached_probe_result, fetch_models, health_check, presentation_preview};
+pub use probe::{
+    cached_probe_result, fetch_models, health_check, presentation_preview, test_request,
+};
 pub use read::{get_provider, list_providers};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

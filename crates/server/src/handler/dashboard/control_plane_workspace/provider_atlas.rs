@@ -55,18 +55,22 @@ pub async fn provider_atlas(
         FactRow {
             label: UiText::new("providerAtlas.coverage.healthyProviders"),
             value: healthy.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("providerAtlas.coverage.managedAuthProfiles"),
             value: managed.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("providerAtlas.coverage.verifiedStreamSurfaces"),
             value: stream_ready.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("providerAtlas.coverage.sourceMode"),
             value: query.source_mode.clone(),
+            value_text: Some(UiText::new(format!("common.{}", query.source_mode))),
         },
     ];
     let inspector = rows
@@ -227,18 +231,25 @@ pub(crate) fn provider_runtime_status(
 
     if let Some(probe) = cached_probe_result(state, &provider.name) {
         match probe.status.as_str() {
-            "failed" => {
+            "error" | "failed" => {
                 return (
                     "degraded",
                     "warning",
                     UiText::new("providerAtlas.runtime.probeFailed"),
                 );
             }
-            "verified" => {
+            "ok" | "verified" => {
                 return (
                     "healthy",
                     "success",
                     UiText::new("providerAtlas.runtime.probePassed"),
+                );
+            }
+            "warning" => {
+                return (
+                    "watch",
+                    "info",
+                    UiText::new("providerAtlas.runtime.probePending"),
                 );
             }
             _ => {

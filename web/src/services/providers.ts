@@ -6,6 +6,7 @@ import type {
   ProviderCapabilitiesResponse,
   ProviderDetail,
   ProviderHealthResult,
+  ProviderTestResponse,
 } from '../types/backend';
 
 export interface ProviderUpdateRequest {
@@ -34,6 +35,12 @@ export const providersApi = {
   healthCheck: async (name: string) =>
     (await apiClient.post<ProviderHealthResult>(`/providers/${encodeURIComponent(name)}/health`))
       .data,
+
+  testRequest: async (name: string, body: { model: string; input: string }) =>
+    (await apiClient.post<ProviderTestResponse>(
+      `/providers/${encodeURIComponent(name)}/test-request`,
+      body,
+    )).data,
 
   fetchModels: async (body: { format: string; upstream?: string; api_key: string; base_url?: string | null }) =>
     (await apiClient.post<ProviderFetchModelsResult>('/providers/fetch-models', body)).data,

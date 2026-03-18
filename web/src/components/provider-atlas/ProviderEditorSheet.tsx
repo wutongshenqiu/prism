@@ -1,14 +1,26 @@
 import { WorkbenchSheet } from '../WorkbenchSheet';
 import { profileKey } from '../../lib/authProfileDraft';
+import { PayloadViewer } from '../PayloadViewer';
 import { useI18n } from '../../i18n';
+import {
+  presentAuthMode,
+  presentCapabilityName,
+  presentMutationKind,
+  presentPresentationMode,
+  presentPresentationProfile,
+  presentProbeStatus,
+  presentProviderFormat,
+  presentWireApi,
+} from '../../lib/operatorPresentation';
 import type {
   AuthProfilesRuntimeResponse,
   PresentationPreviewResponse,
   ProviderCapabilityEntry,
   ProviderDetail,
   ProviderHealthResult,
+  ProviderTestResponse,
 } from '../../types/backend';
-import type { ProviderEditorFormState } from './types';
+import type { ProviderEditorFormState, ProviderTestFormState } from './types';
 
 interface ProviderEditorSheetProps {
   open: boolean;
@@ -21,14 +33,20 @@ interface ProviderEditorSheetProps {
   preview: PresentationPreviewResponse | null;
   previewing: boolean;
   saving: boolean;
+  testingRequest: boolean;
   selectedCapabilities: ProviderCapabilityEntry | null;
   formState: ProviderEditorFormState;
+  testForm: ProviderTestFormState;
+  testResult: ProviderTestResponse | null;
+  testError: string | null;
   refreshingProfileId: string | null;
   onClose: () => void;
   onRunHealthCheck: () => void;
   onRunPresentationPreview: () => void;
+  onRunTestRequest: () => void;
   onSaveProvider: () => void;
   onFormStateChange: (patch: Partial<ProviderEditorFormState>) => void;
+  onTestFormChange: (patch: Partial<ProviderTestFormState>) => void;
   onRefreshAuthProfile: (provider: string, profileId: string) => void;
 }
 
@@ -43,14 +61,20 @@ export function ProviderEditorSheet({
   preview,
   previewing,
   saving,
+  testingRequest,
   selectedCapabilities,
   formState,
+  testForm,
+  testResult,
+  testError,
   refreshingProfileId,
   onClose,
   onRunHealthCheck,
   onRunPresentationPreview,
+  onRunTestRequest,
   onSaveProvider,
   onFormStateChange,
+  onTestFormChange,
   onRefreshAuthProfile,
 }: ProviderEditorSheetProps) {
   const { t, formatDateTime, formatDurationMs, formatNumber } = useI18n();
@@ -62,17 +86,9 @@ export function ProviderEditorSheet({
       title={t('providerAtlas.editor.title')}
       subtitle={t('providerAtlas.editor.subtitle')}
       actions={(
-        <>
-          <button type="button" className="button button--ghost" onClick={onRunHealthCheck}>
-            {t('providerAtlas.editor.runHealthProbe')}
-          </button>
-          <button type="button" className="button button--ghost" onClick={onRunPresentationPreview} disabled={previewing}>
-            {previewing ? t('providerAtlas.editor.previewing') : t('providerAtlas.editor.presentationPreview')}
-          </button>
-          <button type="button" className="button button--primary" onClick={onSaveProvider} disabled={saving}>
-            {saving ? t('providerAtlas.editor.saving') : t('providerAtlas.editor.saveProvider')}
-          </button>
-        </>
+        <button type="button" className="button button--primary" onClick={onSaveProvider} disabled={saving}>
+          {saving ? t('providerAtlas.editor.saving') : t('providerAtlas.editor.saveProvider')}
+        </button>
       )}
     >
       {loadingDetail ? <div className="status-message">{t('providerAtlas.editor.loadingDetail')}</div> : null}
@@ -85,7 +101,7 @@ export function ProviderEditorSheet({
             <h3>{t('providerAtlas.editor.providerPosture')}</h3>
             <div className="detail-grid">
               <div className="detail-grid__row"><span>{t('common.name')}</span><strong>{detail.name}</strong></div>
-              <div className="detail-grid__row"><span>{t('common.format')}</span><strong>{detail.format}</strong></div>
+              <div className="detail-grid__row"><span>{t('common.format')}</span><strong>{presentProviderFormat(detail.format)}</strong></div>
               <div className="detail-grid__row"><span>{t('common.upstream')}</span><strong>{detail.upstream}</strong></div>
               <div className="detail-grid__row"><span>{t('providerAtlas.editor.authProfiles')}</span><strong>{formatNumber(detail.auth_profiles.length)}</strong></div>
             </div>
@@ -135,6 +151,61 @@ export function ProviderEditorSheet({
           </section>
 
           <section className="sheet-section">
+            <h3>{t('providerAtlas.editor.liveOps')}</h3>
+            <div className="inline-actions inline-actions--wrap">
+              <button type="button" className="button button--ghost" onClick={onRunHealthCheck}>
+                {t('providerAtlas.editor.runHealthProbe')}
+              </button>
+              <button type="button" className="button button--ghost" onClick={onRunPresentationPreview} disabled={previewing}>
+                {previewing ? t('providerAtlas.editor.previewing') : t('providerAtlas.editor.presentationPreview')}
+              </button>
+              <button type="button" className="button button--secondary" onClick={onRunTestRequest} disabled={testingRequest}>
+                {testingRequest ? t('providerAtlas.editor.testingRequest') : t('providerAtlas.editor.sendTestRequest')}
+              </button>
+            </div>
+            <div className="sheet-form">
+              <label className="sheet-field">
+                <span>{t('common.model')}</span>
+                <input
+                  name="provider-test-model"
+                  autoComplete="off"
+                  value={testForm.model}
+                  onChange={(event) => onTestFormChange({ model: event.target.value })}
+                />
+              </label>
+              <label className="sheet-field">
+                <span>{t('providerAtlas.editor.testInput')}</span>
+                <textarea
+                  name="provider-test-input"
+                  rows={4}
+                  value={testForm.input}
+                  onChange={(event) => onTestFormChange({ input: event.target.value })}
+                />
+              </label>
+            </div>
+            {testError ? <div className="status-message status-message--danger">{testError}</div> : null}
+            {testResult ? (
+              <>
+                <div className="detail-grid">
+                  <div className="detail-grid__row"><span>{t('common.path')}</span><strong>{testResult.endpoint}</strong></div>
+                  <div className="detail-grid__row"><span>{t('common.status')}</span><strong>{testResult.status}</strong></div>
+                  <div className="detail-grid__row"><span>{t('common.latency')}</span><strong>{formatDurationMs(testResult.latency_ms)}</strong></div>
+                </div>
+                <PayloadViewer
+                  title={t('providerAtlas.editor.testRequestPayload')}
+                  payload={testResult.request_body}
+                  emptyMessage={t('providerAtlas.editor.noTestRequestPayload')}
+                />
+                <PayloadViewer
+                  title={t('providerAtlas.editor.testResponsePayload')}
+                  payload={testResult.response_body}
+                  emptyMessage={t('providerAtlas.editor.noTestResponsePayload')}
+                />
+              </>
+            ) : null}
+          </section>
+
+          <section className="sheet-section">
             <h3>{t('providerAtlas.editor.authProfiles')}</h3>
             <div className="probe-list">
               {detail.auth_profiles.length === 0 ? (
@@ -146,7 +217,7 @@ export function ProviderEditorSheet({
                 detail.auth_profiles.map((profile) => (
                   <div key={profile.qualified_name} className="probe-check">
                     <span>{profile.qualified_name}</span>
-                    <strong>{profile.mode}</strong>
+                    <strong>{presentAuthMode(profile.mode, t)}</strong>
                     {profile.refresh_token_present ? (
                       <button
                         type="button"
@@ -180,10 +251,10 @@ export function ProviderEditorSheet({
             <section className="sheet-section">
               <h3>{t('providerAtlas.editor.capabilitySnapshot')}</h3>
               <div className="detail-grid">
-                <div className="detail-grid__row"><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{selectedCapabilities.probe_status}</strong></div>
-                <div className="detail-grid__row"><span>{t('providerAtlas.coverage.presentation')}</span><strong>{selectedCapabilities.presentation_profile}</strong></div>
+                <div className="detail-grid__row"><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{presentProbeStatus(selectedCapabilities.probe_status, t)}</strong></div>
+                <div className="detail-grid__row"><span>{t('providerAtlas.coverage.presentation')}</span><strong>{`${presentPresentationProfile(selectedCapabilities.presentation_profile, t)} / ${presentPresentationMode(selectedCapabilities.presentation_mode, t)}`}</strong></div>
                 <div className="detail-grid__row"><span>{t('common.models')}</span><strong>{formatNumber(selectedCapabilities.models.length)}</strong></div>
-                <div className="detail-grid__row"><span>{t('providerAtlas.editor.wireApi')}</span><strong>{selectedCapabilities.wire_api}</strong></div>
+                <div className="detail-grid__row"><span>{t('providerAtlas.editor.wireApi')}</span><strong>{presentWireApi(selectedCapabilities.wire_api, t)}</strong></div>
               </div>
             </section>
           ) : null}
@@ -192,15 +263,15 @@ export function ProviderEditorSheet({
             <section className="sheet-section">
               <h3>{t('providerAtlas.editor.healthProbe')}</h3>
               <div className="detail-grid">
-                <div className="detail-grid__row"><span>{t('common.status')}</span><strong>{health.status}</strong></div>
+                <div className="detail-grid__row"><span>{t('common.status')}</span><strong>{presentProbeStatus(health.status, t)}</strong></div>
                 <div className="detail-grid__row"><span>{t('providerAtlas.editor.checkedAt')}</span><strong>{formatDateTime(health.checked_at)}</strong></div>
                 <div className="detail-grid__row"><span>{t('common.latency')}</span><strong>{formatDurationMs(health.latency_ms)}</strong></div>
               </div>
               <div className="probe-list">
                 {health.checks.map((check) => (
                   <div key={check.capability} className="probe-check">
-                    <span>{check.capability}</span>
-                    <strong>{check.status}</strong>
+                    <span>{presentCapabilityName(check.capability, t)}</span>
+                    <strong>{presentProbeStatus(check.status, t)}</strong>
                   </div>
                 ))}
               </div>
@@ -219,11 +290,16 @@ export function ProviderEditorSheet({
               <div className="probe-list">
                 {preview.body_mutations.map((mutation) => (
                   <div key={`${mutation.kind}-${mutation.reason ?? 'none'}`} className="probe-check">
-                    <span>{mutation.kind}</span>
+                    <span>{presentMutationKind(mutation.kind, t)}</span>
                     <strong>{mutation.applied ? t('providerAtlas.editor.applied') : mutation.reason ?? t('providerAtlas.editor.skipped')}</strong>
                   </div>
                 ))}
               </div>
+              <PayloadViewer
+                title={t('providerAtlas.editor.effectiveBody')}
+                payload={preview.effective_body}
+                emptyMessage={t('providerAtlas.editor.noEffectiveBody')}
+              />
             </section>
           ) : null}
         </>

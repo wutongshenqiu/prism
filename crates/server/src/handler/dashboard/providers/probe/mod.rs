@@ -2,6 +2,7 @@ mod codex;
 mod common;
 mod health;
 mod models;
+mod test_request;
 
 use crate::AppState;
 use axum::Json;
@@ -13,6 +14,7 @@ use serde_json::json;
 
 pub use health::{cached_probe_result, health_check};
 pub use models::fetch_models;
+pub use test_request::test_request;
 
 #[derive(Debug, Deserialize)]
 pub struct FetchModelsRequest {

@@ -1,5 +1,6 @@
 import { WorkbenchSheet } from '../WorkbenchSheet';
 import { useI18n } from '../../i18n';
+import { presentProbeStatus, presentProviderFormat } from '../../lib/operatorPresentation';
 import type { ProviderAtlasRow } from '../../types/controlPlane';
 import type { ProviderRegistryFormState } from './types';
 
@@ -80,9 +81,9 @@ export function ProviderRegistrySheet({
           <label className="sheet-field">
             <span>{t('common.format')}</span>
             <select value={registryForm.format} onChange={(event) => onRegistryFormChange({ format: event.target.value as ProviderRegistryFormState['format'] })}>
-              <option value="openai">openai</option>
-              <option value="claude">claude</option>
-              <option value="gemini">gemini</option>
+              <option value="openai">{presentProviderFormat('openai')}</option>
+              <option value="claude">{presentProviderFormat('claude')}</option>
+              <option value="gemini">{presentProviderFormat('gemini')}</option>
             </select>
           </label>
           <label className="sheet-field">
@@ -136,13 +137,13 @@ export function ProviderRegistrySheet({
 
       <section className="sheet-section">
         <h3>{t('providerAtlas.registry.selectedProvider')}</h3>
-        <div className="detail-grid">
-          <div className="detail-grid__row"><span>{t('common.name')}</span><strong>{selectedProvider ?? t('common.noneSelected')}</strong></div>
-          <div className="detail-grid__row"><span>{t('common.status')}</span><strong>{selectedRow ? tx(selectedRow.status) : t('common.notAvailable')}</strong></div>
-          <div className="detail-grid__row"><span>{t('providerAtlas.table.auth')}</span><strong>{selectedRow ? tx(selectedRow.auth) : t('common.notAvailable')}</strong></div>
-          <div className="detail-grid__row"><span>{t('providerAtlas.registry.coverage')}</span><strong>{selectedProbeStatus ?? t('common.notAvailable')}</strong></div>
-        </div>
-      </section>
+          <div className="detail-grid">
+            <div className="detail-grid__row"><span>{t('common.name')}</span><strong>{selectedProvider ?? t('common.noneSelected')}</strong></div>
+            <div className="detail-grid__row"><span>{t('common.status')}</span><strong>{selectedRow ? tx(selectedRow.status) : t('common.notAvailable')}</strong></div>
+            <div className="detail-grid__row"><span>{t('providerAtlas.table.auth')}</span><strong>{selectedRow ? tx(selectedRow.auth) : t('common.notAvailable')}</strong></div>
+            <div className="detail-grid__row"><span>{t('providerAtlas.registry.coverage')}</span><strong>{selectedProbeStatus ? presentProbeStatus(selectedProbeStatus, t) : t('common.notAvailable')}</strong></div>
+          </div>
+        </section>
     </WorkbenchSheet>
   );
 }

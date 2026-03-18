@@ -169,6 +169,13 @@ function sheetActionButton(name) {
   return page.locator('.sheet__actions').getByRole('button', { name, exact: true });
 }
 
+function sheetSectionButton(sectionHeading, name) {
+  return page
+    .locator('.sheet-section')
+    .filter({ has: page.getByRole('heading', { name: sectionHeading, exact: true }) })
+    .getByRole('button', { name, exact: true });
+}
+
 async function login() {
   await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Enter the control plane', exact: true }).waitFor({ timeout: 10_000 });
@@ -367,7 +374,7 @@ await closeWorkbench();
 await heroButton('Command palette').click();
 await page.getByRole('heading', { name: 'Command palette', exact: true }).waitFor({ timeout: 10_000 });
 await page.getByRole('button', { name: 'Inspect provider roster', exact: true }).click();
-await page.getByRole('heading', { name: 'Runtime entities with identity and auth posture', exact: true }).waitFor({ timeout: 10_000 });
+await page.getByRole('heading', { name: 'Operate providers from runtime truth', exact: true }).waitFor({ timeout: 10_000 });
 await waitForStable();
 report.actions.push({
   route: '/command-center',
@@ -434,16 +441,16 @@ await page.getByPlaceholder('Filter request sessions').fill('');
 await waitForStable();
 
 logStep('provider-atlas');
-await clickWorkspace('Provider Atlas', 'Runtime entities with identity and auth posture');
+await clickWorkspace('Provider Atlas', 'Operate providers from runtime truth');
 assert(
   await page.locator('.table-grid--providers .table-grid__cell--strong').filter({ hasText: /^ChatGPT Pro$/ }).first().isVisible(),
   'provider atlas should show real provider',
 );
-await heroButton('Open provider editor').click();
+await heroButton('Health and test').click();
 await page.getByRole('heading', { name: 'Provider editor', exact: true }).waitFor({ timeout: 10_000 });
 await page.getByRole('heading', { name: 'Auth profiles', exact: true }).waitFor({ timeout: 10_000 });
 await page.getByRole('heading', { name: 'Managed auth runtime', exact: true }).waitFor({ timeout: 10_000 });
-await sheetActionButton('Run health probe').click();
+await sheetSectionButton('Live operations', 'Run health probe').click();
 await page.getByText(/Health probe completed with status/i).waitFor({ timeout: 20_000 });
 await sheetActionButton('Save provider').click();
 await page.getByText(/Saved provider/i).waitFor({ timeout: 20_000 });
@@ -489,14 +496,14 @@ await page.getByRole('heading', { name: 'Auth profile workbench', exact: true })
 await page.getByLabel('Provider').selectOption(ephemeralProviderName);
 await page.getByLabel('Profile id').fill(ephemeralProfileId);
 await page.getByLabel('Secret').fill('sk-test-e2e-profile');
-await page.locator('.sheet__actions').getByRole('button', { name: 'Create profile', exact: true }).click();
+await sheetActionButton('Create profile').click();
 await page.getByText(new RegExp(`Created auth profile ${ephemeralProviderName}/${ephemeralProfileId}`)).waitFor({ timeout: 20_000 });
 await page.locator('.sheet .probe-check').filter({ hasText: `${ephemeralProviderName}/${ephemeralProfileId}` }).getByRole('button', { name: 'Select', exact: true }).click();
 await page.getByLabel('Prefix').fill('e2e-prefix');
-await page.locator('.sheet__actions').getByRole('button', { name: 'Save profile', exact: true }).click();
+await sheetActionButton('Save profile').click();
 await page.getByText(new RegExp(`Saved auth profile ${ephemeralProviderName}/${ephemeralProfileId}`)).waitFor({ timeout: 20_000 });
 await acceptNextDialog();
-await page.locator('.sheet__actions').getByRole('button', { name: 'Delete selected', exact: true }).click();
+await sheetSectionButton('Selected profile actions', 'Delete selected').click();
 await page.getByText(new RegExp(`Deleted auth profile ${ephemeralProviderName}/${ephemeralProfileId}`)).waitFor({ timeout: 20_000 });
 report.actions.push({
   route: '/provider-atlas',
@@ -504,6 +511,12 @@ report.actions.push({
   profile: `${ephemeralProviderName}/${ephemeralProfileId}`,
 });
 await closeWorkbench();
+await page
+  .locator('.table-grid--providers .table-grid__cell--strong')
+  .filter({ hasText: new RegExp(`^${ephemeralProviderName}$`) })
+  .first()
+  .click();
+await waitForStable();
 
 await page.getByRole('button', { name: 'Provider registry', exact: true }).click();
 await page.getByRole('heading', { name: 'Provider registry workbench', exact: true }).waitFor({ timeout: 10_000 });
@@ -579,7 +592,7 @@ report.actions.push({
 });
 await closeWorkbench();
 
-await page.getByRole('button', { name: 'Manage access keys', exact: true }).click();
+await heroButton('Manage access keys').click();
 await page.getByRole('heading', { name: 'Access control workbench', exact: true }).waitFor({ timeout: 10_000 });
 await sheetActionButton('New draft').click();
 await page.getByLabel('Name').fill(ephemeralAuthKeyName);
@@ -595,9 +608,9 @@ await sendTrafficRequest(createdAuthKey);
 await page.getByLabel('Allowed models').fill('gpt-5, gpt-4o-mini');
 await sheetActionButton('Save key').click();
 await page.getByText(new RegExp(`Saved auth key ${ephemeralAuthKeyName}`)).waitFor({ timeout: 20_000 });
-await sheetActionButton('Reveal selected').click();
+await sheetSectionButton('Selected key actions', 'Reveal selected').click();
 await page.getByText(/Revealed auth key/i).waitFor({ timeout: 20_000 });
-await sheetActionButton('Delete selected').click();
+await sheetSectionButton('Selected key actions', 'Delete selected').click();
 await page.getByText(/Deleted auth key/i).waitFor({ timeout: 20_000 });
 await closeWorkbench();
 await page.getByRole('button', { name: 'Refresh posture', exact: true }).click();

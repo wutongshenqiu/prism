@@ -279,7 +279,23 @@ Updates shared provider settings and optionally replaces `auth_profiles[]`.
 
 Deletes a provider.
 
-**Source:** `crates/server/src/handler/dashboard/providers.rs`
+#### POST /api/dashboard/providers/fetch-models
+
+Fetches a live model inventory from the upstream using the draft provider settings supplied in the request body. Intended for dashboard onboarding and registry workflows.
+
+#### POST /api/dashboard/providers/{name}/health
+
+Runs a live provider health probe and returns `{ provider, upstream, status, checked_at, latency_ms, checks[] }`.
+
+#### POST /api/dashboard/providers/{name}/test-request
+
+Sends a direct operator test request to the selected provider and returns the effective upstream request/response payloads. This is dashboard-only validation for provider health and UX, not a public gateway API.
+
+#### POST /api/dashboard/providers/{name}/presentation-preview
+
+Builds a presentation-layer preview for the selected provider and returns the effective headers, mutation trace, and final request body that would be sent upstream.
+
+**Source:** `crates/server/src/handler/dashboard/providers/`
 
 ---
 

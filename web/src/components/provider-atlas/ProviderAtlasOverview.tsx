@@ -1,15 +1,17 @@
 import { Panel } from '../Panel';
 import { StatusPill } from '../StatusPill';
 import { useI18n } from '../../i18n';
+import {
+  presentExecutionMode,
+  presentFactValue,
+  presentPresentationMode,
+  presentPresentationProfile,
+  presentProbeStatus,
+  presentProviderFormat,
+} from '../../lib/operatorPresentation';
 import type { ProviderAtlasResponse, ProviderAtlasRow } from '../../types/controlPlane';
 import type { ProtocolCoverageEntry, ProviderCapabilityEntry } from '../../types/backend';
 import type { ProviderAtlasModelInventoryItem, ProviderAtlasProtocolFacts } from './types';
-
-function protocolCoverageKey(mode?: string | null) {
-  if (!mode) return 'providerAtlas.protocol.unsupported';
-  if (mode === 'native') return 'providerAtlas.protocol.native';
-  return 'providerAtlas.protocol.adapted';
-}
 
 interface ProviderAtlasOverviewProps {
   loading: boolean;
@@ -51,7 +53,7 @@ export function ProviderAtlasOverview({
   return (
     <>
       {selectedRow ? (
-        <div className="status-message status-message--warning">
+        <div className="status-message status-message--info">
           {t('providerAtlas.status.activeProvider')}{' '}
           <strong>{selectedRow.provider}</strong> · {tx(selectedRow.status)} · {tx(selectedRow.auth)}
         </div>
@@ -88,7 +90,7 @@ export function ProviderAtlasOverview({
                   {provider.provider}
                 </div>,
                 <div key={`${provider.provider}-format`} className={cellClass} onClick={() => onSelectProvider(provider.provider)}>
-                  {provider.format}
+                  {presentProviderFormat(provider.format)}
                 </div>,
                 <div key={`${provider.provider}-auth`} className={cellClass} onClick={() => onSelectProvider(provider.provider)}>
                   {tx(provider.auth)}
@@ -109,15 +111,15 @@ export function ProviderAtlasOverview({
             {(data?.coverage ?? []).map((fact) => (
               <li key={fact.label.key}>
                 <span>{tx(fact.label)}</span>
-                <strong>{fact.value}</strong>
+                <strong>{presentFactValue(fact, tx)}</strong>
               </li>
             ))}
             {selectedCapabilities ? (
               <>
-                <li><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{selectedCapabilities.probe_status}</strong></li>
-                <li><span>{t('providerAtlas.coverage.presentation')}</span><strong>{selectedCapabilities.presentation_profile}</strong></li>
+                <li><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{presentProbeStatus(selectedCapabilities.probe_status, t)}</strong></li>
+                <li><span>{t('providerAtlas.coverage.presentation')}</span><strong>{`${presentPresentationProfile(selectedCapabilities.presentation_profile, t)} / ${presentPresentationMode(selectedCapabilities.presentation_mode, t)}`}</strong></li>
                 <li><span>{t('providerAtlas.coverage.modelSurface')}</span><strong>{formatNumber(selectedCapabilities.models.length)}</strong></li>
-                <li><span>{t('providerAtlas.coverage.toolSupport')}</span><strong>{selectedCapabilities.probe.tools.status}</strong></li>
+                <li><span>{t('providerAtlas.coverage.toolSupport')}</span><strong>{presentProbeStatus(selectedCapabilities.probe.tools.status, t)}</strong></li>
               </>
             ) : null}
           </ul>
@@ -145,7 +147,7 @@ export function ProviderAtlasOverview({
             {filteredProtocolCoverage.map((entry) => (
               <div key={`${entry.provider}-${entry.surface_id}`} className="probe-check">
                 <span>{entry.surface_label}</span>
-                <strong>{t(protocolCoverageKey(entry.execution_mode))}</strong>
+                <strong>{presentExecutionMode(entry.execution_mode, t)}</strong>
               </div>
             ))}
           </div>
@@ -168,7 +170,7 @@ export function ProviderAtlasOverview({
               {filteredModelInventory.map((item) => (
                 <div key={`${item.provider}-${item.id}`} className="probe-check">
                   <span>{item.id}</span>
-                  <strong>{item.provider} · {item.probe}</strong>
+                  <strong>{item.provider} · {presentProbeStatus(item.probe, t)}</strong>
                 </div>
               ))}
             </div>

@@ -1,6 +1,7 @@
 import { Panel } from '../Panel';
 import { StatusPill } from '../StatusPill';
 import { useI18n } from '../../i18n';
+import { presentFactValue } from '../../lib/operatorPresentation';
 import type { TenantMetricsResponse, TenantSummary, AuthKeySummary } from '../../types/backend';
 import type { ChangeStudioResponse, RegistryRow } from '../../types/controlPlane';
 
@@ -50,7 +51,7 @@ export function ChangeStudioOverview({
   return (
     <>
       {selectedRegistry ? (
-        <div className="status-message status-message--warning">
+        <div className="status-message status-message--info">
           {t('changeStudio.status.activeFamily')} <strong>{tx(selectedRegistry.family_label)}</strong> · {selectedRegistry.record} · {selectedRegistry.dependents} {t('changeStudio.status.dependents')}
         </div>
       ) : null}
@@ -92,7 +93,7 @@ export function ChangeStudioOverview({
         <Panel title={t('changeStudio.panel.transaction.title')} subtitle={t('changeStudio.panel.transaction.subtitle')}>
           <ul className="fact-list">
             {(data?.publish_facts ?? []).map((fact) => (
-              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{fact.value}</strong></li>
+              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{presentFactValue(fact, tx)}</strong></li>
             ))}
           </ul>
         </Panel>

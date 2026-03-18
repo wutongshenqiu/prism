@@ -55,18 +55,22 @@ pub async fn traffic_lab(
         FactRow {
             label: UiText::new("common.window"),
             value: query.range.clone(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("trafficLab.fact.entries"),
             value: stats.total_entries.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("trafficLab.fact.errors"),
             value: stats.error_count.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("trafficLab.fact.avgLatency"),
             value: format!("{} ms", stats.avg_latency_ms),
+            value_text: None,
         },
     ];
     let inspector = traffic_inspector(selected.as_ref(), &query);

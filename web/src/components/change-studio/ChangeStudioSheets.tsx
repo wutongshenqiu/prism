@@ -205,12 +205,6 @@ export function AccessControlSheet({
           <button type="button" className="button button--ghost" onClick={onStartNewDraft}>
             {t('changeStudio.access.newDraft')}
           </button>
-          <button type="button" className="button button--ghost" onClick={onRevealSelected} disabled={revealingKey}>
-            {revealingKey ? t('changeStudio.access.revealing') : t('changeStudio.access.revealSelected')}
-          </button>
-          <button type="button" className="button button--ghost" onClick={onDeleteSelected} disabled={deletingKey}>
-            {deletingKey ? t('changeStudio.access.deleting') : t('changeStudio.access.deleteSelected')}
-          </button>
           <button type="button" className="button button--primary" onClick={onSaveKey} disabled={savingKey}>
             {savingKey ? t('changeStudio.access.saving') : accessEditorMode === 'edit' ? t('changeStudio.access.saveKey') : t('changeStudio.access.createKey')}
           </button>
@@ -252,6 +246,17 @@ export function AccessControlSheet({
             <div className="detail-grid__row"><span>{t('common.tenant')}</span><strong>{selectedAuthKey.tenant_id ?? t('common.global')}</strong></div>
             <div className="detail-grid__row"><span>{t('changeStudio.access.modelAllowlist')}</span><strong>{selectedAuthKey.allowed_models.length || t('common.all')}</strong></div>
             <div className="detail-grid__row"><span>{t('changeStudio.access.credentialAllowlist')}</span><strong>{selectedAuthKey.allowed_credentials.length || t('common.all')}</strong></div>
+          </div>
+          <div className="sheet-form">
+            <h4>{t('changeStudio.access.selectedKeyActions')}</h4>
+            <div className="inline-actions inline-actions--wrap">
+              <button type="button" className="button button--ghost" onClick={onRevealSelected} disabled={revealingKey}>
+                {revealingKey ? t('changeStudio.access.revealing') : t('changeStudio.access.revealSelected')}
+              </button>
+              <button type="button" className="button button--ghost" onClick={onDeleteSelected} disabled={deletingKey}>
+                {deletingKey ? t('changeStudio.access.deleting') : t('changeStudio.access.deleteSelected')}
+              </button>
+            </div>
           </div>
         </section>
       ) : null}

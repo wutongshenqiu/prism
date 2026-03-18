@@ -218,6 +218,7 @@ struct MockOpenAiProbeServer {
     base_url: String,
     model_requests: Arc<AtomicUsize>,
     chat_requests: Arc<AtomicUsize>,
+    responses_requests: Arc<AtomicUsize>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -392,6 +393,7 @@ async fn spawn_mock_openai_probe_server() -> MockOpenAiProbeServer {
     struct ProbeState {
         model_requests: Arc<AtomicUsize>,
         chat_requests: Arc<AtomicUsize>,
+        responses_requests: Arc<AtomicUsize>,
     }
 
     async fn list_models(State(state): State<ProbeState>) -> (StatusCode, Json<Value>) {
@@ -425,13 +427,38 @@ async fn spawn_mock_openai_probe_server() -> MockOpenAiProbeServer {
         )
     }
 
+    async fn responses(State(state): State<ProbeState>, body: String) -> (StatusCode, Json<Value>) {
+        state.responses_requests.fetch_add(1, Ordering::SeqCst);
+        assert!(
+            body.contains("\"input\""),
+            "expected responses payload, got {body}"
+        );
+        (
+            StatusCode::OK,
+            Json(json!({
+                "id": "resp-probe",
+                "object": "response",
+                "output": [{
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "ok"
+                    }]
+                }]
+            })),
+        )
+    }
+
     let state = ProbeState {
         model_requests: Arc::new(AtomicUsize::new(0)),
         chat_requests: Arc::new(AtomicUsize::new(0)),
+        responses_requests: Arc::new(AtomicUsize::new(0)),
     };
     let app = Router::new()
         .route("/v1/models", get(list_models))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/responses", post(responses))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -448,6 +475,7 @@ async fn spawn_mock_openai_probe_server() -> MockOpenAiProbeServer {
         base_url: format!("http://{addr}"),
         model_requests: state.model_requests,
         chat_requests: state.chat_requests,
+        responses_requests: state.responses_requests,
         _task: task,
     }
 }
@@ -2657,6 +2685,50 @@ async fn test_provider_health_uses_live_text_probe_for_openai_compatible_provide
     assert_eq!(text["status"], "verified");
     assert_eq!(probe_server.model_requests.load(Ordering::SeqCst), 0);
     assert_eq!(probe_server.chat_requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn test_provider_test_request_returns_upstream_payload_for_dashboard_operator() {
+    let probe_server = spawn_mock_openai_probe_server().await;
+    let harness = create_test_harness();
+    let token = login_and_get_token(&harness).await;
+
+    let create_body = json!({
+        "format": "openai",
+        "name": "DashScope Live Test",
+        "api_key": "sk-sp-shared-test-1234567890abcdef",
+        "base_url": probe_server.base_url,
+        "models": ["qwen3-coder-plus"],
+        "wire_api": "responses",
+    });
+    let req = authed_post("/api/dashboard/providers", &token, create_body);
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body:?}");
+    reload_runtime_config(&harness);
+
+    let req = authed_post(
+        "/api/dashboard/providers/DashScope%20Live%20Test/test-request",
+        &token,
+        json!({
+            "model": "qwen3-coder-plus",
+            "input": "Reply with the single word ok.",
+        }),
+    );
+    let (status, body) = send_request(&harness, req).await;
+    assert_eq!(status, StatusCode::OK, "test request failed: {body:?}");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], 200);
+    assert_eq!(body["model"], "qwen3-coder-plus");
+    assert_eq!(
+        body["request_body"]["input"],
+        "Reply with the single word ok."
+    );
+    assert_eq!(
+        body["response_body"]["output"][0]["content"][0]["text"],
+        "ok"
+    );
+    assert_eq!(probe_server.chat_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(probe_server.responses_requests.load(Ordering::SeqCst), 1);
 }
 
 // ===========================================================================

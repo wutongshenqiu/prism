@@ -36,36 +36,44 @@ pub async fn route_studio(
         FactRow {
             label: UiText::new("routeStudio.fact.defaultProfile"),
             value: config.routing.default_profile.clone(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("routeStudio.fact.profiles"),
             value: config.routing.profiles.len().to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("routeStudio.fact.rules"),
             value: config.routing.rules.len().to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("routeStudio.fact.modelTransforms"),
             value: total_model_resolution_steps(&config).to_string(),
+            value_text: None,
         },
     ];
     let explain_facts = vec![
         FactRow {
             label: UiText::new("routeStudio.fact.sampledScenarios"),
             value: scenarios.len().to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("routeStudio.fact.routable"),
             value: routable.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("routeStudio.fact.blocked"),
             value: scenarios.len().saturating_sub(routable).to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("common.window"),
             value: query.range.clone(),
+            value_text: None,
         },
     ];
     let inspector = route_inspector(&config, scenarios.first());

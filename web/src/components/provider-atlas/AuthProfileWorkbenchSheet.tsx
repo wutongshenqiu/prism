@@ -1,5 +1,6 @@
 import { WorkbenchSheet } from '../WorkbenchSheet';
 import { useI18n } from '../../i18n';
+import { presentAuthMode } from '../../lib/operatorPresentation';
 import {
   isManagedMode,
   profileKey,
@@ -90,41 +91,6 @@ export function AuthProfileWorkbenchSheet({
           <button type="button" className="button button--ghost" onClick={onStartNewDraft}>
             {t('providerAtlas.authWorkbench.newDraft')}
           </button>
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={onImportSelectedProfile}
-            disabled={!selectedAuthProfile || importingProfileId !== null}
-          >
-            {importingProfileId ? t('providerAtlas.authWorkbench.importing') : t('providerAtlas.authWorkbench.importLocal')}
-          </button>
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={onStartBrowserOauth}
-            disabled={!selectedAuthProfile || selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
-          >
-            {connectingProfileId ? t('providerAtlas.authWorkbench.connecting') : t('providerAtlas.authWorkbench.browserOauth')}
-          </button>
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={onStartDeviceFlow}
-            disabled={!selectedAuthProfile || selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
-          >
-            {deviceFlow ? t('providerAtlas.authWorkbench.deviceActive') : t('providerAtlas.authWorkbench.deviceFlow')}
-          </button>
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={onRefreshSelectedProfile}
-            disabled={!selectedAuthProfile || refreshingProfileId !== null}
-          >
-            {refreshingProfileId ? t('providerAtlas.authWorkbench.refreshing') : t('providerAtlas.authWorkbench.refreshSelected')}
-          </button>
-          <button type="button" className="button button--ghost" onClick={onDeleteSelectedProfile} disabled={!selectedAuthProfile}>
-            {t('providerAtlas.authWorkbench.deleteSelected')}
-          </button>
           <button type="button" className="button button--primary" onClick={onSaveAuthProfile} disabled={authSaving}>
             {authSaving
               ? t('providerAtlas.authWorkbench.saving')
@@ -179,10 +145,10 @@ export function AuthProfileWorkbenchSheet({
           <label className="sheet-field">
             <span>{t('common.mode')}</span>
             <select value={authForm.mode} onChange={(event) => onAuthFormChange({ mode: event.target.value })}>
-              <option value="api-key">api-key</option>
-              <option value="bearer-token">bearer-token</option>
-              <option value="codex-oauth">codex-oauth</option>
-              <option value="anthropic-claude-subscription">anthropic-claude-subscription</option>
+              <option value="api-key">{presentAuthMode('api-key', t)}</option>
+              <option value="bearer-token">{presentAuthMode('bearer-token', t)}</option>
+              <option value="codex-oauth">{presentAuthMode('codex-oauth', t)}</option>
+              <option value="anthropic-claude-subscription">{presentAuthMode('anthropic-claude-subscription', t)}</option>
             </select>
           </label>
           <label className="sheet-field">
@@ -239,12 +205,53 @@ export function AuthProfileWorkbenchSheet({
           <h3>{t('providerAtlas.authWorkbench.selectedProfilePosture')}</h3>
           <div className="detail-grid">
             <div className="detail-grid__row"><span>{t('common.profile')}</span><strong>{selectedAuthProfile.qualified_name}</strong></div>
-            <div className="detail-grid__row"><span>{t('common.mode')}</span><strong>{selectedAuthProfile.mode}</strong></div>
+            <div className="detail-grid__row"><span>{t('common.mode')}</span><strong>{presentAuthMode(selectedAuthProfile.mode, t)}</strong></div>
             <div className="detail-grid__row"><span>{t('providerAtlas.authWorkbench.connected')}</span><strong>{selectedAuthProfile.connected ? t('common.yes') : t('common.no')}</strong></div>
             <div className="detail-grid__row"><span>{t('providerAtlas.authWorkbench.account')}</span><strong>{selectedAuthProfile.email ?? selectedAuthProfile.account_id ?? t('common.unknown')}</strong></div>
             {selectedAuthProfile.expires_at ? (
               <div className="detail-grid__row"><span>{t('providerAtlas.authWorkbench.expiresAt')}</span><strong>{formatDateTime(selectedAuthProfile.expires_at)}</strong></div>
             ) : null}
+          </div>
+
+          <div className="sheet-form">
+            <h4>{t('providerAtlas.authWorkbench.selectedActions')}</h4>
+            <div className="inline-actions inline-actions--wrap">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={onImportSelectedProfile}
+                disabled={importingProfileId !== null}
+              >
+                {importingProfileId ? t('providerAtlas.authWorkbench.importing') : t('providerAtlas.authWorkbench.importLocal')}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={onRefreshSelectedProfile}
+                disabled={refreshingProfileId !== null}
+              >
+                {refreshingProfileId ? t('providerAtlas.authWorkbench.refreshing') : t('providerAtlas.authWorkbench.refreshSelected')}
+              </button>
+              <button type="button" className="button button--ghost" onClick={onDeleteSelectedProfile}>
+                {t('providerAtlas.authWorkbench.deleteSelected')}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={onStartBrowserOauth}
+                disabled={selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
+              >
+                {connectingProfileId ? t('providerAtlas.authWorkbench.connecting') : t('providerAtlas.authWorkbench.browserOauth')}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={onStartDeviceFlow}
+                disabled={selectedAuthProfileMode !== 'codex-oauth' || connectingProfileId !== null}
+              >
+                {deviceFlow ? t('providerAtlas.authWorkbench.deviceActive') : t('providerAtlas.authWorkbench.deviceFlow')}
+              </button>
+            </div>
           </div>
 
           {selectedAuthProfile.mode === 'anthropic-claude-subscription' ? (
@@ -312,7 +319,7 @@ export function AuthProfileWorkbenchSheet({
               return (
                 <div key={currentKey} className={`probe-check ${selectedAuthProfileId === currentKey ? 'probe-check--selected' : ''}`}>
                   <span>{profile.qualified_name}</span>
-                  <strong>{profile.mode} · {profile.connected ? t('common.connected') : t('providerAtlas.authWorkbench.disconnected')}</strong>
+                  <strong>{presentAuthMode(profile.mode, t)} · {profile.connected ? t('common.connected') : t('providerAtlas.authWorkbench.disconnected')}</strong>
                   <button
                     type="button"
                     className="button button--ghost"

@@ -29,6 +29,7 @@ pub async fn change_studio(
         FactRow {
             label: UiText::new("changeStudio.fact.configVersion"),
             value: config_version.clone(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("changeStudio.fact.configPath"),
@@ -37,14 +38,17 @@ pub async fn change_studio(
                 .lock()
                 .map(|path| path.clone())
                 .unwrap_or_else(|_| "unavailable".to_string()),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("common.providers"),
             value: config.providers.len().to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("changeStudio.fact.selectedWindow"),
             value: query.range.clone(),
+            value_text: None,
         },
     ];
     let inspector = change_inspector(&config, config_version);

@@ -5,6 +5,7 @@ use serde_json::json;
 use crate::AppState;
 
 use super::super::{ProbeStatus, ProviderProbeCheck};
+use prism_core::auth_profile::AuthHeaderKind;
 
 pub(super) fn build_reqwest_client(
     pool: &prism_core::proxy::HttpClientPool,
@@ -36,6 +37,43 @@ pub(super) fn normalize_base_url(base_url: &str) -> &str {
     } else {
         url
     }
+}
+
+pub(super) fn apply_auth_headers(
+    mut request: reqwest::RequestBuilder,
+    auth: &prism_core::provider::AuthRecord,
+) -> reqwest::RequestBuilder {
+    request = match auth.resolved_auth_header_kind() {
+        AuthHeaderKind::Bearer => {
+            request.header("Authorization", format!("Bearer {}", auth.current_secret()))
+        }
+        AuthHeaderKind::XApiKey => request.header("x-api-key", auth.current_secret()),
+        AuthHeaderKind::XGoogApiKey => request.header("x-goog-api-key", auth.current_secret()),
+        AuthHeaderKind::Auto => request,
+    };
+
+    for (key, value) in &auth.headers {
+        request = request.header(key.as_str(), value.as_str());
+    }
+
+    request
+}
+
+pub(super) fn select_runtime_auth(
+    state: &AppState,
+    provider_name: &str,
+) -> Option<prism_core::provider::AuthRecord> {
+    state
+        .router
+        .credential_map()
+        .get(provider_name)
+        .and_then(|records| {
+            records
+                .iter()
+                .find(|record| !record.disabled)
+                .cloned()
+                .or_else(|| records.first().cloned())
+        })
 }
 
 pub(super) fn provider_not_found_response() -> (StatusCode, Json<serde_json::Value>) {

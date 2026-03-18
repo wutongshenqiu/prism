@@ -11,6 +11,7 @@ export interface WorkspaceQuery {
 export interface FactRow {
   label: LocalizedText;
   value: string;
+  value_text?: LocalizedText;
 }
 
 export interface KpiMetric {

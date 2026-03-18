@@ -58,15 +58,23 @@ export function ProviderAtlasPage() {
         preview={controller.preview}
         previewing={controller.previewing}
         saving={controller.saving}
+        testingRequest={controller.testingRequest}
         selectedCapabilities={controller.selectedCapabilities}
         formState={controller.formState}
+        testForm={controller.testForm}
+        testResult={controller.testResult}
+        testError={controller.testError}
         refreshingProfileId={controller.refreshingProfileId}
         onClose={() => controller.setEditorOpen(false)}
         onRunHealthCheck={() => void controller.runHealthCheck()}
         onRunPresentationPreview={() => void controller.runPresentationPreview()}
+        onRunTestRequest={() => void controller.runTestRequest()}
         onSaveProvider={() => void controller.saveProvider()}
         onFormStateChange={(patch) =>
           controller.setFormState((current) => ({ ...current, ...patch }))
+        }
+        onTestFormChange={(patch) =>
+          controller.setTestForm((current) => ({ ...current, ...patch }))
         }
         onRefreshAuthProfile={(provider, profileId) =>
           void controller.refreshAuthProfile(provider, profileId)

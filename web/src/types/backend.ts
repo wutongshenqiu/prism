@@ -108,6 +108,19 @@ export interface ProviderHealthResult {
   checks: ProviderProbeCheck[];
 }
 
+export interface ProviderTestResponse {
+  provider: string;
+  upstream: string;
+  endpoint: string;
+  format: 'openai' | 'claude' | 'gemini';
+  model: string;
+  status: number;
+  ok: boolean;
+  latency_ms: number;
+  request_body: unknown;
+  response_body: unknown;
+}
+
 export interface ProviderFetchModelsResult {
   models: string[];
   supported: boolean;

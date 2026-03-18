@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
+import { presentProbeStatus } from '../lib/operatorPresentation';
 import { reconcileSelection } from '../lib/selection';
 import { useProviderAtlasAuthWorkbench } from './provider-atlas/useProviderAtlasAuthWorkbench';
 import { useProviderAtlasRegistryWorkbench } from './provider-atlas/useProviderAtlasRegistryWorkbench';
@@ -14,8 +15,10 @@ import type {
   ProviderCapabilityEntry,
   ProviderDetail,
   ProviderHealthResult,
+  ProviderTestResponse,
 } from '../types/backend';
 import type { ProviderAtlasResponse } from '../types/controlPlane';
+import type { ProviderTestFormState } from '../components/provider-atlas/types';
 
 interface ProviderAtlasControllerOptions {
   data: ProviderAtlasResponse | null;
@@ -42,6 +45,13 @@ export function useProviderAtlasController({
   const [protocolMatrix, setProtocolMatrix] = useState<ProtocolMatrixResponse | null>(null);
   const [protocolSearch, setProtocolSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
+  const [testForm, setTestForm] = useState<ProviderTestFormState>({
+    model: '',
+    input: 'Reply with the single word ok.',
+  });
+  const [testingRequest, setTestingRequest] = useState(false);
+  const [testResult, setTestResult] = useState<ProviderTestResponse | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedProvider((current) =>
@@ -173,6 +183,8 @@ export function useProviderAtlasController({
     setActionStatus(null);
     setHealth(null);
     setPreview(null);
+    setTestResult(null);
+    setTestError(null);
 
     try {
       const [provider, runtime] = await Promise.all([
@@ -186,6 +198,10 @@ export function useProviderAtlasController({
         region: provider.region ?? '',
         weight: String(provider.weight ?? 1),
         disabled: provider.disabled,
+      });
+      setTestForm({
+        model: provider.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? 'gpt-5',
+        input: 'Reply with the single word ok.',
       });
     } catch (editorError) {
       setActionError(getApiErrorMessage(editorError, t('providerAtlas.error.loadDetail')));
@@ -203,7 +219,8 @@ export function useProviderAtlasController({
     try {
       const result = await providersApi.healthCheck(selectedProvider);
       setHealth(result);
-      setActionStatus(t('providerAtlas.status.healthProbeCompleted', { status: result.status }));
+      setActionStatus(t('providerAtlas.status.healthProbeCompleted', { status: presentProbeStatus(result.status, t) }));
+      await Promise.all([reload(), loadRuntimeSurfaces()]);
     } catch (probeError) {
       setActionError(getApiErrorMessage(probeError, t('providerAtlas.error.healthProbe')));
     }
@@ -231,6 +248,34 @@ export function useProviderAtlasController({
       setActionError(getApiErrorMessage(previewError, t('providerAtlas.error.preview')));
     } finally {
       setPreviewing(false);
+    }
+  };
+
+  const runTestRequest = async () => {
+    if (!selectedProvider) {
+      return;
+    }
+    if (!testForm.model.trim() || !testForm.input.trim()) {
+      setTestError(t('providerAtlas.error.testRequestInput'));
+      return;
+    }
+
+    setTestingRequest(true);
+    setActionError(null);
+    setActionStatus(null);
+    setTestError(null);
+    setTestResult(null);
+    try {
+      const result = await providersApi.testRequest(selectedProvider, {
+        model: testForm.model.trim(),
+        input: testForm.input.trim(),
+      });
+      setTestResult(result);
+      setActionStatus(t('providerAtlas.status.testRequestCompleted', { provider: selectedProvider }));
+    } catch (requestError) {
+      setTestError(getApiErrorMessage(requestError, t('providerAtlas.error.testRequest')));
+    } finally {
+      setTestingRequest(false);
     }
   };
 
@@ -282,11 +327,17 @@ export function useProviderAtlasController({
     setProtocolSearch,
     modelSearch,
     setModelSearch,
+    testForm,
+    setTestForm,
+    testingRequest,
+    testResult,
+    testError,
     selectedRow,
     providers: data?.providers ?? [],
     openEditor,
     runHealthCheck,
     runPresentationPreview,
+    runTestRequest,
     saveProvider,
     ...registryWorkbench,
     ...authWorkbench,

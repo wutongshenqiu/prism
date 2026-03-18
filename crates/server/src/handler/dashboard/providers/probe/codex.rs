@@ -11,7 +11,7 @@ const CODEX_HEALTH_USER_AGENT: &str =
     "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 const RED_DOT_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 
-fn build_codex_probe_request(
+pub(super) fn build_codex_probe_request(
     client: &reqwest::Client,
     auth: &prism_core::provider::AuthRecord,
     body: &serde_json::Value,
@@ -54,7 +54,7 @@ fn codex_probe_model(auth: &prism_core::provider::AuthRecord) -> String {
         .unwrap_or_else(|| "gpt-5".to_string())
 }
 
-async fn collect_codex_probe_response(
+pub(super) async fn collect_codex_probe_response(
     resp: reqwest::Response,
 ) -> Result<(bool, serde_json::Value), String> {
     if !resp.status().is_success() {

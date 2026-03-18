@@ -100,10 +100,12 @@ pub async fn command_center(
         FactRow {
             label: UiText::new("commandCenter.pressure.providersUnderWatch"),
             value: degraded_providers.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("commandCenter.pressure.recentRequestErrors"),
             value: stats.error_count.to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("commandCenter.pressure.trackedTenants"),
@@ -114,6 +116,7 @@ pub async fn command_center(
                 .map(|value| value.len())
                 .unwrap_or_default()
                 .to_string(),
+            value_text: None,
         },
         FactRow {
             label: UiText::new("commandCenter.pressure.authProfiles"),
@@ -123,6 +126,7 @@ pub async fn command_center(
                 .map(|provider| provider.expanded_auth_profiles().len())
                 .sum::<usize>()
                 .to_string(),
+            value_text: None,
         },
     ];
 
@@ -142,18 +146,22 @@ pub async fn command_center(
         FactRow {
             label: UiText::new("commandCenter.watch.configVersion"),
             value: config_version,
+            value_text: None,
         },
         FactRow {
             label: UiText::new("commandCenter.watch.topError"),
             value: top_error,
+            value_text: None,
         },
         FactRow {
             label: UiText::new("commandCenter.watch.latestRequest"),
             value: latest_request,
+            value_text: None,
         },
         FactRow {
             label: UiText::new("common.window"),
             value: query.range.clone(),
+            value_text: None,
         },
     ];
 

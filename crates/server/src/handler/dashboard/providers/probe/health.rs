@@ -10,30 +10,9 @@ use serde_json::json;
 use super::super::{ProbeStatus, ProviderProbeResult};
 use super::codex::run_codex_probe;
 use super::common::{
-    build_reqwest_client, client_error_response, normalize_base_url, probe_check,
-    provider_name_from_config,
+    apply_auth_headers, build_reqwest_client, client_error_response, normalize_base_url,
+    probe_check, provider_name_from_config, select_runtime_auth,
 };
-use prism_core::auth_profile::AuthHeaderKind;
-
-fn apply_auth_headers(
-    mut request: reqwest::RequestBuilder,
-    auth: &prism_core::provider::AuthRecord,
-) -> reqwest::RequestBuilder {
-    request = match auth.resolved_auth_header_kind() {
-        AuthHeaderKind::Bearer => {
-            request.header("Authorization", format!("Bearer {}", auth.current_secret()))
-        }
-        AuthHeaderKind::XApiKey => request.header("x-api-key", auth.current_secret()),
-        AuthHeaderKind::XGoogApiKey => request.header("x-goog-api-key", auth.current_secret()),
-        AuthHeaderKind::Auto => request,
-    };
-
-    for (key, value) in &auth.headers {
-        request = request.header(key.as_str(), value.as_str());
-    }
-
-    request
-}
 
 fn configured_probe_model(auth: &prism_core::provider::AuthRecord) -> Option<&str> {
     auth.models
@@ -240,23 +219,6 @@ async fn run_gemini_text_probe(
     }
 }
 
-fn select_health_auth(
-    state: &AppState,
-    provider_name: &str,
-) -> Option<prism_core::provider::AuthRecord> {
-    state
-        .router
-        .credential_map()
-        .get(provider_name)
-        .and_then(|records| {
-            records
-                .iter()
-                .find(|record| !record.disabled)
-                .cloned()
-                .or_else(|| records.first().cloned())
-        })
-}
-
 pub fn cached_probe_result(state: &AppState, provider_name: &str) -> Option<ProviderProbeResult> {
     state
         .provider_probe_cache
@@ -348,7 +310,7 @@ pub async fn health_check(
         Err(response) => return response,
     };
 
-    let Some(auth) = select_health_auth(&state, &provider_name) else {
+    let Some(auth) = select_runtime_auth(&state, &provider_name) else {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(

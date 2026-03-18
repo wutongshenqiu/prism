@@ -28,6 +28,12 @@ export function ChangeStudioPage() {
             {t('changeStudio.hero.createStructuredChange')}
           </button>
           <button
+            className="button button--secondary"
+            onClick={() => void controller.openAccessWorkbench()}
+          >
+            {t('changeStudio.hero.manageAccessKeys')}
+          </button>
+          <button
             className="button button--ghost"
             onClick={() => void controller.loadEditor('yaml')}
           >

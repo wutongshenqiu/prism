@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Panel } from '../components/Panel';
+import { PayloadViewer } from '../components/PayloadViewer';
 import { StatusPill } from '../components/StatusPill';
 import { WorkbenchSheet } from '../components/WorkbenchSheet';
 import { useI18n } from '../i18n';
 import { useTrafficLabData } from '../hooks/useWorkspaceData';
+import { presentFactValue } from '../lib/operatorPresentation';
 import { getApiErrorMessage } from '../services/errors';
 import { logsApi } from '../services/logs';
 import { routingApi } from '../services/routing';
@@ -183,7 +185,7 @@ export function TrafficLabPage() {
 
       {lensStatus ? <div className="status-message status-message--success">{lensStatus}</div> : null}
       {selectedSession ? (
-        <div className="status-message status-message--warning">
+        <div className="status-message status-message--info">
           {t('trafficLab.status.activeSession')} <strong>{selectedSession.request_id}</strong> · {selectedSession.model} · {formatDurationMs(selectedSession.latency_ms)}
         </div>
       ) : null}
@@ -242,7 +244,7 @@ export function TrafficLabPage() {
         <Panel title={t('trafficLab.panel.windowFacts.title')} subtitle={t('trafficLab.panel.windowFacts.subtitle')}>
           <ul className="fact-list">
             {(data?.compare_facts ?? []).map((fact) => (
-              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{fact.value}</strong></li>
+              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{presentFactValue(fact, tx)}</strong></li>
             ))}
             <li><span>{t('trafficLab.fact.liveUpdates')}</span><strong>{live ? t('common.connected') : t('common.paused')}</strong></li>
             <li><span>{t('trafficLab.fact.filter')}</span><strong>{sessionFilter || t('common.none')}</strong></li>
@@ -383,18 +385,27 @@ export function TrafficLabPage() {
 
             <section className="sheet-section">
               <h3>{t('trafficLab.detail.payloads')}</h3>
-              <div className="code-block">
-                <strong>{t('trafficLab.detail.requestBody')}</strong>
-                <pre>{detailRecord.request_body ?? t('trafficLab.detail.noRequestBody')}</pre>
-              </div>
-              <div className="code-block">
-                <strong>{t('trafficLab.detail.upstreamRequest')}</strong>
-                <pre>{detailRecord.upstream_request_body ?? t('trafficLab.detail.noUpstreamBody')}</pre>
-              </div>
-              <div className="code-block">
-                <strong>{t('trafficLab.detail.responseBody')}</strong>
-                <pre>{detailRecord.response_body ?? detailRecord.stream_content_preview ?? t('trafficLab.detail.noResponseBody')}</pre>
-              </div>
+              {!detailRecord.request_body && !detailRecord.upstream_request_body && !detailRecord.response_body && !detailRecord.stream_content_preview ? (
+                <div className="status-message">{t('trafficLab.detail.payloadHint')}</div>
+              ) : null}
+              <PayloadViewer
+                title={t('trafficLab.detail.requestBody')}
+                payload={detailRecord.request_body}
+                emptyMessage={t('trafficLab.detail.noRequestBody')}
+                emptyHint={t('trafficLab.detail.payloadEmptyHint')}
+              />
+              <PayloadViewer
+                title={t('trafficLab.detail.upstreamRequest')}
+                payload={detailRecord.upstream_request_body}
+                emptyMessage={t('trafficLab.detail.noUpstreamBody')}
+                emptyHint={t('trafficLab.detail.payloadEmptyHint')}
+              />
+              <PayloadViewer
+                title={t('trafficLab.detail.responseBody')}
+                payload={detailRecord.response_body ?? detailRecord.stream_content_preview}
+                emptyMessage={t('trafficLab.detail.noResponseBody')}
+                emptyHint={t('trafficLab.detail.payloadEmptyHint')}
+              />
             </section>
           </>
         ) : null}

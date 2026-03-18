@@ -10,6 +10,7 @@ import { useCommandCenterData } from '../hooks/useWorkspaceData';
 import { configApi } from '../services/config';
 import { getApiErrorMessage } from '../services/errors';
 import { systemApi } from '../services/system';
+import { presentFactValue } from '../lib/operatorPresentation';
 import type { SystemHealthResponse, SystemLogEntry } from '../types/backend';
 import type { WorkspaceId } from '../types/shell';
 
@@ -190,7 +191,7 @@ export function CommandCenterPage() {
             {(data?.pressure_map ?? []).map((fact) => (
               <li key={`${fact.label.key}-${fact.value}`}>
                 <span>{tx(fact.label)}</span>
-                <strong>{fact.value}</strong>
+                <strong>{presentFactValue(fact, tx)}</strong>
               </li>
             ))}
           </ul>
@@ -203,7 +204,7 @@ export function CommandCenterPage() {
             {(data?.watch_windows ?? []).map((fact) => (
               <li key={`${fact.label.key}-${fact.value}`}>
                 <span>{tx(fact.label)}</span>
-                <strong>{fact.value}</strong>
+                <strong>{presentFactValue(fact, tx)}</strong>
               </li>
             ))}
           </ul>

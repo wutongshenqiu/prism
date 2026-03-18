@@ -1,6 +1,7 @@
 import { Panel } from '../Panel';
 import { StatusPill } from '../StatusPill';
 import { useI18n } from '../../i18n';
+import { presentFactValue } from '../../lib/operatorPresentation';
 import { headersToDraft } from '../../lib/routeStudio';
 import type { RouteRule, RoutingConfig } from '../../types/backend';
 import type { RouteScenarioRow, RouteStudioResponse } from '../../types/controlPlane';
@@ -73,7 +74,7 @@ export function RouteStudioOverview({
   return (
     <>
       {selectedScenario ? (
-        <div className="status-message status-message--warning">
+        <div className="status-message status-message--info">
           {t('routeStudio.status.activeScenario')} <strong>{selectedScenario.scenario}</strong> · {t('routeStudio.status.winner')} {selectedScenario.winner} · {selectedScenario.delta}
         </div>
       ) : null}
@@ -84,7 +85,7 @@ export function RouteStudioOverview({
         <Panel title={t('routeStudio.panel.summary.title')} subtitle={t('routeStudio.panel.summary.subtitle')}>
           <ul className="fact-list">
             {(data?.summary_facts ?? []).map((fact) => (
-              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{fact.value}</strong></li>
+              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{presentFactValue(fact, tx)}</strong></li>
             ))}
             {routingDraft ? (
               <>
@@ -98,7 +99,7 @@ export function RouteStudioOverview({
         <Panel title={t('routeStudio.panel.explain.title')} subtitle={t('routeStudio.panel.explain.subtitle')}>
           <ul className="fact-list">
             {(data?.explain_facts ?? []).map((fact) => (
-              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{fact.value}</strong></li>
+              <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{presentFactValue(fact, tx)}</strong></li>
             ))}
           </ul>
         </Panel>
