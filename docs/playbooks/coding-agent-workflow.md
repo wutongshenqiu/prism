@@ -8,6 +8,7 @@ Development workflow for coding agents (Claude Code, Cursor, etc.) working on th
 2. **Read `AGENTS.md`** -- Architecture overview, crate responsibilities, API endpoints, and provider matrix.
 3. **Check `docs/specs/_index.md`** -- Review existing specs to understand what has been built and what is in progress.
 4. **Check `docs/playbooks/`** -- Relevant playbooks for common tasks (adding providers, translators, etc.).
+5. **Check repository hygiene rules** -- Read [repo-layout-and-artifacts.md](repo-layout-and-artifacts.md) before committing generated outputs, local config, design exports, or tool state.
 
 ## Workflow by Task Type
 
@@ -204,6 +205,7 @@ Note: The pre-commit hook in `.claude/settings.json` enforces `make lint && make
 | Add a new provider    | [add-provider.md](add-provider.md)              |
 | Add a translator      | [add-translator.md](add-translator.md)          |
 | Create a new spec     | [create-new-spec.md](create-new-spec.md)        |
+| Repo layout / artifacts | [repo-layout-and-artifacts.md](repo-layout-and-artifacts.md) |
 
 ## Tips for Coding Agents
 

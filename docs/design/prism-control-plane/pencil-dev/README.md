@@ -7,6 +7,7 @@ Related structural notes:
 - [../gateway-benchmark-analysis.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/gateway-benchmark-analysis.md)
 - [../cutover-scope-review.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/cutover-scope-review.md)
 - [../remaining-additions-roadmap.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/remaining-additions-roadmap.md)
+- [../../../playbooks/repo-layout-and-artifacts.md](/Users/qiufeng/work/proxy/prism/docs/playbooks/repo-layout-and-artifacts.md)
 - [CONVENTIONS.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/pencil-dev/CONVENTIONS.md)
 - [ARCHITECTURE.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/pencil-dev/ARCHITECTURE.md)
 - [QUALITY-GATES.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/pencil-dev/QUALITY-GATES.md)
@@ -159,6 +160,9 @@ Generated PNG exports should not live next to the `.pen` sources.
 Use:
 
 - `output/pencil/prism-control-plane/`
+
+They should also stay out of Git.
+The committed source of truth is the `.pen` workspace, not the exported image.
 
 See [CONVENTIONS.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/pencil-dev/CONVENTIONS.md) for naming and revision policy, and [ARCHITECTURE.md](/Users/qiufeng/work/proxy/prism/docs/design/prism-control-plane/pencil-dev/ARCHITECTURE.md) for the reusable workspace layering model.
 

@@ -22,6 +22,12 @@ Multi-provider AI API gateway written in Rust. Routes requests across Claude, Op
 - **Payload rules**: Per-model field overrides, defaults, and filters
 - **Responses API**: Transparent Chat Completions ↔ OpenAI Responses API conversion via `wire-api: responses`
 
+## Repository Hygiene
+
+For repository layout, generated artifact policy, Pencil source placement, and which local files must stay out of Git, see:
+
+- [docs/playbooks/repo-layout-and-artifacts.md](docs/playbooks/repo-layout-and-artifacts.md)
+
 ## Quick Start
 
 ```bash

@@ -1,4 +1,5 @@
 target/
+dist/
 logs/
 .DS_Store
 .env
@@ -6,6 +7,10 @@ test-config.yaml
 config.test.yaml
 config.yaml
 docker-compose.override.yml
+config.control-plane-greenfield.yaml
+config.yaml.managed-auth.d/
+output/
+.codex/
 
 # Frontend
 web/node_modules/
