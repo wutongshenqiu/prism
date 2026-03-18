@@ -87,6 +87,9 @@ export function RouteSimulationSheet({
                   <strong>{typeof rejection.reason === 'string' ? rejection.reason : t('trafficLab.replay.missingCapability')}</strong>
                 </div>
               ))}
+              {explanation.alternates.length === 0 && explanation.rejections.length === 0 ? (
+                <div className="status-message">{t('trafficLab.replay.noRejections')}</div>
+              ) : null}
             </div>
           </section>
         </>

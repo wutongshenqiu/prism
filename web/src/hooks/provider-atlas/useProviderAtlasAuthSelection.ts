@@ -67,10 +67,10 @@ export function useProviderAtlasAuthSelection({
   }, [loadProfiles]);
 
   useEffect(() => {
-    setAuthForm((current) => ({
-      ...current,
-      provider: current.provider || selectedProvider || providers[0]?.provider || '',
-    }));
+    setAuthForm((current) => {
+      const provider = current.provider || selectedProvider || providers[0]?.provider || '';
+      return provider === current.provider ? current : { ...current, provider };
+    });
   }, [providers, selectedProvider]);
 
   const selectedProfiles = useMemo(
