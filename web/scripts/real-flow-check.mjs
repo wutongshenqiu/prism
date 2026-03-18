@@ -385,7 +385,7 @@ report.actions.push({
 await clickWorkspace('Command Center', 'Operate from runtime posture, not page sprawl');
 if (signalCount > 0) {
   await heroButton('Open live investigation').click();
-  await page.waitForURL((url) => !url.pathname.endsWith('/command-center'), { timeout: 10_000 });
+  await page.waitForURL((url) => url.pathname.endsWith('/traffic-lab'), { timeout: 10_000 });
   await waitForStable();
   report.actions.push({
     route: '/command-center',
