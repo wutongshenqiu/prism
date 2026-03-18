@@ -202,20 +202,20 @@ fn change_inspector(config: &Config, config_version: String) -> WorkspaceInspect
             WorkspaceAction {
                 id: "open-raw-yaml".to_string(),
                 label: UiText::new("changeStudio.action.openRawYaml"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("change-studio".to_string()),
             },
             WorkspaceAction {
                 id: "validate-current-config".to_string(),
                 label: UiText::new("changeStudio.action.validateCurrentConfig"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("change-studio".to_string()),
             },
             WorkspaceAction {
                 id: "reload-runtime".to_string(),
                 label: UiText::new("changeStudio.action.reloadRuntime"),
-                effect: WorkspaceActionEffect::Reload,
-                target_workspace: None,
+                effect: WorkspaceActionEffect::Invoke,
+                target_workspace: Some("change-studio".to_string()),
             },
         ],
     }

@@ -50,6 +50,18 @@ export function AppShell() {
       navigate(`/${action.target_workspace}`);
       return;
     }
+    if (action.effect === 'invoke') {
+      const targetWorkspace = action.target_workspace ?? workspaceId;
+      const nextSearch = new URLSearchParams(
+        targetWorkspace === workspaceId ? location.search : '',
+      );
+      nextSearch.set('inspect_action', action.id);
+      navigate({
+        pathname: `/${targetWorkspace}`,
+        search: `?${nextSearch.toString()}`,
+      });
+      return;
+    }
     if (action.effect === 'reload') {
       window.location.reload();
       return;

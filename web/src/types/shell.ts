@@ -20,7 +20,7 @@ export interface ShellInspectorSection {
 export interface ShellInspectorAction {
   id: string;
   label: LocalizedText;
-  effect: 'navigate' | 'reload';
+  effect: 'navigate' | 'reload' | 'invoke';
   target_workspace?: WorkspaceId;
 }
 

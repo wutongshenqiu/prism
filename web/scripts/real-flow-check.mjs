@@ -176,6 +176,10 @@ function sheetSectionButton(sectionHeading, name) {
     .getByRole('button', { name, exact: true });
 }
 
+function inspectorButton(name) {
+  return page.locator('.inspector').getByRole('button', { name, exact: true });
+}
+
 async function login() {
   await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Enter the control plane', exact: true }).waitFor({ timeout: 10_000 });
@@ -392,6 +396,7 @@ if (signalCount > 0) {
     action: 'Open investigation',
     landedOn: page.url(),
   });
+  await clickWorkspace('Command Center', 'Operate from runtime posture, not page sprawl');
 }
 
 logStep('seed-traffic');
@@ -446,6 +451,15 @@ assert(
   await page.locator('.table-grid--providers .table-grid__cell--strong').filter({ hasText: /^ChatGPT Pro$/ }).first().isVisible(),
   'provider atlas should show real provider',
 );
+await inspectorButton('Run health probe').click();
+await page.getByRole('heading', { name: 'Provider editor', exact: true }).waitFor({ timeout: 10_000 });
+await page.getByText(/Health probe completed with status/i).waitFor({ timeout: 20_000 });
+await closeWorkbench();
+report.actions.push({
+  route: '/provider-atlas',
+  action: 'Inspector run health probe',
+  landedOn: page.url(),
+});
 await heroButton('Health and test').click();
 await page.getByRole('heading', { name: 'Provider editor', exact: true }).waitFor({ timeout: 10_000 });
 await page.getByRole('heading', { name: 'Auth profiles', exact: true }).waitFor({ timeout: 10_000 });
@@ -566,6 +580,19 @@ report.actions.push({
 
 logStep('change-studio');
 assert((await page.locator('.table-grid--changes .table-grid__cell--strong').count()) >= 1, 'change studio should show registry rows');
+await inspectorButton('Validate current config').click();
+await page.getByRole('heading', { name: 'Structured change workbench', exact: true }).waitFor({ timeout: 10_000 });
+await page
+  .locator('.status-message')
+  .filter({ hasText: /^Validation passed\.|^Validation returned issues\.$/ })
+  .first()
+  .waitFor({ timeout: 20_000 });
+await closeWorkbench();
+report.actions.push({
+  route: '/change-studio',
+  action: 'Inspector validate current config',
+  landedOn: page.url(),
+});
 await heroButton('Create structured change').click();
 await page.getByRole('heading', { name: 'Structured change workbench', exact: true }).waitFor({ timeout: 10_000 });
 await page.getByRole('heading', { name: 'Linked route draft', exact: true }).waitFor({ timeout: 10_000 });

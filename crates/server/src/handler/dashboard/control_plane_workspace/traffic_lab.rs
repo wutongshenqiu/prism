@@ -328,7 +328,7 @@ fn traffic_inspector(record: Option<&RequestRecord>, query: &WorkspaceQuery) -> 
                 WorkspaceAction {
                     id: "open-raw-log".to_string(),
                     label: UiText::new("trafficLab.action.openRawLog"),
-                    effect: WorkspaceActionEffect::Navigate,
+                    effect: WorkspaceActionEffect::Invoke,
                     target_workspace: Some("traffic-lab".to_string()),
                 },
                 WorkspaceAction {
@@ -340,7 +340,7 @@ fn traffic_inspector(record: Option<&RequestRecord>, query: &WorkspaceQuery) -> 
                 WorkspaceAction {
                     id: "compare-window".to_string(),
                     label: UiText::new("trafficLab.action.compareWindow"),
-                    effect: WorkspaceActionEffect::Navigate,
+                    effect: WorkspaceActionEffect::Invoke,
                     target_workspace: Some("traffic-lab".to_string()),
                 },
             ],

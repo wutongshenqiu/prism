@@ -5,6 +5,7 @@ import { Panel } from '../components/Panel';
 import { StatusPill } from '../components/StatusPill';
 import { WorkbenchSheet } from '../components/WorkbenchSheet';
 import { WORKSPACES } from '../constants/workspaces';
+import { useInspectorAction } from '../hooks/useInspectorAction';
 import { useI18n } from '../i18n';
 import { useCommandCenterData } from '../hooks/useWorkspaceData';
 import { configApi } from '../services/config';
@@ -16,7 +17,7 @@ import type { WorkspaceId } from '../types/shell';
 
 export function CommandCenterPage() {
   const { t, tx, formatNumber } = useI18n();
-  const { data, error, loading } = useCommandCenterData();
+  const { data, error, loading, reload } = useCommandCenterData();
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -50,6 +51,10 @@ export function CommandCenterPage() {
     ],
     [t],
   );
+
+  useInspectorAction({
+    'refresh-signal-queue': () => reload(),
+  });
 
   useEffect(() => {
     void (async () => {

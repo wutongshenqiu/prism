@@ -302,7 +302,7 @@ fn inspector_from_signal(
                 id: "open-investigation".to_string(),
                 label: UiText::new("commandCenter.action.openInvestigation"),
                 effect: WorkspaceActionEffect::Navigate,
-                target_workspace: Some(signal.target_workspace.clone()),
+                target_workspace: Some("traffic-lab".to_string()),
             },
             WorkspaceAction {
                 id: "jump-to-workspace".to_string(),
@@ -313,8 +313,8 @@ fn inspector_from_signal(
             WorkspaceAction {
                 id: "refresh-signal-queue".to_string(),
                 label: UiText::new("commandCenter.action.refreshSignalQueue"),
-                effect: WorkspaceActionEffect::Reload,
-                target_workspace: None,
+                effect: WorkspaceActionEffect::Invoke,
+                target_workspace: Some("command-center".to_string()),
             },
         ],
     }

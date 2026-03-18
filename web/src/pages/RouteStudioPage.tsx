@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RouteSimulationSheet } from '../components/route-studio/RouteSimulationSheet';
 import { RouteStudioOverview } from '../components/route-studio/RouteStudioOverview';
+import { useInspectorAction } from '../hooks/useInspectorAction';
 import { useI18n } from '../i18n';
 import { useRouteStudioData } from '../hooks/useWorkspaceData';
 import {
@@ -303,6 +304,10 @@ export function RouteStudioPage() {
     });
     navigate('/change-studio');
   };
+
+  useInspectorAction({
+    'explain-route': () => void simulateDraft(),
+  });
 
   return (
     <div className="workspace-grid">

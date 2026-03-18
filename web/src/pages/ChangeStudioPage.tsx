@@ -3,6 +3,7 @@ import {
   ChangeEditorSheet,
 } from '../components/change-studio/ChangeStudioSheets';
 import { ChangeStudioOverview } from '../components/change-studio/ChangeStudioOverview';
+import { useInspectorAction } from '../hooks/useInspectorAction';
 import { useI18n } from '../i18n';
 import { useChangeStudioController } from '../hooks/useChangeStudioController';
 import { useChangeStudioData } from '../hooks/useWorkspaceData';
@@ -11,6 +12,15 @@ export function ChangeStudioPage() {
   const { t } = useI18n();
   const { data, error, loading, reload } = useChangeStudioData();
   const controller = useChangeStudioController({ data, reload });
+
+  useInspectorAction({
+    'open-raw-yaml': () => void controller.loadEditor('yaml'),
+    'validate-current-config': async () => {
+      await controller.loadEditor('structured');
+      await controller.validateDraft();
+    },
+    'reload-runtime': () => void controller.reloadRuntime(),
+  });
 
   return (
     <div className="workspace-grid">

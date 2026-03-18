@@ -59,6 +59,8 @@ export function useProviderAtlasController({
     );
   }, [data]);
 
+  const activeProvider = selectedProvider ?? data?.providers[0]?.provider ?? null;
+
   const loadRuntimeSurfaces = useCallback(async () => {
     const [capabilities, protocols] = await Promise.all([
       providersApi.capabilities(),
@@ -97,12 +99,12 @@ export function useProviderAtlasController({
   }, [loadRuntimeSurfaces]);
 
   const selectedRow = useMemo(
-    () => data?.providers.find((provider) => provider.provider === selectedProvider) ?? null,
-    [data, selectedProvider],
+    () => data?.providers.find((provider) => provider.provider === activeProvider) ?? null,
+    [activeProvider, data],
   );
   const selectedCapabilities = useMemo(
-    () => capabilityEntries.find((provider) => provider.name === selectedProvider) ?? null,
-    [capabilityEntries, selectedProvider],
+    () => capabilityEntries.find((provider) => provider.name === activeProvider) ?? null,
+    [activeProvider, capabilityEntries],
   );
   const protocolFacts = useMemo(() => {
     const endpoints = protocolMatrix?.endpoints ?? [];
@@ -132,7 +134,7 @@ export function useProviderAtlasController({
   const filteredProtocolCoverage = useMemo(() => {
     const needle = protocolSearch.trim().toLowerCase();
     return (protocolMatrix?.coverage ?? [])
-      .filter((entry) => entry.provider === selectedProvider)
+      .filter((entry) => entry.provider === activeProvider)
       .filter((entry) => {
         if (!needle) {
           return true;
@@ -143,7 +145,7 @@ export function useProviderAtlasController({
           .includes(needle);
       })
       .slice(0, 8);
-  }, [protocolMatrix?.coverage, protocolSearch, selectedProvider]);
+  }, [activeProvider, protocolMatrix?.coverage, protocolSearch]);
   const filteredModelInventory = useMemo(() => {
     const needle = modelSearch.trim().toLowerCase();
     return modelInventory.filter((item) => {
@@ -158,7 +160,7 @@ export function useProviderAtlasController({
   }, [modelInventory, modelSearch]);
 
   const registryWorkbench = useProviderAtlasRegistryWorkbench({
-    selectedProvider,
+    selectedProvider: activeProvider,
     reload,
     loadRuntimeSurfaces,
     setSelectedProvider,
@@ -167,14 +169,14 @@ export function useProviderAtlasController({
 
   const authWorkbench = useProviderAtlasAuthWorkbench({
     providers: data?.providers ?? [],
-    selectedProvider,
+    selectedProvider: activeProvider,
     reload,
     setDetail,
     setRuntimeInfo,
   });
 
   const openEditor = async () => {
-    if (!selectedProvider) {
+    if (!activeProvider) {
       return;
     }
     setEditorOpen(true);
@@ -188,7 +190,7 @@ export function useProviderAtlasController({
 
     try {
       const [provider, runtime] = await Promise.all([
-        providersApi.get(selectedProvider),
+        providersApi.get(activeProvider),
         authProfilesApi.runtime(),
       ]);
       setDetail(provider);
@@ -211,13 +213,13 @@ export function useProviderAtlasController({
   };
 
   const runHealthCheck = async () => {
-    if (!selectedProvider) {
+    if (!activeProvider) {
       return;
     }
     setActionError(null);
     setActionStatus(t('providerAtlas.status.runningHealthProbe'));
     try {
-      const result = await providersApi.healthCheck(selectedProvider);
+      const result = await providersApi.healthCheck(activeProvider);
       setHealth(result);
       setActionStatus(t('providerAtlas.status.healthProbeCompleted', { status: presentProbeStatus(result.status, t) }));
       await Promise.all([reload(), loadRuntimeSurfaces()]);
@@ -227,14 +229,14 @@ export function useProviderAtlasController({
   };
 
   const runPresentationPreview = async () => {
-    if (!selectedProvider) {
+    if (!activeProvider) {
       return;
     }
     setPreviewing(true);
     setActionError(null);
     setActionStatus(null);
     try {
-      const result = await providersApi.presentationPreview(selectedProvider, {
+      const result = await providersApi.presentationPreview(activeProvider, {
         model: detail?.models[0]?.id ?? selectedCapabilities?.models[0]?.id ?? 'gpt-5',
         user_agent: 'prism-control-plane',
         sample_body: {
@@ -243,7 +245,7 @@ export function useProviderAtlasController({
         },
       });
       setPreview(result);
-      setActionStatus(t('providerAtlas.status.previewGenerated', { provider: selectedProvider }));
+      setActionStatus(t('providerAtlas.status.previewGenerated', { provider: activeProvider }));
     } catch (previewError) {
       setActionError(getApiErrorMessage(previewError, t('providerAtlas.error.preview')));
     } finally {
@@ -252,7 +254,7 @@ export function useProviderAtlasController({
   };
 
   const runTestRequest = async () => {
-    if (!selectedProvider) {
+    if (!activeProvider) {
       return;
     }
     if (!testForm.model.trim() || !testForm.input.trim()) {
@@ -266,12 +268,12 @@ export function useProviderAtlasController({
     setTestError(null);
     setTestResult(null);
     try {
-      const result = await providersApi.testRequest(selectedProvider, {
+      const result = await providersApi.testRequest(activeProvider, {
         model: testForm.model.trim(),
         input: testForm.input.trim(),
       });
       setTestResult(result);
-      setActionStatus(t('providerAtlas.status.testRequestCompleted', { provider: selectedProvider }));
+      setActionStatus(t('providerAtlas.status.testRequestCompleted', { provider: activeProvider }));
     } catch (requestError) {
       setTestError(getApiErrorMessage(requestError, t('providerAtlas.error.testRequest')));
     } finally {
@@ -280,23 +282,23 @@ export function useProviderAtlasController({
   };
 
   const saveProvider = async () => {
-    if (!selectedProvider) {
+    if (!activeProvider) {
       return;
     }
     setSaving(true);
     setActionError(null);
     setActionStatus(null);
     try {
-      await providersApi.update(selectedProvider, {
+      await providersApi.update(activeProvider, {
         base_url: registryWorkbench.formState.baseUrl.trim() || null,
         region: registryWorkbench.formState.region.trim() || null,
         weight: Number(registryWorkbench.formState.weight) || 1,
         disabled: registryWorkbench.formState.disabled,
       });
-      setActionStatus(t('providerAtlas.status.savedProvider', { provider: selectedProvider }));
+      setActionStatus(t('providerAtlas.status.savedProvider', { provider: activeProvider }));
       await reload();
       await loadRuntimeSurfaces();
-      const refreshed = await providersApi.get(selectedProvider);
+      const refreshed = await providersApi.get(activeProvider);
       setDetail(refreshed);
     } catch (saveError) {
       setActionError(getApiErrorMessage(saveError, t('providerAtlas.error.saveProvider')));

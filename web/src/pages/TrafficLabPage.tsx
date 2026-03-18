@@ -4,6 +4,7 @@ import { Panel } from '../components/Panel';
 import { PayloadViewer } from '../components/PayloadViewer';
 import { StatusPill } from '../components/StatusPill';
 import { WorkbenchSheet } from '../components/WorkbenchSheet';
+import { useInspectorAction } from '../hooks/useInspectorAction';
 import { useI18n } from '../i18n';
 import { useTrafficLabData } from '../hooks/useWorkspaceData';
 import { presentFactValue } from '../lib/operatorPresentation';
@@ -161,6 +162,15 @@ export function TrafficLabPage() {
       setDetailLoading(false);
     }
   };
+
+  useInspectorAction({
+    'open-raw-log': () => void openSessionDetail(),
+    'compare-window': () => {
+      setReplayOpen(false);
+      setDetailOpen(false);
+      updateSearch({ compare: null });
+    },
+  });
 
   return (
     <div className="workspace-grid">

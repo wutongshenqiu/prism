@@ -263,7 +263,7 @@ fn route_inspector(
             WorkspaceAction {
                 id: "explain-route".to_string(),
                 label: UiText::new("routeStudio.action.explainRoute"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("route-studio".to_string()),
             },
             WorkspaceAction {

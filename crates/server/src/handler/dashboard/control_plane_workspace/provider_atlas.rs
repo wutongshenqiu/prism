@@ -329,19 +329,19 @@ fn provider_inspector(row: &ProviderAtlasRow, config: &Config) -> WorkspaceInspe
             WorkspaceAction {
                 id: "open-provider-config".to_string(),
                 label: UiText::new("providerAtlas.action.openProviderConfig"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("provider-atlas".to_string()),
             },
             WorkspaceAction {
                 id: "run-live-health-check".to_string(),
                 label: UiText::new("providerAtlas.action.runHealthCheck"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("provider-atlas".to_string()),
             },
             WorkspaceAction {
                 id: "inspect-auth-profile".to_string(),
                 label: UiText::new("providerAtlas.action.inspectAuthProfile"),
-                effect: WorkspaceActionEffect::Navigate,
+                effect: WorkspaceActionEffect::Invoke,
                 target_workspace: Some("provider-atlas".to_string()),
             },
         ],
@@ -357,7 +357,7 @@ fn default_provider_inspector() -> WorkspaceInspector {
         actions: vec![WorkspaceAction {
             id: "create-provider".to_string(),
             label: UiText::new("providerAtlas.action.createProvider"),
-            effect: WorkspaceActionEffect::Navigate,
+            effect: WorkspaceActionEffect::Invoke,
             target_workspace: Some("provider-atlas".to_string()),
         }],
     }

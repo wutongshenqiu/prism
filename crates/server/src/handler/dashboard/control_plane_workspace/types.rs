@@ -88,6 +88,7 @@ pub struct InspectorSection {
 pub enum WorkspaceActionEffect {
     Navigate,
     Reload,
+    Invoke,
 }
 
 #[derive(Debug, Clone, Serialize)]

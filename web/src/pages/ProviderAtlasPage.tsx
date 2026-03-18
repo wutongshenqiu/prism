@@ -3,6 +3,7 @@ import { ProviderAtlasOverview } from '../components/provider-atlas/ProviderAtla
 import { ProviderEditorSheet } from '../components/provider-atlas/ProviderEditorSheet';
 import { ProviderRegistrySheet } from '../components/provider-atlas/ProviderRegistrySheet';
 import { useProviderAtlasController } from '../hooks/useProviderAtlasController';
+import { useInspectorAction } from '../hooks/useInspectorAction';
 import { useI18n } from '../i18n';
 import { useProviderAtlasData } from '../hooks/useWorkspaceData';
 
@@ -10,6 +11,16 @@ export function ProviderAtlasPage() {
   const { t } = useI18n();
   const { data, error, loading, reload } = useProviderAtlasData();
   const controller = useProviderAtlasController({ data, reload });
+
+  useInspectorAction({
+    'create-provider': () => controller.setRegistryOpen(true),
+    'open-provider-config': () => void controller.openEditor(),
+    'run-live-health-check': async () => {
+      await controller.openEditor();
+      await controller.runHealthCheck();
+    },
+    'inspect-auth-profile': () => void controller.openAuthWorkbench(),
+  });
 
   return (
     <div className="workspace-grid">
