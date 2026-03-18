@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, ArrowRightLeft, Boxes, ChartNoAxesCombined, GitBranchPlus, Layers3, LogOut } from 'lucide-react';
+import { Activity, ArrowRightLeft, Boxes, ChartNoAxesCombined, GitBranchPlus, LogOut } from 'lucide-react';
 import { DEFAULT_INSPECTORS, WORKSPACES } from '../constants/workspaces';
 import { useI18n } from '../i18n';
 import { useShellStore } from '../stores/shellStore';
@@ -129,7 +129,7 @@ export function AppShell() {
           </div>
 
           <div className="context-bar__actions">
-            <button className={`button ${live ? 'button--primary' : 'button--ghost'}`} onClick={toggleLive}>
+            <button className={`button ${live ? 'button--live-active' : 'button--ghost'}`} onClick={toggleLive}>
               {live ? t('common.live') : t('common.pausedTitle')}
             </button>
             <button className="button button--ghost" onClick={toggleLocale}>
@@ -192,10 +192,6 @@ export function AppShell() {
                   tone={sourceMode === 'hybrid' ? 'warning' : sourceMode === 'external' ? 'info' : 'success'}
                 />
                 <span>{environment === 'production' ? t('common.production') : t('common.staging')} / {timeRange}</span>
-              </div>
-              <div className="inspector-note">
-                <Layers3 size={16} />
-                <span>{t('shell.inspector.note')}</span>
               </div>
             </section>
           </aside>

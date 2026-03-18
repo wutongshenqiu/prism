@@ -318,13 +318,23 @@ export function RouteStudioPage() {
           <p className="workspace-summary">{t('routeStudio.hero.summary')}</p>
         </div>
         <div className="hero-actions">
-          <button className="button button--primary" onClick={() => void simulateDraft()}>
+          <button
+            className="button button--primary"
+            onClick={() => void simulateDraft()}
+            disabled={!selectedScenario}
+            title={!selectedScenario ? t('routeStudio.hero.simulateHint') : undefined}
+          >
             {t('routeStudio.hero.simulateDraft')}
           </button>
           <button className="button button--ghost" onClick={() => void saveRoutingDraft()} disabled={savingDraft || routingLoading}>
             {savingDraft ? t('routeStudio.authoring.saving') : t('routeStudio.hero.saveDraft')}
           </button>
-          <button className="button button--ghost" onClick={promoteToChange}>
+          <button
+            className="button button--ghost"
+            onClick={promoteToChange}
+            disabled={!selectedScenario}
+            title={!selectedScenario ? t('routeStudio.hero.simulateHint') : undefined}
+          >
             {t('routeStudio.hero.promoteToChange')}
           </button>
         </div>

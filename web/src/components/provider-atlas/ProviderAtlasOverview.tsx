@@ -116,7 +116,7 @@ export function ProviderAtlasOverview({
             ))}
             {selectedCapabilities ? (
               <>
-                <li><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{presentProbeStatus(selectedCapabilities.probe_status, t)}</strong></li>
+                <li><span>{t('providerAtlas.coverage.probeStatus')}</span><strong>{selectedCapabilities.probe_status === 'warning' && !selectedCapabilities.checked_at ? t('providerAtlas.value.probe.notProbed') : presentProbeStatus(selectedCapabilities.probe_status, t)}</strong></li>
                 <li><span>{t('providerAtlas.coverage.presentation')}</span><strong>{`${presentPresentationProfile(selectedCapabilities.presentation_profile, t)} / ${presentPresentationMode(selectedCapabilities.presentation_mode, t)}`}</strong></li>
                 <li><span>{t('providerAtlas.coverage.modelSurface')}</span><strong>{formatNumber(selectedCapabilities.models.length)}</strong></li>
                 <li><span>{t('providerAtlas.coverage.toolSupport')}</span><strong>{presentProbeStatus(selectedCapabilities.probe.tools.status, t)}</strong></li>

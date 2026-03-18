@@ -87,13 +87,6 @@ export function RouteStudioOverview({
             {(data?.summary_facts ?? []).map((fact) => (
               <li key={`${fact.label.key}-${fact.value}`}><span>{tx(fact.label)}</span><strong>{presentFactValue(fact, tx)}</strong></li>
             ))}
-            {routingDraft ? (
-              <>
-                <li><span>{t('routeStudio.fact.defaultProfile')}</span><strong>{routingDraft['default-profile']}</strong></li>
-                <li><span>{t('routeStudio.fact.profiles')}</span><strong>{profileNames.length}</strong></li>
-                <li><span>{t('routeStudio.fact.rules')}</span><strong>{routingDraft.rules.length}</strong></li>
-              </>
-            ) : null}
           </ul>
         </Panel>
         <Panel title={t('routeStudio.panel.explain.title')} subtitle={t('routeStudio.panel.explain.subtitle')}>
@@ -200,7 +193,13 @@ export function RouteStudioOverview({
             <button type="button" className="button button--ghost" onClick={onCreateRule} disabled={!routingDraft}>
               {t('routeStudio.registry.newRule')}
             </button>
-            <button type="button" className="button button--ghost" onClick={onDeleteSelectedRule} disabled={!routingDraft || selectedRuleIndex === null}>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={onDeleteSelectedRule}
+              disabled={!routingDraft || selectedRuleIndex === null}
+              title={!routingDraft || selectedRuleIndex === null ? t('routeStudio.registry.deleteHint') : undefined}
+            >
               {t('routeStudio.registry.deleteSelected')}
             </button>
           </div>

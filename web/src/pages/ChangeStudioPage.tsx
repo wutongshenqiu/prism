@@ -16,7 +16,7 @@ export function ChangeStudioPage() {
   useInspectorAction({
     'open-raw-yaml': () => void controller.loadEditor('yaml'),
     'validate-current-config': async () => {
-      await controller.loadEditor('structured');
+      await controller.loadEditor('yaml');
       await controller.validateDraft();
     },
     'reload-runtime': () => void controller.reloadRuntime(),
@@ -33,12 +33,6 @@ export function ChangeStudioPage() {
         <div className="hero-actions">
           <button
             className="button button--primary"
-            onClick={() => void controller.loadEditor('structured')}
-          >
-            {t('changeStudio.hero.createStructuredChange')}
-          </button>
-          <button
-            className="button button--secondary"
             onClick={() => void controller.openAccessWorkbench()}
           >
             {t('changeStudio.hero.manageAccessKeys')}
@@ -103,6 +97,7 @@ export function ChangeStudioPage() {
         accessStatus={controller.accessStatus}
         accessError={controller.accessError}
         revealedKey={controller.revealedKey}
+        revealedCountdown={controller.revealedCountdown}
         revealingKey={controller.revealingKey}
         deletingKey={controller.deletingKey}
         savingKey={controller.savingKey}

@@ -201,9 +201,9 @@ textarea {
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 24px;
+  gap: 16px;
   align-items: flex-start;
-  padding: 24px;
+  padding: 20px 24px;
 }
 
 .workspace-eyebrow,
@@ -243,6 +243,13 @@ textarea {
 .button--primary {
   background: var(--color-primary);
   color: #111;
+  font-weight: 700;
+}
+
+.button--live-active {
+  background: rgba(54, 200, 138, 0.15);
+  border-color: rgba(54, 200, 138, 0.45);
+  color: var(--color-success);
   font-weight: 700;
 }
 
@@ -425,7 +432,7 @@ textarea {
 }
 
 .table-grid--changes {
-  grid-template-columns: 1fr 1.3fr 0.9fr 1fr;
+  grid-template-columns: 1.4fr 1.3fr 0.9fr 1fr;
 }
 
 .table-grid--keys {
@@ -440,9 +447,7 @@ textarea {
 
 .table-grid__head {
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-primary);
+  color: var(--color-text-muted);
 }
 
 .table-grid__cell--strong {
@@ -472,6 +477,12 @@ textarea {
   margin-bottom: 18px;
 }
 
+.inspector__header h2 {
+  font-size: 1.05rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .inspector-section {
   margin-bottom: 18px;
 }
@@ -498,6 +509,8 @@ textarea {
 .fact-list li strong,
 .inspector-section li strong {
   text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .fact-list--interactive li {
@@ -513,6 +526,11 @@ textarea {
 
 .inspector-note {
   align-items: center;
+}
+
+.inspector .action-stack .button {
+  padding: 8px 12px;
+  font-size: 13px;
 }
 
 .sheet-backdrop {
@@ -629,7 +647,6 @@ textarea {
 .inspector-section li strong {
   min-width: 0;
   text-align: right;
-  word-break: break-word;
 }
 
 .sheet-field,

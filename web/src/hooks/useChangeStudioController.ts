@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import {
   buildAuthKeyCreateRequest,
@@ -27,6 +27,24 @@ interface ChangeStudioControllerOptions {
   reload: () => Promise<void>;
 }
 
+const MASK_TOKEN = '<masked>';
+
+function maskConfigSecrets(yaml: string): string {
+  return yaml
+    .replace(/(^\s*-?\s*key:\s+)(sk-proxy-[^\n]+)/gm, `$1${MASK_TOKEN}`)
+    .replace(/(^\s*password-hash:\s+)(\$2[aby]\$[^\n]+)/gm, `$1${MASK_TOKEN}`);
+}
+
+function restoreConfigSecrets(displayYaml: string, originalYaml: string): string {
+  if (!displayYaml.includes(MASK_TOKEN)) return displayYaml;
+  const origLines = originalYaml.split('\n');
+  const displayLines = displayYaml.split('\n');
+  if (origLines.length !== displayLines.length) return displayYaml;
+  return displayLines
+    .map((line, i) => (line.includes(MASK_TOKEN) ? origLines[i] : line))
+    .join('\n');
+}
+
 export function useChangeStudioController({
   data,
   reload,
@@ -36,6 +54,7 @@ export function useChangeStudioController({
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<'structured' | 'yaml'>('structured');
   const [yaml, setYaml] = useState('');
+  const originalYamlRef = useRef('');
   const [configVersion, setConfigVersion] = useState<string | undefined>();
   const [configPath, setConfigPath] = useState('');
   const [routeDraft, setRouteDraft] = useState<RouteDraft | null>(null);
@@ -64,6 +83,27 @@ export function useChangeStudioController({
   const [savingKey, setSavingKey] = useState(false);
   const [revealingKey, setRevealingKey] = useState(false);
   const [deletingKey, setDeletingKey] = useState(false);
+  const [revealedCountdown, setRevealedCountdown] = useState<number | null>(null);
+
+  const REVEAL_TIMEOUT_SECS = 30;
+
+  useEffect(() => {
+    if (!revealedKey) {
+      setRevealedCountdown(null);
+      return;
+    }
+    setRevealedCountdown(REVEAL_TIMEOUT_SECS);
+    let remaining = REVEAL_TIMEOUT_SECS;
+    const interval = setInterval(() => {
+      remaining -= 1;
+      setRevealedCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        setRevealedKey(null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [revealedKey]);
 
   useEffect(() => {
     setSelectedFamily((current) =>
@@ -124,7 +164,8 @@ export function useChangeStudioController({
 
     try {
       const [rawConfig] = await Promise.all([configApi.raw()]);
-      setYaml(rawConfig.content);
+      originalYamlRef.current = rawConfig.content;
+      setYaml(maskConfigSecrets(rawConfig.content));
       setConfigVersion(rawConfig.config_version);
       setConfigPath(rawConfig.path);
       setRouteDraft(readRouteDraft());
@@ -175,7 +216,8 @@ export function useChangeStudioController({
     setActionError(null);
     setActionStatus(null);
     try {
-      const result = await configApi.validate(yaml);
+      const yamlToValidate = restoreConfigSecrets(yaml, originalYamlRef.current);
+      const result = await configApi.validate(yamlToValidate);
       setValidationResult(result);
       setActionStatus(result.valid ? t('changeStudio.status.validationPassed') : t('changeStudio.status.validationIssues'));
     } catch (validationError) {
@@ -190,7 +232,8 @@ export function useChangeStudioController({
     setActionError(null);
     setActionStatus(null);
     try {
-      const result = await configApi.apply(yaml, configVersion);
+      const yamlToApply = restoreConfigSecrets(yaml, originalYamlRef.current);
+      const result = await configApi.apply(yamlToApply, configVersion);
       setApplyResult(result);
       setConfigVersion(result.config_version);
       setActionStatus(t('changeStudio.status.appliedConfig', { version: result.config_version }));
@@ -367,6 +410,7 @@ export function useChangeStudioController({
     savingKey,
     revealingKey,
     deletingKey,
+    revealedCountdown,
     selectedAuthKey,
     loadEditor,
     loadTenantMetrics,

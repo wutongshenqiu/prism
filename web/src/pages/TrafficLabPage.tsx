@@ -104,6 +104,7 @@ export function TrafficLabPage() {
     };
     localStorage.setItem('prism-control-plane:traffic-lens', JSON.stringify(payload));
     setLensStatus(t('trafficLab.status.lensSaved'));
+    setTimeout(() => setLensStatus(null), 3000);
   };
 
   const handleReplay = async () => {
@@ -219,6 +220,11 @@ export function TrafficLabPage() {
             <div className="table-grid__head">{t('common.latency')}</div>
             {loading && !data ? <div className="table-grid__cell">{t('trafficLab.loading.sessions')}</div> : null}
             {error && !data ? <div className="table-grid__cell">{error}</div> : null}
+            {!loading && !error && visibleSessions.length === 0 ? (
+              <div className="table-grid__cell" style={{ gridColumn: '1 / -1', color: 'var(--color-muted)' }}>
+                {t('trafficLab.empty.sessions', { window: timeRange })}
+              </div>
+            ) : null}
             {visibleSessions.flatMap((session) => {
               const selected = session.request_id === selectedRequestId;
               const cellClass = `table-grid__cell ${selected ? 'is-selected' : ''} is-clickable`;

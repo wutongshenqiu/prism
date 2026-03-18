@@ -155,6 +155,7 @@ interface AccessControlSheetProps {
   accessStatus: string | null;
   accessError: string | null;
   revealedKey: string | null;
+  revealedCountdown: number | null;
   revealingKey: boolean;
   deletingKey: boolean;
   savingKey: boolean;
@@ -177,6 +178,7 @@ export function AccessControlSheet({
   accessStatus,
   accessError,
   revealedKey,
+  revealedCountdown,
   revealingKey,
   deletingKey,
   savingKey,
@@ -213,7 +215,12 @@ export function AccessControlSheet({
     >
       {accessStatus ? <div className="status-message status-message--success">{accessStatus}</div> : null}
       {accessError ? <div className="status-message status-message--danger">{accessError}</div> : null}
-      {revealedKey ? <div className="status-message status-message--warning">{t('changeStudio.access.revealedNow')} <strong>{revealedKey}</strong></div> : null}
+      {revealedKey ? (
+        <div className="status-message status-message--warning">
+          {t('changeStudio.access.revealedNow')} <strong>{revealedKey}</strong>
+          {revealedCountdown !== null ? <span style={{ marginLeft: 8, opacity: 0.75 }}>{t('changeStudio.access.revealedCountdown', { seconds: revealedCountdown })}</span> : null}
+        </div>
+      ) : null}
 
       <section className="sheet-section">
         <h3>{accessEditorMode === 'edit' ? t('changeStudio.access.editPolicy') : t('changeStudio.access.createKey')}</h3>
