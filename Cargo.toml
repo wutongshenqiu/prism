@@ -52,7 +52,7 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 dotenvy = "0.15"
-sha2 = "0.10"
+sha2 = "0.11"
 rustls = "0.23"
 rustls-pki-types = "1"
 tokio-rustls = "0.26"
